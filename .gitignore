@@ -6,6 +6,7 @@ dist/
 # 本地笔记/密钥，不进仓库
 feedback/
 desktop.ini
+docs/demo-script.md
 
 # 设计稿/未使用的图片素材
 logo_redesign/
