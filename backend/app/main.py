@@ -16,6 +16,7 @@ from .agent import prompts
 from .agent.graph import run_elaborate, run_expand, run_repo_topic, run_rewrite
 from .agent.mock import mock_chat_events, mock_repo_context
 from .feed import db
+from .security import SecurityMiddleware
 from .feed.routes import feed as feed_routes
 from .feed.routes import me as me_routes
 from .feed.routes import repos as repos_routes
@@ -43,6 +44,8 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(title="觅码 API", version="0.2.0", lifespan=lifespan)
 
+# 层序红线：security 先加（内层），CORS 后加（外层）——429 出栈时经 CORS 补头
+app.add_middleware(SecurityMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=list(config.CORS_ORIGINS),
