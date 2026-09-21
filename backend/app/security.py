@@ -20,15 +20,17 @@ API_PREFIX = "/api"
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS", "TRACE"}
 
 # (方法或 None=不限, 路径前缀, 桶名)；按序首个命中，未命中落 default。
-# llm 五条必须排在 delist 之前：POST /api/repos/root 同时匹配 /api/repos/ 前缀。
+# llm 六条必须排在 delist 之前：POST /api/repos/root 同时匹配 /api/repos/ 前缀。
 _RATE_RULES: tuple[tuple[str | None, str, str], ...] = (
     ("POST", "/api/ai-draft", "llm"),
     ("POST", "/api/repos/root", "llm"),
+    ("POST", "/api/roots", "llm"),
     ("POST", "/api/expand", "llm"),
     ("POST", "/api/nodes/detail", "llm"),
     ("POST", "/api/reader/chat", "llm"),
     ("POST", "/api/sessions", "session"),
     ("POST", "/api/submit", "submit"),
+    ("GET", "/api/my/github-repos", "submit"),
     ("POST", "/api/interactions", "interact"),
     ("POST", "/api/repos/", "delist"),
     ("GET", "/api/feed", "browse"),

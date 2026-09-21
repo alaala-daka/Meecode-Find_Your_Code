@@ -43,7 +43,7 @@ RATE_LIMIT_MAX_KEYS: int = int(os.getenv("RATE_LIMIT_MAX_KEYS", "10000"))   # �
 ALLOWED_ORIGINS: tuple[str, ...] = CORS_ORIGINS
 
 _RATE_LIMIT_DEFAULTS: dict[str, int] = {
-    "llm": 20,       # LLM 计费端点：ai-draft + 解读域四端点
+    "llm": 20,       # LLM 计费端点：ai-draft + roots + 解读域四端点
     "session": 30,   # 白拿 session_id 是匿名打 LLM 的前置步
     "submit": 5,     # 投稿：GitHub 拉取 + LLM 精筛
     "interact": 60,  # 幂等互动写
