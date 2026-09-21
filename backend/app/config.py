@@ -35,6 +35,39 @@ FRONTEND_ORIGIN: str = os.getenv("FRONTEND_ORIGIN", "http://localhost:5173")
 # CORS 白名单:FRONTEND_ORIGIN 之外加 127.0.0.1 变体(开发机同源不同 host)
 CORS_ORIGINS: tuple[str, ...] = (FRONTEND_ORIGIN, "http://127.0.0.1:5173")
 
+# ---------- 安全（限流 + Origin 校验，spec 2026-09-21） ----------
+RATE_LIMIT_ENABLED: bool = os.getenv("RATE_LIMIT_ENABLED", "true").lower() in ("1", "true", "yes")
+RATE_LIMIT_WINDOW: int = int(os.getenv("RATE_LIMIT_WINDOW", "60"))          # 窗口秒数
+RATE_LIMIT_MAX_KEYS: int = int(os.getenv("RATE_LIMIT_MAX_KEYS", "10000"))   # 限流器键数上限
+# CSRF 白名单与 CORS 同源：可信来源只维护一份
+ALLOWED_ORIGINS: tuple[str, ...] = CORS_ORIGINS
+
+_RATE_LIMIT_DEFAULTS: dict[str, int] = {
+    "llm": 20,       # LLM 计费端点：ai-draft + 解读域四端点
+    "session": 30,   # 白拿 session_id 是匿名打 LLM 的前置步
+    "submit": 5,     # 投稿：GitHub 拉取 + LLM 精筛
+    "interact": 60,  # 幂等互动写
+    "browse": 240,   # feed/search/详情：匿名写库放大面
+    "auth": 10,      # OAuth 跳转与回调
+    "delist": 5,     # 下架：高危写操作，与 submit 同档
+    "default": 120,  # 兜底
+}
+
+
+def _int_env(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    try:
+        return int(raw) if raw else default
+    except ValueError:
+        return default
+
+
+# 每桶每 RATE_LIMIT_WINDOW 秒上限；环境变量 RATE_LIMIT_<桶名大写> 逐桶覆盖
+RATE_LIMITS: dict[str, int] = {
+    bucket: _int_env(f"RATE_LIMIT_{bucket.upper()}", limit)
+    for bucket, limit in _RATE_LIMIT_DEFAULTS.items()
+}
+
 
 def ensure_prod_secrets() -> None:
     """生产模式 fail-fast:忘配 SESSION_SECRET 就拒启,避免会话 cookie 可被公开常量伪造。"""
