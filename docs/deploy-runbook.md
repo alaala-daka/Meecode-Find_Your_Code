@@ -136,3 +136,41 @@ rsync -az --delete -e "ssh -i <部署私钥>" frontend/dist/ deploy@<服务器IP
 ```
 
 5. 冒烟：`curl -s "https://<domain>/api/feed" | head -c 200`（有 DB 内容后返回 cards）；`curl -s "https://<domain>/api/categories"` 返回 8 分类。
+
+## 13. 安全基线上线（2026-09-21，手动步骤）
+
+CI 只同步 `frontend/dist/` 与后端代码，**不碰 nginx 配置**。安全头需在服务器手动生效一次：
+
+1. 拉取含安全基线的代码后替换配置：
+
+```bash
+cd /opt/meecode && git pull --ff-only
+cp /opt/meecode/deploy/nginx-meecode.conf /etc/nginx/sites-available/meecode
+vi /etc/nginx/sites-available/meecode   # <你的域名> → 实际域名（若尚未替换）
+nginx -t && systemctl reload nginx
+```
+
+2. 验证响应头（应逐条命中）：
+
+```bash
+curl -sI https://<你的域名>/ | grep -iE 'content-security-policy|x-frame-options|strict-transport-security|x-content-type-options|referrer-policy|permissions-policy'
+```
+
+3. 验证限流（连续 25 次打解读会话端点，第 21 次起应 429 带 Retry-After）：
+
+```bash
+for i in $(seq 1 25); do curl -s -o /dev/null -w '%{http_code}\n' -X POST https://<你的域名>/api/sessions; done | sort | uniq -c
+```
+
+4. 限流参数调整（`backend/.env` 增删后 `systemctl restart meecode-backend`）：
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `RATE_LIMIT_ENABLED` | `true` | 总开关 |
+| `RATE_LIMIT_WINDOW` | `60` | 窗口秒数 |
+| `RATE_LIMIT_LLM` / `_SESSION` / `_SUBMIT` / `_INTERACT` / `_BROWSE` / `_AUTH` / `_DELIST` / `_DEFAULT` | `20/30/5/60/240/10/5/120` | 各桶每窗口次数 |
+| `RATE_LIMIT_MAX_KEYS` | `10000` | 限流器键数上限（超出淘汰最早键） |
+
+> 前置条件：限流键取 nginx `$proxy_add_x_forwarded_for` 追加的 XFF 末段，仅在「后端仅监听 127.0.0.1、流量必经 nginx」时可信；若绕过 nginx 直连 8100，IP 限形同虚设。
+
+5. 回滚：删除 nginx 中 6 个 `add_header` 行 + `nginx -t && systemctl reload nginx`；限流置 `RATE_LIMIT_ENABLED=false` 并重启后端。
