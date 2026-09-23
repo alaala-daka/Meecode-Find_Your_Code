@@ -95,6 +95,7 @@ def test_shared_client_is_reused(monkeypatch):
 
 def test_interactive_path_no_sleep_on_rate_limit(monkeypatch):
     """交互路径限流立即抛错,不 sleep(否则线程池被 GitHub 事故拖死)。"""
+    monkeypatch.setattr(github.config, "GITHUB_MOCK", False)
     sleeps: list[float] = []
     monkeypatch.setattr(github.time, "sleep", sleeps.append)
     resp = httpx.Response(429, headers={"X-RateLimit-Remaining": "0", "Retry-After": "60"},
@@ -107,6 +108,7 @@ def test_interactive_path_no_sleep_on_rate_limit(monkeypatch):
 
 
 def test_batch_path_sleeps_then_gives_up(monkeypatch):
+    monkeypatch.setattr(github.config, "GITHUB_MOCK", False)
     sleeps: list[float] = []
     monkeypatch.setattr(github.time, "sleep", sleeps.append)
     resp = httpx.Response(429, headers={"X-RateLimit-Remaining": "0", "Retry-After": "60"},
