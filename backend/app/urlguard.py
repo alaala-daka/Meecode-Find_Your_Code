@@ -10,13 +10,13 @@ import ipaddress
 import socket
 from urllib.parse import urlparse
 
-# 拒绝环回/内网/链路本地/组播/保留段（含 IPv6 对应段）
+# 拒绝环回/内网/链路本地/组播/保留段/CGNAT（含 IPv6 对应段）
 _PRIVATE_NETWORKS = [
     ipaddress.ip_network(n)
     for n in (
-        "0.0.0.0/8", "10.0.0.0/8", "127.0.0.0/8", "169.254.0.0/16",
+        "0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16",
         "172.16.0.0/12", "192.168.0.0/16", "224.0.0.0/4", "240.0.0.0/4",
-        "::1/128", "fc00::/7", "fe80::/10", "ff00::/8",
+        "::/128", "::1/128", "fc00::/7", "fe80::/10", "ff00::/8",
     )
 ]
 
@@ -26,6 +26,14 @@ def _ip_is_public(ip_str: str) -> bool:
         ip = ipaddress.ip_address(ip_str)
     except ValueError:
         return False
+    if ip.is_unspecified:
+        return False
+    # IPv4-mapped(::ffff:x.x.x.x)/6to4(2002::)/IPv4-compatible(::x.x.x.x) 壳地址先拆出内嵌 IPv4 再判段
+    mapped = getattr(ip, "ipv4_mapped", None) or getattr(ip, "sixtofour", None)
+    if mapped is not None:
+        ip = mapped
+    elif ip.version == 6 and int(ip) < 2**32:
+        ip = ipaddress.IPv4Address(int(ip))
     return not any(ip in net for net in _PRIVATE_NETWORKS)
 
 

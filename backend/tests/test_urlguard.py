@@ -29,9 +29,14 @@ def test_rejects_ip_literals_in_private_ranges():
         "http://127.0.0.1:11434/v1",
         "http://169.254.169.254/latest/meta-data/",
         "http://10.0.0.5/v1",
+        "http://100.64.0.1/v1",
         "http://192.168.1.1/v1",
         "http://172.16.0.1/v1",
         "http://[::1]/v1",
+        "http://[::]/",
+        "http://[::ffff:127.0.0.1]/",
+        "http://[::ffff:169.254.169.254]/",
+        "http://[::127.0.0.1]/",
     ):
         with pytest.raises(ValueError):
             urlguard.validate_base_url(url)
