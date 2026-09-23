@@ -42,23 +42,31 @@ def _request(headers=None, cookies=None, client_host="9.9.9.9"):
 
 # ---------- 纯函数 ----------
 
-def test_client_ip_takes_last_xff_segment():
-    # nginx $proxy_add_x_forwarded_for 末段由受信代理追加；前置段可伪造，弃用
-    assert security.client_ip(_request(headers={"x-forwarded-for": "1.1.1.1, 2.2.2.2"})) == "2.2.2.2"
+def test_client_ip_takes_last_xff_segment_from_trusted_proxy():
+    # 受信代理(nginx 同机)追加的末段才可信
+    req = _request(headers={"x-forwarded-for": "1.1.1.1, 2.2.2.2"}, client_host="127.0.0.1")
+    assert security.client_ip(req) == "2.2.2.2"
 
 
 def test_client_ip_falls_back_to_socket_peer():
     assert security.client_ip(_request()) == "9.9.9.9"
 
 
+def test_client_ip_ignores_xff_from_untrusted_peer():
+    # 直连伪造 XFF 换限流键——必须无视,取对端
+    req = _request(headers={"x-forwarded-for": "6.6.6.6"}, client_host="9.9.9.9")
+    assert security.client_ip(req) == "9.9.9.9"
+
+
+def test_rate_key_ignores_forged_xff_from_untrusted_peer():
+    req = _request(headers={"x-forwarded-for": "6.6.6.6"}, client_host="9.9.9.9")
+    assert security.rate_key(req) == "ip:9.9.9.9"
+
+
 def test_rate_key_prefers_logged_in_user(conn):
     uid = auth.upsert_user(conn, {"id": 42, "login": "k", "avatar_url": ""})
     req = _request(cookies={config.SESSION_COOKIE: auth.sign(uid)})
     assert security.rate_key(req) == f"u:{uid}"
-
-
-def test_rate_key_falls_back_to_ip():
-    assert security.rate_key(_request(headers={"x-forwarded-for": "3.3.3.3"})) == "ip:3.3.3.3"
 
 
 def test_rate_key_bad_signature_is_anonymous():

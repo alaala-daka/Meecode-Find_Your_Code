@@ -43,6 +43,10 @@ RATE_LIMIT_WINDOW: int = int(os.getenv("RATE_LIMIT_WINDOW", "60"))          # �
 RATE_LIMIT_MAX_KEYS: int = int(os.getenv("RATE_LIMIT_MAX_KEYS", "10000"))   # 限流器键数上限
 # CSRF 白名单与 CORS 同源：可信来源只维护一份
 ALLOWED_ORIGINS: tuple[str, ...] = CORS_ORIGINS
+# 仅这些对端的 XFF 末段可信(nginx 同机回环);其余来源忽略 XFF,取 socket 对端
+TRUSTED_PROXIES: tuple[str, ...] = tuple(
+    p.strip() for p in os.getenv("TRUSTED_PROXIES", "127.0.0.1,::1").split(",") if p.strip()
+)
 
 _RATE_LIMIT_DEFAULTS: dict[str, int] = {
     "llm": 20,       # LLM 计费端点：ai-draft + roots + 解读域四端点

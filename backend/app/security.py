@@ -49,11 +49,18 @@ def bucket_for(method: str, path: str) -> str:
 
 
 def client_ip(request: Request) -> str:
-    """取 XFF 末段（nginx 受信追加），无 XFF 回退 socket 对端。"""
+    """受信对端(nginx 回环)的 XFF 末段才采信;否则忽略 XFF 取 socket 对端。
+
+    nginx $proxy_add_x_forwarded_for 由受信代理追加真实客户端到末段，
+    前置段可伪造故弃用；非受信来源整头可伪造，一律不看。
+    """
+    peer = request.client.host if request.client else ""
+    if peer not in config.TRUSTED_PROXIES:
+        return peer
     forwarded = request.headers.get("x-forwarded-for", "")
     if forwarded:
-        return forwarded.split(",")[-1].strip()
-    return request.client.host if request.client else ""
+        return forwarded.split(",")[-1].strip() or peer
+    return peer
 
 
 def rate_key(request: Request) -> str:
