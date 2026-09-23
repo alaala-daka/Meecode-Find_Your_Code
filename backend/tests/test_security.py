@@ -127,6 +127,35 @@ def test_limiter_sweeps_expired_keys_before_rejecting():
     assert len(limiter._hits) == 1
 
 
+def test_limiter_concurrent_allow_never_exceeds_limit():
+    """同步路由跑线程池:read-modify-write 无锁会丢计数、超放。"""
+    from concurrent.futures import ThreadPoolExecutor
+
+    limiter = security.SlidingWindowLimiter()
+    limit = 100
+
+    def one(_):
+        return limiter.allow("k", limit, 60, NOW)[0]
+
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        results = list(ex.map(one, range(500)))
+    assert sum(results) == limit          # 恰好 limit 个放行，不多不少
+
+
+def test_limiter_concurrent_distinct_keys_respect_max_keys():
+    from concurrent.futures import ThreadPoolExecutor
+
+    limiter = security.SlidingWindowLimiter()
+    max_keys = 50
+
+    def one(i):
+        return limiter.allow(f"k{i}", 5, 60, NOW, max_keys=max_keys)[0]
+
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        results = list(ex.map(one, range(200)))
+    assert sum(results) == max_keys       # 满额拒新键，并发下不超卖
+
+
 # ---------- 中间件（经 TestClient 走真实栈） ----------
 
 def test_llm_endpoint_429_with_retry_after(client, monkeypatch):

@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+import threading
 import time
 
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -66,37 +67,41 @@ class SlidingWindowLimiter:
     """进程内滑动窗口计数。多 worker 部署时各进程独立计数（见 spec 风险表）。
 
     键满额时拒新键（先清过期键再拒），不淘汰既有键——淘汰会把受害者配额一并清零。
+    同步路由跑在线程池：allow/_sweep/reset 全部在同一把锁内，防 read-modify-write 丢计数。
     """
 
     def __init__(self) -> None:
         self._hits: dict[str, list[float]] = {}
+        self._lock = threading.Lock()
 
     def allow(self, key: str, limit: int, window: float, now: float,
               max_keys: int = 10_000) -> tuple[bool, int]:
         """第 2 个返回值为超限时的 Retry-After 秒数（≥1）。"""
-        hits = self._hits.get(key)
-        if hits is None:
-            if len(self._hits) >= max_keys:
-                self._sweep_expired(now, window)
+        with self._lock:
+            hits = self._hits.get(key)
+            if hits is None:
                 if len(self._hits) >= max_keys:
-                    return False, 1   # 满额拒新键：不淘汰既有键，防洪水重置配额
-            hits = []
-        hits = [t for t in hits if t > now - window]     # 剪枝过期命中即清理
-        if len(hits) >= limit:
+                    self._sweep_expired(now, window)
+                    if len(self._hits) >= max_keys:
+                        return False, 1   # 满额拒新键：不淘汰既有键，防洪水重置配额
+                hits = []
+            hits = [t for t in hits if t > now - window]     # 剪枝过期命中即清理
+            if len(hits) >= limit:
+                self._hits[key] = hits
+                return False, max(1, int(hits[0] + window - now))
+            hits.append(now)
             self._hits[key] = hits
-            return False, max(1, int(hits[0] + window - now))
-        hits.append(now)
-        self._hits[key] = hits
-        return True, 0
+            return True, 0
 
     def _sweep_expired(self, now: float, window: float) -> None:
-        """清理窗口内无命中的键（hits 末位即最新时间戳）。仅满额路径触发。"""
+        """清理窗口内无命中的键（hits 末位即最新时间戳）。仅满额路径触发；调用方持锁。"""
         cutoff = now - window
         for k in [k for k, hits in self._hits.items() if not hits or hits[-1] <= cutoff]:
             del self._hits[k]
 
     def reset(self) -> None:
-        self._hits.clear()
+        with self._lock:
+            self._hits.clear()
 
 
 _limiter = SlidingWindowLimiter()
