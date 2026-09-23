@@ -4,7 +4,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 # ---------- 领域模型 ----------
@@ -31,6 +31,14 @@ class LLMOverride(BaseModel):
     base_url: Optional[str] = None
     api_key: Optional[str] = None
     model: Optional[str] = None
+
+    @field_validator("base_url")
+    @classmethod
+    def _check_base_url(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or not v.strip():
+            return v
+        from .urlguard import validate_base_url
+        return validate_base_url(v)
 
 
 class ChildSpec(BaseModel):

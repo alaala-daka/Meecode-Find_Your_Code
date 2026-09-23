@@ -8,13 +8,17 @@ NOW = 1_700_000_000
 
 
 def test_sign_then_verify_roundtrip():
-    assert auth.verify(auth.sign(7, NOW), NOW) == 7
+    assert auth.verify(auth.sign(7, NOW), NOW) == (7, 0)
+
+
+def test_sign_carries_epoch_kwarg():
+    assert auth.verify(auth.sign(7, NOW, epoch=3), NOW) == (7, 3)
 
 
 def test_tampered_payload_is_rejected():
     token = auth.sign(7, NOW)
     body, sig = token.split(".", 1)
-    forged = auth.base64.urlsafe_b64encode(b"9:%d" % NOW).decode().rstrip("=")
+    forged = auth.base64.urlsafe_b64encode(b"9:%d:0" % NOW).decode().rstrip("=")
     assert auth.verify(f"{forged}.{sig}", NOW) is None
 
 
@@ -91,3 +95,38 @@ def test_session_cookie_secure_in_prod(monkeypatch):
     monkeypatch.setattr(config, "GITHUB_MOCK", True, raising=False)
     resp = me.oauth_entry()
     assert "secure" not in resp.headers["set-cookie"].lower()
+
+
+def test_token_carries_session_epoch(conn):
+    uid = auth.upsert_user(conn, {"id": 901, "login": "e", "avatar_url": ""})
+    token = auth.issue_token(conn, uid)
+    assert auth.verify(token, NOW) == (uid, 0)
+
+
+def test_revoke_all_blocks_current_user(conn):
+    """verify 是纯计算不查库:吊销靠 current_user 的 epoch 比对,不是靠改密钥。"""
+    from starlette.requests import Request
+
+    uid = auth.upsert_user(conn, {"id": 902, "login": "e", "avatar_url": ""})
+    token = auth.issue_token(conn, uid)
+    scope = {"type": "http", "method": "GET", "path": "/api/me", "headers": [
+        (b"cookie", f"{config.SESSION_COOKIE}={token}".encode())], "client": ("1.1.1.1", 1)}
+    assert auth.current_user(Request(scope), conn)["id"] == uid
+    auth.revoke_all(conn, uid)
+    assert auth.current_user(Request(scope), conn) is None
+    assert auth.verify(token, NOW) == (uid, 0)       # 签名层仍有效:吊销靠 epoch 比对,不是靠改密钥
+
+
+def test_reissue_after_revoke_gets_new_epoch(conn):
+    uid = auth.upsert_user(conn, {"id": 903, "login": "e", "avatar_url": ""})
+    auth.revoke_all(conn, uid)
+    auth.revoke_all(conn, uid)
+    token = auth.issue_token(conn, uid)
+    assert auth.verify(token, NOW) == (uid, 2)
+
+
+def test_old_two_part_token_rejected():
+    """格式变更:旧版 base64(user_id:issued) 无 epoch 段,一律按未登录。"""
+    body = auth.base64.urlsafe_b64encode(b"7:%d" % NOW).decode().rstrip("=")
+    token = f"{body}.{auth._sig(body)}"
+    assert auth.verify(token, NOW) is None

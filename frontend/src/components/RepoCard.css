@@ -1,13 +1,15 @@
 /* src/components/RepoCard.css —— 线框卡片网格（§5）：白底 + 发丝线，静置无影、悬停微升；
-   网格随断点 1/2/3/4 列，文本卡在 1280 壳宽下四列即舒适阅读宽度 */
+   网格随断点 1/2/3/4 列，文本卡在 1280 壳宽下四列即舒适阅读宽度。
+   列宽用 minmax(0, 1fr)：1fr 等价 minmax(auto, 1fr)，卡片内出现长不可断内容
+   （长 URL/连字符名）时该列会被 min-content 撑宽、整列错位，0 下限锁死等宽 */
 .repo-grid {
   display: grid;
-  grid-template-columns: 1fr;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--grid-gap);
 }
-@media (min-width: 480px) { .repo-grid { grid-template-columns: repeat(2, 1fr); } }
-@media (min-width: 760px) { .repo-grid { grid-template-columns: repeat(3, 1fr); } }
-@media (min-width: 1040px) { .repo-grid { grid-template-columns: repeat(4, 1fr); } }
+@media (min-width: 480px) { .repo-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (min-width: 760px) { .repo-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (min-width: 1040px) { .repo-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 
 .repo-card {
   display: flex;
@@ -66,6 +68,7 @@
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+  overflow-wrap: anywhere;
   font-size: 13px;
   line-height: 20px;
   color: var(--ink-2);

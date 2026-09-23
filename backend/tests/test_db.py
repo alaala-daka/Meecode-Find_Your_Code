@@ -1,4 +1,6 @@
 """建表与 FTS5 同步的最小验证。"""
+import sqlite3
+
 from app.feed import db
 
 
@@ -50,3 +52,29 @@ def test_interactions_upsert_is_idempotent(conn):
             " ON CONFLICT(user_id, repo_id, kind) DO UPDATE SET updated_at = excluded.updated_at"
         )
     assert conn.execute("SELECT count(*) c FROM interactions").fetchone()["c"] == 1
+
+
+def test_init_db_migrates_legacy_users_without_session_epoch():
+    """生产升级唯一路径：旧库 users 无 session_epoch，init_db 须 ALTER 补列且默认 0。"""
+    legacy = sqlite3.connect(":memory:")
+    legacy.row_factory = sqlite3.Row
+    legacy.executescript(
+        """
+        CREATE TABLE users (
+            id         INTEGER PRIMARY KEY,
+            github_id  INTEGER NOT NULL UNIQUE,
+            login      TEXT    NOT NULL,
+            avatar_url TEXT    NOT NULL DEFAULT '',
+            bio        TEXT    NOT NULL DEFAULT '',
+            created_at INTEGER NOT NULL DEFAULT (unixepoch())
+        );
+        INSERT INTO users (github_id, login) VALUES (7, 'old-user');
+        """
+    )
+    db.init_db(legacy)
+    cols = {r["name"]: r["dflt_value"] for r in legacy.execute("PRAGMA table_info(users)")}
+    assert "session_epoch" in cols
+    assert cols["session_epoch"] == "0"
+    row = legacy.execute("SELECT session_epoch FROM users WHERE github_id = 7").fetchone()
+    assert row["session_epoch"] == 0
+    legacy.close()

@@ -13,6 +13,7 @@ from .schemas import BaseModel, LLMOverride
 T = TypeVar("T", bound=BaseModel)
 
 # 按解析后的 (base_url, api_key) 缓存:{api_key:"x"} 与 {base_url:默认, api_key:"x"} 命中同一客户端
+_CLIENTS_MAX = 32
 _clients: dict[tuple[str, str], OpenAI] = {}
 
 
@@ -21,8 +22,14 @@ def _resolve(llm: LLMOverride | None) -> tuple[OpenAI, str]:
     base_url = ((llm.base_url or "").strip() if llm else "") or config.LLM_BASE_URL
     api_key = ((llm.api_key or "").strip() if llm else "") or config.LLM_API_KEY
     model = ((llm.model or "").strip() if llm else "") or config.LLM_MODEL
+    if llm and (llm.base_url or "").strip():
+        # 防御性复检:schemas 校验过的请求仍在此拦截（如内部直接构造 LLMOverride 的调用方）
+        from .urlguard import validate_base_url
+        base_url = validate_base_url(base_url)
     key = (base_url, api_key)
     if key not in _clients:
+        while len(_clients) >= _CLIENTS_MAX:
+            _clients.pop(next(iter(_clients)))   # FIFO 淘汰最旧，保住高频键
         _clients[key] = OpenAI(base_url=base_url, api_key=api_key)
     return _clients[key], model
 

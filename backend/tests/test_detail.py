@@ -1,4 +1,6 @@
 """详细阐述端点:mock 确定性输出 + 会话守卫 + 覆盖穿线。"""
+import socket
+
 from fastapi.testclient import TestClient
 
 from app import config
@@ -45,6 +47,8 @@ def test_detail_threads_llm_override(monkeypatch):
     from app.schemas import ElaborateResult
 
     monkeypatch.setattr(config, "LLM_MOCK", False)
+    monkeypatch.setattr(socket, "getaddrinfo",
+                        lambda host, port, *a, **k: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("203.0.113.10", port or 0))])
     seen: dict = {}
 
     def fake_chat_json(system, user, model, **kwargs):

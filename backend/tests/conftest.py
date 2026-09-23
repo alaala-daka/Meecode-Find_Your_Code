@@ -1,7 +1,7 @@
 """测试公共装置:解读域清 LLM 客户端缓存;信息流域每用例内存库 + 清 GitHub 缓存。"""
 import pytest
 
-from app import llm
+from app import config, llm
 
 
 @pytest.fixture(autouse=True)
@@ -31,3 +31,14 @@ def conn():
     db.init_db(c)
     yield c
     c.close()
+
+
+@pytest.fixture(autouse=True)
+def _rate_limit_off(monkeypatch):
+    """安全基线：限流默认关闭，存量用例不受分桶影响；test_security 内 autouse 自行开回。"""
+    from app import security
+
+    monkeypatch.setattr(config, "RATE_LIMIT_ENABLED", False)
+    security._limiter.reset()
+    yield
+    security._limiter.reset()

@@ -10,12 +10,13 @@ from .. import config
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
-    id          INTEGER PRIMARY KEY,
-    github_id   INTEGER NOT NULL UNIQUE,
-    login       TEXT    NOT NULL,
-    avatar_url  TEXT    NOT NULL DEFAULT '',
-    bio         TEXT    NOT NULL DEFAULT '',
-    created_at  INTEGER NOT NULL DEFAULT (unixepoch())
+    id            INTEGER PRIMARY KEY,
+    github_id     INTEGER NOT NULL UNIQUE,
+    login         TEXT    NOT NULL,
+    avatar_url    TEXT    NOT NULL DEFAULT '',
+    bio           TEXT    NOT NULL DEFAULT '',
+    session_epoch INTEGER NOT NULL DEFAULT 0,
+    created_at    INTEGER NOT NULL DEFAULT (unixepoch())
 );
 
 CREATE TABLE IF NOT EXISTS repos (
@@ -102,4 +103,7 @@ def connect(path: str | None = None) -> sqlite3.Connection:
 
 def init_db(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA)
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(users)")}
+    if "session_epoch" not in cols:
+        conn.execute("ALTER TABLE users ADD COLUMN session_epoch INTEGER NOT NULL DEFAULT 0")
     conn.commit()
