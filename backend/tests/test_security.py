@@ -102,13 +102,29 @@ def test_limiter_window_slide_recovers():
     assert limiter.allow("k", 2, 60, NOW + 61)[0]       # 窗口滑过即恢复
 
 
-def test_limiter_evicts_oldest_key_at_capacity():
+def test_limiter_rejects_new_key_at_capacity():
     limiter = security.SlidingWindowLimiter()
     for i in range(3):
-        limiter.allow(f"k{i}", 5, 60, NOW)
-    limiter.allow("new", 5, 60, NOW, max_keys=3)
-    assert len(limiter._hits) == 3                       # 淘汰最早加入的 k0
-    assert "new" in limiter._hits and "k0" not in limiter._hits
+        assert limiter.allow(f"k{i}", 5, 60, NOW)[0]
+    allowed, retry = limiter.allow("new", 5, 60, NOW, max_keys=3)
+    assert not allowed and retry >= 1                       # 满额拒新键，不淘汰
+    assert "new" not in limiter._hits and "k0" in limiter._hits
+
+
+def test_limiter_existing_key_allowed_at_capacity():
+    limiter = security.SlidingWindowLimiter()
+    for i in range(3):
+        limiter.allow(f"k{i}", 5, 60, NOW, max_keys=3)
+    assert limiter.allow("k0", 5, 60, NOW + 1, max_keys=3)[0]   # 洪水不重置既有配额
+
+
+def test_limiter_sweeps_expired_keys_before_rejecting():
+    limiter = security.SlidingWindowLimiter()
+    for i in range(3):
+        limiter.allow(f"stale{i}", 5, 60, NOW, max_keys=3)
+    allowed, _ = limiter.allow("new", 5, 60, NOW + 120, max_keys=3)  # 全过期后清槽
+    assert allowed and "new" in limiter._hits
+    assert len(limiter._hits) == 1
 
 
 # ---------- 中间件（经 TestClient 走真实栈） ----------
@@ -160,3 +176,14 @@ def test_rate_limit_disabled_passes(client, monkeypatch):
     monkeypatch.setattr(config, "RATE_LIMITS", {**config.RATE_LIMITS, "default": 1})
     for _ in range(4):
         assert client.get("/api/me").status_code == 200
+
+
+def test_browse_traffic_does_not_consume_llm_quota(client, monkeypatch):
+    # 跨桶隔离回归：default 桶流量不得吃掉 session 桶独立配额
+    monkeypatch.setattr(config, "RATE_LIMITS",
+                        {**config.RATE_LIMITS, "default": 50, "session": 2})
+    for _ in range(5):
+        assert client.get("/api/me").status_code == 200
+    assert client.post("/api/sessions").status_code == 200
+    assert client.post("/api/sessions").status_code == 200
+    assert client.post("/api/sessions").status_code == 429

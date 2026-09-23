@@ -63,7 +63,10 @@ def rate_key(request: Request) -> str:
 
 
 class SlidingWindowLimiter:
-    """进程内滑动窗口计数。多 worker 部署时各进程独立计数（见 spec 风险表）。"""
+    """进程内滑动窗口计数。多 worker 部署时各进程独立计数（见 spec 风险表）。
+
+    键满额时拒新键（先清过期键再拒），不淘汰既有键——淘汰会把受害者配额一并清零。
+    """
 
     def __init__(self) -> None:
         self._hits: dict[str, list[float]] = {}
@@ -74,8 +77,9 @@ class SlidingWindowLimiter:
         hits = self._hits.get(key)
         if hits is None:
             if len(self._hits) >= max_keys:
-                # 键数上限：淘汰最早加入的键（dict 保序），防内存无限增长
-                self._hits.pop(next(iter(self._hits)), None)
+                self._sweep_expired(now, window)
+                if len(self._hits) >= max_keys:
+                    return False, 1   # 满额拒新键：不淘汰既有键，防洪水重置配额
             hits = []
         hits = [t for t in hits if t > now - window]     # 剪枝过期命中即清理
         if len(hits) >= limit:
@@ -84,6 +88,12 @@ class SlidingWindowLimiter:
         hits.append(now)
         self._hits[key] = hits
         return True, 0
+
+    def _sweep_expired(self, now: float, window: float) -> None:
+        """清理窗口内无命中的键（hits 末位即最新时间戳）。仅满额路径触发。"""
+        cutoff = now - window
+        for k in [k for k, hits in self._hits.items() if not hits or hits[-1] <= cutoff]:
+            del self._hits[k]
 
     def reset(self) -> None:
         self._hits.clear()
@@ -106,11 +116,10 @@ class SecurityMiddleware(BaseHTTPMiddleware):
                 return JSONResponse({"detail": "非法来源请求"}, status_code=403)
 
         if config.RATE_LIMIT_ENABLED:
-            limit = config.RATE_LIMITS.get(
-                bucket_for(request.method, path), config.RATE_LIMITS["default"]
-            )
+            bucket = bucket_for(request.method, path)
+            limit = config.RATE_LIMITS.get(bucket, config.RATE_LIMITS["default"])
             allowed, retry_after = _limiter.allow(
-                rate_key(request), limit, config.RATE_LIMIT_WINDOW,
+                f"{bucket}:{rate_key(request)}", limit, config.RATE_LIMIT_WINDOW,
                 time.time(), config.RATE_LIMIT_MAX_KEYS,
             )
             if not allowed:
