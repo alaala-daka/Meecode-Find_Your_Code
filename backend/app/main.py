@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -61,8 +62,50 @@ app.include_router(submit_routes.router, prefix="/api")
 app.include_router(me_routes.router, prefix="/api")
 app.include_router(users_routes.router, prefix="/api")
 
-# 会话仅存活于进程内存(构思文档开放问题4默认:仅会话内有效)
-_sessions: dict[str, dict] = {}
+class _SessionStore:
+    """进程内解读会话:滑动 TTL + 容量上限,满额拒新键(不淘汰既有,防洪水重置)。
+
+    与 SlidingWindowLimiter 同一取舍;dict 写入加锁,同步路由跑在线程池里。
+    """
+
+    def __init__(self) -> None:
+        self._data: dict[str, dict] = {}
+        self._lock = threading.Lock()
+
+    def create(self, now: float | None = None) -> str | None:
+        ts = time.time() if now is None else now
+        with self._lock:
+            self._sweep(ts)
+            if len(self._data) >= config.EXPLAIN_SESSION_MAX:
+                return None
+            sid = uuid.uuid4().hex
+            self._data[sid] = {"last_seen": ts, "repo_context": None}
+            return sid
+
+    def get(self, session_id: str, now: float | None = None) -> dict | None:
+        ts = time.time() if now is None else now
+        with self._lock:
+            item = self._data.get(session_id)
+            if item is None:
+                return None
+            if ts - item["last_seen"] > config.EXPLAIN_SESSION_TTL:
+                del self._data[session_id]
+                return None
+            item["last_seen"] = ts
+            return item
+
+    def _sweep(self, ts: float) -> None:
+        cutoff = config.EXPLAIN_SESSION_TTL
+        for k in [k for k, v in self._data.items() if ts - v["last_seen"] > cutoff]:
+            del self._data[k]
+
+    def reset(self) -> None:
+        with self._lock:
+            self._data.clear()
+
+
+# 会话仅存活于进程内存(构思文档开放问题4默认:仅会话内有效);TTL/容量见 config.EXPLAIN_SESSION_*
+_sessions = _SessionStore()
 
 
 @app.get("/api/health")
@@ -72,8 +115,10 @@ def health() -> dict:
 
 @app.post("/api/sessions", response_model=CreateSessionResponse)
 def create_session() -> CreateSessionResponse:
-    session_id = uuid.uuid4().hex
-    _sessions[session_id] = {"created_at": time.time(), "repo_context": None}
+    session_id = _sessions.create()
+    if session_id is None:
+        raise HTTPException(status_code=429, detail="会话创建过多，请稍后再试",
+                            headers={"Retry-After": "60"})
     return CreateSessionResponse(session_id=session_id)
 
 
@@ -102,7 +147,7 @@ def create_repo_root(req: RepoRootRequest) -> RepoRootResponse:
             repo = gh.fetch_repo_context(req.full_name, req.default_branch)
         except gh.GitHubFetchError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
-    _sessions[req.session_id]["repo_context"] = repo
+    _require_session(req.session_id)["repo_context"] = repo
 
     try:
         topic = run_repo_topic(repo["full_name"], repo["description"], repo["readme"], llm=req.llm)
@@ -152,7 +197,7 @@ def expand(req: ExpandRequest) -> ExpandResponse:
             depth=req.depth,
             settings=req.settings,
             llm=req.llm,
-            repo_context=_sessions[req.session_id].get("repo_context"),
+            repo_context=_require_session(req.session_id).get("repo_context"),
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
@@ -199,7 +244,7 @@ def node_detail(req: DetailRequest) -> DetailResponse:
             req.path,
             req.brief,
             llm=req.llm,
-            repo_context=_sessions[req.session_id].get("repo_context"),
+            repo_context=_require_session(req.session_id).get("repo_context"),
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
@@ -233,7 +278,7 @@ def reader_chat(req: ChatRequest) -> StreamingResponse:
             .replace("{path}", " → ".join(req.path) or req.node_title)
             .replace("{detail}", req.detail or "(暂无精读内容)")
         )
-        context += prompts.repo_block(_sessions[req.session_id].get("repo_context"))
+        context += prompts.repo_block(_require_session(req.session_id).get("repo_context"))
         events = chat_stream_events(
             system=prompts.READER_CHAT_SYSTEM,
             messages=[{"role": "user", "content": context}, *history],
@@ -243,6 +288,8 @@ def reader_chat(req: ChatRequest) -> StreamingResponse:
     return StreamingResponse(_ndjson_stream(events), media_type="application/x-ndjson")
 
 
-def _require_session(session_id: str) -> None:
-    if session_id not in _sessions:
+def _require_session(session_id: str) -> dict:
+    item = _sessions.get(session_id)
+    if item is None:
         raise HTTPException(status_code=404, detail="会话不存在或已过期,请重新开始")
+    return item
