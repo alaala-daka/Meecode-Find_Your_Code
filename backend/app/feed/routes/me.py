@@ -64,7 +64,7 @@ def oauth_callback(
     resp = RedirectResponse(config.FRONTEND_ORIGIN)
     resp.delete_cookie(OAUTH_STATE_COOKIE)
     resp.set_cookie(
-        config.SESSION_COOKIE, auth.sign(user_id),
+        config.SESSION_COOKIE, auth.issue_token(conn, user_id),
         max_age=config.SESSION_MAX_AGE, httponly=True, samesite="lax",
         secure=not config.GITHUB_MOCK,
     )
@@ -72,7 +72,15 @@ def oauth_callback(
 
 
 @router.post("/auth/logout")
-def logout(response: Response) -> dict:
+def logout(request: Request, response: Response,
+           conn: sqlite3.Connection = Depends(get_conn)) -> dict:
+    """退出登录 = 吊销该账号全部登录态并清 cookie。
+
+    无服务端 token 存储,单端精确吊销做不到;安全优先,退出即全端下线。
+    """
+    user = auth.current_user(request, conn)
+    if user is not None:
+        auth.revoke_all(conn, user["id"])
     response.delete_cookie(config.SESSION_COOKIE)
     return {"ok": True}
 

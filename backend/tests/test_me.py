@@ -253,3 +253,16 @@ def test_history_hidden_from_others(client, login, conn):
     # 未见过的用户合成空档案而不是 404(采集仓库作者可能从未登录过觅码)
     prof = client.get("/api/users/ghost/profile").json()
     assert prof["login"] == "ghost" and prof["repo_count"] == 0
+
+
+def test_logout_revokes_all_sessions(conn, client):
+    uid = auth.upsert_user(conn, {"id": 710, "login": "demo", "avatar_url": ""})
+    token = auth.issue_token(conn, uid)
+    client.cookies.set(config.SESSION_COOKIE, token, domain="testserver.local")
+    assert client.get("/api/me").json()["id"] == uid
+
+    resp = client.post("/api/auth/logout")
+    assert resp.status_code == 200
+
+    client.cookies.set(config.SESSION_COOKIE, token, domain="testserver.local")
+    assert client.get("/api/me").json() is None      # 旧 cookie 已吊销

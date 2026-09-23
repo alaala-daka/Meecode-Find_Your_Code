@@ -1,8 +1,10 @@
 """登录态：GitHub OAuth 换取一次性 token 读身份，随即丢弃。
 
 觅码不存 access_token（见 Global Constraints）：登录态是 stdlib HMAC 签名
-cookie，格式 base64(user_id:issued_at).hexsig。数据库泄露也带不走任何人的
-GitHub 权限。
+cookie，格式 base64(user_id:issued_at:session_epoch).hexsig。数据库泄露也带不走任何人的
+GitHub 权限。session_epoch 嵌入 cookie，revoke_all 自增即全端吊销（比对在
+current_user 查库完成）。格式变更一次性全员重登：旧版 base64(user_id:issued)
+无 epoch 段，解析失败一律按未登录。
 """
 from __future__ import annotations
 
@@ -23,17 +25,19 @@ def _sig(body: str) -> str:
     ).hexdigest()
 
 
-def sign(user_id: int, now: int | None = None) -> str:
+def sign(user_id: int, now: int | None = None, epoch: int = 0) -> str:
+    """格式 base64url(user_id:issued_at:session_epoch).hexsig；epoch 用于全端吊销。"""
     issued = int(now or time.time())
-    body = base64.urlsafe_b64encode(f"{user_id}:{issued}".encode()).decode().rstrip("=")
+    body = base64.urlsafe_b64encode(f"{user_id}:{issued}:{epoch}".encode()).decode().rstrip("=")
     return f"{body}.{_sig(body)}"
 
 
-def verify(token: str, now: int | None = None) -> int | None:
-    """校验签名与有效期。任何异常一律当作未登录，不抛。
+def verify(token: str, now: int | None = None) -> tuple[int, int] | None:
+    """校验签名与有效期，返回 (user_id, session_epoch)。任何异常一律当作未登录，不抛。
 
     签名比对放 try 内：非 ASCII 签名段会让 compare_digest 抛 TypeError
     （Starlette 以 latin-1 解码头，原始字节可能进来），一律按未登录处理。
+    epoch 是否仍等于 users.session_epoch 由 current_user 查库比对（verify 保持纯计算）。
     """
     if not token or "." not in token:
         return None
@@ -43,13 +47,27 @@ def verify(token: str, now: int | None = None) -> int | None:
             return None
         padded = body + "=" * (-len(body) % 4)
         raw = base64.urlsafe_b64decode(padded).decode()
-        user_id_s, _, issued_s = raw.partition(":")
-        user_id, issued = int(user_id_s), int(issued_s)
+        user_id_s, _, rest = raw.partition(":")
+        issued_s, _, epoch_s = rest.partition(":")
+        user_id, issued, epoch = int(user_id_s), int(issued_s), int(epoch_s)
     except (ValueError, UnicodeDecodeError, TypeError):
         return None
     if int(now or time.time()) - issued > config.SESSION_MAX_AGE:
         return None
-    return user_id
+    return user_id, epoch
+
+
+def issue_token(conn: sqlite3.Connection, user_id: int) -> str:
+    """签发带当前 session_epoch 的登录 cookie。"""
+    row = conn.execute("SELECT session_epoch FROM users WHERE id = ?", (user_id,)).fetchone()
+    epoch = row["session_epoch"] if row else 0
+    return sign(user_id, epoch=epoch)
+
+
+def revoke_all(conn: sqlite3.Connection, user_id: int) -> None:
+    """吊销该用户全部登录态：epoch 自增后，既有 token 的 epoch 比对不过。"""
+    conn.execute("UPDATE users SET session_epoch = session_epoch + 1 WHERE id = ?", (user_id,))
+    conn.commit()
 
 
 def upsert_user(conn: sqlite3.Connection, gh_user: dict) -> int:
@@ -72,10 +90,14 @@ def upsert_user(conn: sqlite3.Connection, gh_user: dict) -> int:
 
 
 def current_user(request: Request, conn: sqlite3.Connection) -> sqlite3.Row | None:
-    user_id = verify(request.cookies.get(config.SESSION_COOKIE, ""))
-    if user_id is None:
+    verified = verify(request.cookies.get(config.SESSION_COOKIE, ""))
+    if verified is None:
         return None
-    return conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+    user_id, epoch = verified
+    row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+    if row is None or row["session_epoch"] != epoch:
+        return None            # 已吊销(revoke_all/logout 全端下线)
+    return row
 
 
 def require_user(request: Request, conn: sqlite3.Connection) -> sqlite3.Row:

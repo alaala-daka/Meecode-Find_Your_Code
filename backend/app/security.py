@@ -59,8 +59,8 @@ def client_ip(request: Request) -> str:
 def rate_key(request: Request) -> str:
     """登录用户按 user_id（验签纯计算不查库），匿名按 IP。"""
     token = request.cookies.get(config.SESSION_COOKIE, "")
-    user_id = auth.verify(token) if token else None
-    return f"u:{user_id}" if user_id else f"ip:{client_ip(request)}"
+    verified = auth.verify(token) if token else None
+    return f"u:{verified[0]}" if verified else f"ip:{client_ip(request)}"
 
 
 class SlidingWindowLimiter:
