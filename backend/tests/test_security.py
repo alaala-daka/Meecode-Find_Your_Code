@@ -66,7 +66,20 @@ def test_rate_key_ignores_forged_xff_from_untrusted_peer():
 def test_rate_key_prefers_logged_in_user(conn):
     uid = auth.upsert_user(conn, {"id": 42, "login": "k", "avatar_url": ""})
     req = _request(cookies={config.SESSION_COOKIE: auth.sign(uid)})
-    assert security.rate_key(req) == f"u:{uid}"
+    assert security.rate_key(req) == f"u:{uid}:0"
+
+
+def test_rate_key_isolates_revoked_token_from_fresh_token(conn):
+    """吊销后旧 token 签名未过期，限流键须带旧 epoch 落独立桶，不得烧受害者新配额。"""
+    uid = auth.upsert_user(conn, {"id": 43, "login": "rev", "avatar_url": ""})
+    old_token = auth.issue_token(conn, uid)      # epoch 0
+    auth.revoke_all(conn, uid)                   # epoch -> 1
+    new_token = auth.issue_token(conn, uid)      # epoch 1
+    old_key = security.rate_key(_request(cookies={config.SESSION_COOKIE: old_token}))
+    new_key = security.rate_key(_request(cookies={config.SESSION_COOKIE: new_token}))
+    assert old_key == f"u:{uid}:0"
+    assert new_key == f"u:{uid}:1"
+    assert old_key != new_key                    # 配额隔离
 
 
 def test_rate_key_bad_signature_is_anonymous():

@@ -1,8 +1,8 @@
 """安全中间件：内存滑动窗口限流 + Origin 白名单 CSRF 校验。
 
 零第三方依赖：计数器为进程内 dict，单 worker 部署（systemd 单元）语义完备。
-限流键登录用户优先（HMAC cookie 验签，不查库），匿名回退 XFF 末段 IP
-（nginx $proxy_add_x_forwarded_for 由受信代理追加，前置段可伪造，弃用）。
+限流键登录用户优先（HMAC cookie 验签，不查库），匿名取客户端 IP——仅受信对端
+的 XFF 末段采信，非受信来源一律取 socket 对端（防伪造 XFF 换限流键）。
 设计依据：docs/superpowers/specs/2026-09-21-觅码-安全基线-design.md。
 """
 from __future__ import annotations
@@ -64,10 +64,17 @@ def client_ip(request: Request) -> str:
 
 
 def rate_key(request: Request) -> str:
-    """登录用户按 user_id（验签纯计算不查库），匿名按 IP。"""
+    """登录用户按 (user_id, session_epoch)（验签纯计算不查库），匿名按 IP。
+
+    吊销靠 current_user 的 epoch 比对；限流键含 epoch 以隔离吊销前的旧 token
+    （其签名在 SESSION_MAX_AGE 内仍有效），防止旧 token 烧掉受害者的共享配额。
+    """
     token = request.cookies.get(config.SESSION_COOKIE, "")
     verified = auth.verify(token) if token else None
-    return f"u:{verified[0]}" if verified else f"ip:{client_ip(request)}"
+    if verified is None:
+        return f"ip:{client_ip(request)}"
+    user_id, epoch = verified
+    return f"u:{user_id}:{epoch}"
 
 
 class SlidingWindowLimiter:
