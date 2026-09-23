@@ -66,6 +66,19 @@ def test_rejects_missing_host():
         urlguard.validate_base_url("http:///v1")
 
 
+def test_rejects_unclosed_ipv6_bracket_with_chinese_message():
+    # urlparse 抛英文 stdlib ValueError("Invalid IPv6 URL")，须包成中文
+    with pytest.raises(ValueError, match="模型接口地址格式非法"):
+        urlguard.validate_base_url("http://[::1")
+
+
+def test_rejects_invalid_port_with_chinese_message():
+    # parsed.port 抛英文 stdlib ValueError，须包成中文（非法端口/超范围）
+    for url in ("http://example.com:abc", "http://example.com:65536"):
+        with pytest.raises(ValueError, match="模型接口地址端口非法"):
+            urlguard.validate_base_url(url)
+
+
 def test_allows_public_https(monkeypatch):
     monkeypatch.setattr(socket, "getaddrinfo", _fake_getaddrinfo(["203.0.113.10"]))
     assert urlguard.validate_base_url("https://api.deepseek.com") == "https://api.deepseek.com"

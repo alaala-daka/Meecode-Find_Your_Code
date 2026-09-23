@@ -40,7 +40,10 @@ def _ip_is_public(ip_str: str) -> bool:
 def validate_base_url(url: str) -> str:
     """校验请求级 LLM base_url；通过返回 strip 后的 url，否则 raise ValueError。"""
     cleaned = (url or "").strip()
-    parsed = urlparse(cleaned)
+    try:
+        parsed = urlparse(cleaned)
+    except ValueError as exc:      # 如未闭合 '['：stdlib 抛英文 "Invalid IPv6 URL"
+        raise ValueError("模型接口地址格式非法") from exc
     if parsed.scheme not in ("http", "https"):
         raise ValueError("模型接口地址仅支持 http/https")
     if parsed.username or parsed.password:
@@ -49,7 +52,11 @@ def validate_base_url(url: str) -> str:
     if not host:
         raise ValueError("模型接口地址缺少主机名")
     try:
-        infos = socket.getaddrinfo(host, parsed.port)
+        port = parsed.port         # 非法/超范围端口：stdlib 抛英文 ValueError
+    except ValueError as exc:
+        raise ValueError("模型接口地址端口非法") from exc
+    try:
+        infos = socket.getaddrinfo(host, port)
     except socket.gaierror as exc:
         raise ValueError(f"模型接口地址无法解析：{host}") from exc
     if not infos:
