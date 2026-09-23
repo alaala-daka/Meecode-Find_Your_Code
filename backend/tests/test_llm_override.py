@@ -40,7 +40,8 @@ class _FakeOpenAI:
 
 @pytest.fixture
 def env(monkeypatch):
-    """固定 env 配置 + 伪 OpenAI,返回创建记录。"""
+    """固定 env 配置 + 伪 OpenAI + 伪 DNS，返回创建记录。"""
+    import socket
     sink: dict[str, Any] = {}
     _FakeOpenAI.instances = []
     monkeypatch.setattr(llm, "OpenAI", lambda base_url=None, api_key=None: _FakeOpenAI(base_url, api_key, sink))
@@ -48,6 +49,8 @@ def env(monkeypatch):
     monkeypatch.setattr(llm.config, "LLM_API_KEY", "env-key")
     monkeypatch.setattr(llm.config, "LLM_BASE_URL", "https://env.example.com")
     monkeypatch.setattr(llm.config, "LLM_MODEL", "env-model")
+    monkeypatch.setattr(socket, "getaddrinfo",
+                        lambda host, port, *a, **k: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("203.0.113.10", port or 0))])
     return sink
 
 
@@ -88,3 +91,16 @@ def test_unconfigured_raises(monkeypatch):
     monkeypatch.setattr(llm, "OpenAI", lambda base_url=None, api_key=None: _FakeOpenAI(base_url, api_key, {}))
     monkeypatch.setattr(llm.config, "LLM_BASE_URL", "https://env.example.com")
     llm.chat_json("sys", "user", RewriteResult, llm=LLMOverride(api_key="sk-only"))
+
+
+def test_client_cache_is_capped(env, monkeypatch):
+    import socket
+    monkeypatch.setattr(socket, "getaddrinfo",
+                        lambda host, port, *a, **k: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("203.0.113.10", port or 0))])
+    assert llm._CLIENTS_MAX == 32
+    for i in range(llm._CLIENTS_MAX + 5):
+        llm._resolve(LLMOverride(base_url=f"https://h{i}.example.com", api_key=f"k{i}"))
+    assert len(llm._clients) <= llm._CLIENTS_MAX
+    assert ("https://h0.example.com", "k0") not in llm._clients
+    newest = (f"https://h{llm._CLIENTS_MAX + 4}.example.com", f"k{llm._CLIENTS_MAX + 4}")
+    assert newest in llm._clients
