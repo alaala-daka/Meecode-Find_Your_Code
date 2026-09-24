@@ -98,6 +98,7 @@ RELATED_LIMIT: int = 4                   # 仓库页「相关推荐」条数
 MAX_FILE_CHARS: int = 200_000            # 超大文件截断阈值,避免塞爆响应
 TREE_CACHE_SIZE: int = 512               # 文件树缓存条目上限
 FILE_CACHE_SIZE: int = 1024              # 文件内容缓存条目上限
+COMMENT_MAX_LEN: int = int(os.getenv("COMMENT_MAX_LEN", "2000"))   # 评论内容上限(字符)
 
 # ---------- 采集 ----------
 CRAWL_DAILY_QUOTA: int = 30             # 每日入库上限(防冲淡投稿)

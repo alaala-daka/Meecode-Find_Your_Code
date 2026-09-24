@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from .. import auth, cards
 from ..deps import get_conn
-from ..schemas import CommentOut, CommentsOut
+from ..schemas import CommentIn, CommentOut, CommentsOut
 
 router = APIRouter()
 
@@ -76,3 +76,43 @@ def list_comments(
         items.append(_to_out(r))
         items.extend(replies.get(r["id"], []))
     return CommentsOut(items=items, total=total)
+
+
+def _normalize_parent(conn: sqlite3.Connection, repo_id: int, parent_id: int) -> int:
+    """parent_id 归一到顶层祖先：两层平铺，对回复点「回复」落到同一顶层（spec 决策 3）。"""
+    row = conn.execute(
+        "SELECT id, parent_id FROM comments WHERE id = ? AND repo_id = ? AND status != 'deleted'",
+        (parent_id, repo_id),
+    ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=422, detail="回复的父评论不存在")
+    return row["parent_id"] if row["parent_id"] is not None else row["id"]
+
+
+@router.post("/comments", response_model=CommentOut)
+def create_comment(
+    body: CommentIn,
+    request: Request,
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> CommentOut:
+    """发表评论/回复。落库即 pending（LLM 预审由 Task 5 接入），响应不等判定。"""
+    if conn.execute(
+        "SELECT 1 FROM repos WHERE id = ? AND status = 'published'", (body.repo_id,)
+    ).fetchone() is None:
+        raise HTTPException(status_code=404, detail="仓库不存在或已下架")
+    user = auth.require_user(request, conn)
+    parent = (
+        _normalize_parent(conn, body.repo_id, body.parent_id)
+        if body.parent_id is not None else None
+    )
+    cur = conn.execute(
+        "INSERT INTO comments (repo_id, user_id, parent_id, content) VALUES (?,?,?,?)",
+        (body.repo_id, user["id"], parent, body.content),
+    )
+    conn.commit()
+    row = conn.execute(
+        "SELECT c.*, u.login AS user_login, u.avatar_url AS user_avatar"
+        " FROM comments c JOIN users u ON u.id = c.user_id WHERE c.id = ?",
+        (cur.lastrowid,),
+    ).fetchone()
+    return _to_out(row)

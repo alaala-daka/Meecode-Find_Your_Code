@@ -131,3 +131,63 @@ def test_get_404_for_unknown_repo(conn, client):
 def test_get_404_for_delisted(conn, client):
     rid = add_repo(conn, status="delisted")
     assert client.get(f"/api/comments?repo_id={rid}").status_code == 404
+
+
+def test_post_top_level_creates_pending(conn, client, login):
+    rid = add_repo(conn)
+    resp = client.post("/api/comments", json={"repo_id": rid, "content": "  你好  "})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["content"] == "你好" and body["status"] == "pending"
+    assert body["parent_id"] is None and body["user_id"] == login
+
+
+def test_post_reply_normalizes_parent_to_top(conn, client, login):
+    rid = add_repo(conn)
+    top = add_comment(conn, rid, login, content="顶", status="visible", screened=1)
+    reply = add_comment(conn, rid, login, parent_id=top, content="回", status="visible", screened=1)
+    resp = client.post("/api/comments", json={"repo_id": rid, "content": "回回", "parent_id": reply})
+    assert resp.status_code == 200
+    assert resp.json()["parent_id"] == top   # 回复的回复归到同一顶层
+
+
+def test_post_rejects_empty_content(conn, client, login):
+    rid = add_repo(conn)
+    resp = client.post("/api/comments", json={"repo_id": rid, "content": "   "})
+    assert resp.status_code == 422
+    assert "不能为空" in resp.text
+
+
+def test_post_rejects_too_long_content(conn, client, login, monkeypatch):
+    monkeypatch.setattr(config, "COMMENT_MAX_LEN", 10)
+    rid = add_repo(conn)
+    resp = client.post("/api/comments", json={"repo_id": rid, "content": "x" * 11})
+    assert resp.status_code == 422
+    assert "过长" in resp.text
+
+
+def test_post_rejects_cross_repo_parent(conn, client, login):
+    rid = add_repo(conn, gid=1)
+    rid2 = add_repo(conn, gid=2, owner="other")
+    foreign = add_comment(conn, rid2, login, content="别处", status="visible", screened=1)
+    resp = client.post("/api/comments", json={"repo_id": rid, "content": "x", "parent_id": foreign})
+    assert resp.status_code == 422
+    assert "父评论" in resp.text
+
+
+def test_post_rejects_unknown_parent(conn, client, login):
+    rid = add_repo(conn)
+    resp = client.post("/api/comments", json={"repo_id": rid, "content": "x", "parent_id": 999})
+    assert resp.status_code == 422
+
+
+def test_post_requires_login(conn, client):
+    rid = add_repo(conn)
+    resp = client.post("/api/comments", json={"repo_id": rid, "content": "x"})
+    assert resp.status_code == 401
+
+
+def test_post_404_for_delisted_or_unknown_repo(conn, client, login):
+    rid = add_repo(conn, status="delisted")
+    assert client.post("/api/comments", json={"repo_id": rid, "content": "x"}).status_code == 404
+    assert client.post("/api/comments", json={"repo_id": 999, "content": "x"}).status_code == 404

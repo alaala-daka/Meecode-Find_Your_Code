@@ -154,3 +154,21 @@ class CommentsOut(BaseModel):
     """平铺列表：items 每顶层线程后跟其可见回复；total 为顶层线程数。"""
     items: list[CommentOut]
     total: int
+
+
+class CommentIn(BaseModel):
+    """发表评论/回复。content 校验带中文错误，前端可直出（同 SubmitIn 风格）。"""
+    repo_id: int
+    content: str
+    parent_id: int | None = None
+
+    @field_validator("content")
+    @classmethod
+    def _check_content(cls, v: str) -> str:
+        from .. import config
+        v = v.strip()
+        if not v:
+            raise ValueError("评论内容不能为空")
+        if len(v) > config.COMMENT_MAX_LEN:
+            raise ValueError(f"评论内容过长（上限 {config.COMMENT_MAX_LEN} 字符）")
+        return v
