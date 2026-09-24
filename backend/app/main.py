@@ -18,6 +18,7 @@ from .agent.graph import run_elaborate, run_expand, run_repo_topic, run_rewrite
 from .agent.mock import mock_chat_events, mock_repo_context
 from .feed import db
 from .security import SecurityMiddleware
+from .feed.routes import comments as comments_routes
 from .feed.routes import feed as feed_routes
 from .feed.routes import me as me_routes
 from .feed.routes import repos as repos_routes
@@ -61,6 +62,7 @@ app.include_router(repos_routes.router, prefix="/api")
 app.include_router(submit_routes.router, prefix="/api")
 app.include_router(me_routes.router, prefix="/api")
 app.include_router(users_routes.router, prefix="/api")
+app.include_router(comments_routes.router, prefix="/api")
 
 class _SessionStore:
     """进程内解读会话:滑动 TTL + 容量上限,满额拒新键(不淘汰既有,防洪水重置)。

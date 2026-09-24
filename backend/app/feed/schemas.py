@@ -134,3 +134,23 @@ class InteractionIn(BaseModel):
     repo_id: int
     kind: str    # 仅 like / favorite;visit 由服务端在详情接口写入
     active: bool
+
+
+class CommentOut(BaseModel):
+    """单条评论：两层平铺（parent_id 恒指顶层）。status 供前端渲染「审核中/已隐藏」标记。"""
+    id: int
+    repo_id: int
+    user_id: int
+    user_login: str
+    user_avatar: str = ""
+    parent_id: int | None = None
+    content: str
+    status: str
+    created_at: int
+    created_at_iso: str = ""
+
+
+class CommentsOut(BaseModel):
+    """平铺列表：items 每顶层线程后跟其可见回复；total 为顶层线程数。"""
+    items: list[CommentOut]
+    total: int
