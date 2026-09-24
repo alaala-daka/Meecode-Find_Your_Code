@@ -116,3 +116,54 @@ def create_comment(
         (cur.lastrowid,),
     ).fetchone()
     return _to_out(row)
+
+
+def _load_comment(conn: sqlite3.Connection, comment_id: int) -> sqlite3.Row:
+    row = conn.execute("SELECT * FROM comments WHERE id = ?", (comment_id,)).fetchone()
+    if row is None or row["status"] == "deleted":
+        raise HTTPException(status_code=404, detail="评论不存在")
+    return row
+
+
+def _is_repo_author(conn: sqlite3.Connection, repo_id: int, user: sqlite3.Row) -> bool:
+    """作者 = owner_login 匹配或 claimed_by 认领（与 delist 权限同口径，submit.py:180）。"""
+    row = conn.execute(
+        "SELECT owner_login, claimed_by FROM repos WHERE id = ?", (repo_id,)
+    ).fetchone()
+    return bool(row) and (row["claimed_by"] == user["id"] or row["owner_login"] == user["login"])
+
+
+@router.delete("/comments/{comment_id}")
+def delete_comment(
+    comment_id: int,
+    request: Request,
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    """软删自己的评论（status='deleted'，内容保留供审计）。幂等：已删除再删返回 ok。"""
+    user = auth.require_user(request, conn)
+    row = conn.execute("SELECT * FROM comments WHERE id = ?", (comment_id,)).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="评论不存在")
+    if row["user_id"] != user["id"]:
+        raise HTTPException(status_code=403, detail="只能删除自己的评论")
+    if row["status"] != "deleted":
+        conn.execute("UPDATE comments SET status = 'deleted' WHERE id = ?", (comment_id,))
+        conn.commit()
+    return {"ok": True}
+
+
+@router.post("/comments/{comment_id}/hide")
+def hide_comment(
+    comment_id: int,
+    request: Request,
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> dict:
+    """作者/认领者隐藏本仓库评论。幂等：已 hidden 再隐返回 ok；deleted 行 404。"""
+    user = auth.require_user(request, conn)
+    row = _load_comment(conn, comment_id)
+    if not _is_repo_author(conn, row["repo_id"], user):
+        raise HTTPException(status_code=403, detail="只有仓库作者可以隐藏评论")
+    if row["status"] != "hidden":
+        conn.execute("UPDATE comments SET status = 'hidden' WHERE id = ?", (comment_id,))
+        conn.commit()
+    return {"ok": True}

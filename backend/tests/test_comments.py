@@ -191,3 +191,79 @@ def test_post_404_for_delisted_or_unknown_repo(conn, client, login):
     rid = add_repo(conn, status="delisted")
     assert client.post("/api/comments", json={"repo_id": rid, "content": "x"}).status_code == 404
     assert client.post("/api/comments", json={"repo_id": 999, "content": "x"}).status_code == 404
+
+
+def test_delete_own_comment_soft_deletes(conn, client, login):
+    rid = add_repo(conn)
+    cid = add_comment(conn, rid, login, content="自删", status="visible", screened=1)
+    resp = client.delete(f"/api/comments/{cid}")
+    assert resp.status_code == 200 and resp.json() == {"ok": True}
+    row = conn.execute("SELECT status FROM comments WHERE id=?", (cid,)).fetchone()
+    assert row["status"] == "deleted"
+    assert client.get(f"/api/comments?repo_id={rid}").json() == {"items": [], "total": 0}
+
+
+def test_delete_other_comment_403(conn, client, login):
+    rid = add_repo(conn)
+    other = add_user(conn, 702, "u2")
+    cid = add_comment(conn, rid, other, content="别人的", status="visible", screened=1)
+    assert client.delete(f"/api/comments/{cid}").status_code == 403
+
+
+def test_delete_anonymous_401(conn, client):
+    rid = add_repo(conn)
+    cid = add_comment(conn, rid, add_user(conn, 702, "u2"), content="x", status="visible", screened=1)
+    assert client.delete(f"/api/comments/{cid}").status_code == 401
+
+
+def test_delete_unknown_404(conn, client, login):
+    assert client.delete("/api/comments/999").status_code == 404
+
+
+def test_delete_idempotent_on_deleted(conn, client, login):
+    rid = add_repo(conn)
+    cid = add_comment(conn, rid, login, content="x", status="deleted", screened=1)
+    assert client.delete(f"/api/comments/{cid}").status_code == 200
+
+
+def test_hide_by_author_owner_login(conn, client, login):
+    rid = add_repo(conn, owner="demo")          # owner_login == login 的 login 值
+    other = add_user(conn, 702, "u2")
+    cid = add_comment(conn, rid, other, content="被作者隐", status="visible", screened=1)
+    resp = client.post(f"/api/comments/{cid}/hide")
+    assert resp.status_code == 200
+    row = conn.execute("SELECT status FROM comments WHERE id=?", (cid,)).fetchone()
+    assert row["status"] == "hidden"
+
+
+def test_hide_by_claimer(conn, client, login):
+    rid = add_repo(conn, owner="stranger")
+    conn.execute("UPDATE repos SET claimed_by = ? WHERE id = ?", (login, rid))
+    conn.commit()
+    other = add_user(conn, 702, "u2")
+    cid = add_comment(conn, rid, other, content="被认领者隐", status="visible", screened=1)
+    assert client.post(f"/api/comments/{cid}/hide").status_code == 200
+
+
+def test_hide_by_stranger_403(conn, client, login):
+    rid = add_repo(conn, owner="stranger")
+    other = add_user(conn, 702, "u2")
+    cid = add_comment(conn, rid, other, content="x", status="visible", screened=1)
+    assert client.post(f"/api/comments/{cid}/hide").status_code == 403
+
+
+def test_hide_idempotent(conn, client, login):
+    rid = add_repo(conn, owner="demo")
+    cid = add_comment(conn, rid, login, content="x", status="hidden", screened=1)
+    assert client.post(f"/api/comments/{cid}/hide").status_code == 200
+
+
+def test_hide_on_deleted_404(conn, client, login):
+    rid = add_repo(conn, owner="demo")
+    cid = add_comment(conn, rid, login, content="x", status="deleted", screened=1)
+    assert client.post(f"/api/comments/{cid}/hide").status_code == 404
+
+
+def test_hide_anonymous_401(conn, client):
+    cid = 1
+    assert client.post(f"/api/comments/{cid}/hide").status_code == 401
