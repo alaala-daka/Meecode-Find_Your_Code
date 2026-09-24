@@ -50,7 +50,12 @@ export default function RepoPage() {
   useEffect(() => {
     let alive = true
     api.repo(repoId)
-      .then((d) => { if (!alive) return; setDetail(d) })
+      .then((d) => {
+        if (!alive) return
+        setDetail(d)
+        setLiked(d.liked)
+        setFaved(d.favorited)
+      })
       .catch(() => { if (alive) setLoadError(true) })
     api.repoTree(repoId).then((t) => {
       if (!alive) return
@@ -59,11 +64,6 @@ export default function RepoPage() {
       const first = t.find((n) => n.type === 'file')
       if (first) void selectFile(first.path)
     }).catch(() => { if (alive) setTreeError(true) })
-    // 真实客户端在请求失败时会 reject：互动状态拉取失败需捕获并提示，避免未处理拒绝
-    api.myLikes().then((ids) => alive && setLiked(ids.includes(repoId)))
-      .catch(() => { if (alive) setActionError('互动状态加载失败') })
-    api.myFavorites().then((ids) => alive && setFaved(ids.includes(repoId)))
-      .catch(() => { if (alive) setActionError('互动状态加载失败') })
     return () => { alive = false }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [repoId])

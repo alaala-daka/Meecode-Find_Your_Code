@@ -65,6 +65,19 @@ def get_repo(
     # 重读：views/likes 要含本次浏览（卡片口径实时算,不能拿浏览前的旧行）
     row = _load(conn, repo_id)
 
+    liked = favorited = False
+    if user is not None:
+        kinds = {
+            r["kind"]
+            for r in conn.execute(
+                "SELECT kind FROM interactions WHERE user_id = ? AND repo_id = ?"
+                " AND kind IN ('like', 'favorite')",
+                (user["id"], repo_id),
+            ).fetchall()
+        }
+        liked = "like" in kinds
+        favorited = "favorite" in kinds
+
     giscus = None
     try:
         giscus = github.get_discussion_meta(row["full_name"])
@@ -78,6 +91,8 @@ def get_repo(
         github_url=f"https://github.com/{row['full_name']}",
         default_branch=row["default_branch"],
         discussions_open=bool(giscus and giscus.get("repo_id")),
+        liked=liked,
+        favorited=favorited,
     )
 
 

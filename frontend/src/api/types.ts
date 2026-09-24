@@ -26,6 +26,8 @@ export interface RepoDetail extends RepoCardData {
   github_url: string
   default_branch: string
   discussions_open: boolean
+  liked: boolean       // 当前用户点赞态；未登录恒 false
+  favorited: boolean   // 当前用户收藏态；未登录恒 false
 }
 
 export interface UserProfile {
@@ -106,8 +108,6 @@ export interface ApiClient {
   userHistory(login: string): Promise<RepoCardData[]>
   setBio(bio: string): Promise<void>
   interact(repoId: number, kind: InteractKind, on: boolean): Promise<void>
-  myFavorites(): Promise<number[]>
-  myLikes(): Promise<number[]>
   delist(repoId: number): Promise<void>
   loginUrl(): string
   me(): Promise<CurrentUser | null> // GET /api/me：会话引导，未登录返回 null

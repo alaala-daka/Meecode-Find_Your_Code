@@ -11,5 +11,7 @@ export function toDetail(id: number): RepoDetail {
     github_url: `https://github.com/${card.full_name}`,
     default_branch: 'main',
     discussions_open: card.id % 2 === 1,
+    liked: false,
+    favorited: false,
   }
 }

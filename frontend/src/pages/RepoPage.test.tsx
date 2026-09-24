@@ -73,6 +73,14 @@ describe('RepoPage', () => {
     expect(btn).toHaveClass('is-on')
   })
 
+  it('互动态由详情回显：fixture 预置 repo1 点赞、未收藏', async () => {
+    renderAt('/repo/1')
+    await screen.findByText('mini-agent')
+    expect(screen.getByRole('button', { name: '点赞' })).toHaveClass('is-on')
+    expect(screen.getByRole('button', { name: '收藏' })).not.toHaveClass('is-on')
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
   it('Discussions 未开启显示提示（fixture：偶数 id 未开启）', async () => {
     renderAt('/repo/2')
     await screen.findByText('tinyfetch')

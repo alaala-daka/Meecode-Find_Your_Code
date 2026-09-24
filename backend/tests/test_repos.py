@@ -177,7 +177,32 @@ def test_repo_detail_frontend_shape(client_and_conn):
     assert body["default_branch"] == "main"
     assert body["intro_zh"] == "介绍"
     assert isinstance(body["discussions_open"], bool)
+    assert body["liked"] is False and body["favorited"] is False
     assert "readme_md" not in body and "giscus_repo_id" not in body
+
+
+def test_detail_liked_favorited_reflect_interactions(conn, client, repo_id):
+    uid = auth.upsert_user(conn, {"id": 42, "login": "u", "avatar_url": ""})
+    conn.execute(
+        "INSERT INTO interactions (user_id, repo_id, kind, updated_at)"
+        " VALUES (?, ?, 'like', 1)", (uid, repo_id))
+    conn.execute(
+        "INSERT INTO interactions (user_id, repo_id, kind, updated_at)"
+        " VALUES (?, ?, 'favorite', 1)", (uid, repo_id))
+    conn.commit()
+    client.cookies.set(config.SESSION_COOKIE, auth.sign(uid))
+    body = client.get(f"/api/repos/{repo_id}").json()
+    assert body["liked"] is True and body["favorited"] is True
+
+
+def test_detail_liked_favorited_false_for_anonymous(conn, client, repo_id):
+    uid = auth.upsert_user(conn, {"id": 42, "login": "u", "avatar_url": ""})
+    conn.execute(
+        "INSERT INTO interactions (user_id, repo_id, kind, updated_at)"
+        " VALUES (?, ?, 'like', 1)", (uid, repo_id))
+    conn.commit()
+    body = client.get(f"/api/repos/{repo_id}").json()
+    assert body["liked"] is False and body["favorited"] is False
 
 
 def test_tree_nested_and_types(monkeypatch, client_and_conn):

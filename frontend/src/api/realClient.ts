@@ -79,12 +79,6 @@ export function createRealClient(): ApiClient {
     async interact(repoId, kind: InteractKind, on) {
       await http('/api/interactions', jsonInit('POST', { repo_id: repoId, kind, active: on }))
     },
-    async myFavorites(): Promise<number[]> {
-      return http<number[]>('/api/me/interaction-ids?kind=favorite')
-    },
-    async myLikes(): Promise<number[]> {
-      return http<number[]>('/api/me/interaction-ids?kind=like')
-    },
     async delist(repoId) {
       await http(`/api/repos/${repoId}/delist`, jsonInit('POST'))
     },

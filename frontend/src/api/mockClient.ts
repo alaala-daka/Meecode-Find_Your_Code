@@ -40,13 +40,15 @@ function suggestCategory(card: RepoCardData): string {
   return best
 }
 
-function toDetail(card: RepoCardData): RepoDetail {
+function toDetail(card: RepoCardData, liked = false, favorited = false): RepoDetail {
   return {
     ...card,
     intro_zh: `${card.tagline_zh}。这里放详细介绍，介绍作者在投稿时可以自由编辑。`,
     github_url: `https://github.com/${card.full_name}`,
     default_branch: 'main',
     discussions_open: card.id % 2 === 1, // 奇数 id 开启，覆盖两种状态
+    liked,
+    favorited,
   }
 }
 
@@ -89,7 +91,7 @@ export function createMockClient(): ApiClient {
     async repo(id): Promise<RepoDetail> {
       const card = state.repos.find((r) => r.id === id)
       if (!card) throw new Error('仓库不存在')
-      return toDetail(card)
+      return toDetail(card, state.likes.has(id), state.favorites.has(id))
     },
     async repoTree(): Promise<RepoTreeItem[]> {
       return FIXTURE_TREE
@@ -165,12 +167,6 @@ export function createMockClient(): ApiClient {
       const card = state.repos.find((r) => r.id === repoId)
       if (card && kind === 'like') card.likes += on ? 1 : -1
       if (card && kind === 'favorite' && card.favorites_count !== undefined) card.favorites_count += on ? 1 : -1
-    },
-    async myFavorites(): Promise<number[]> {
-      return [...state.favorites]
-    },
-    async myLikes(): Promise<number[]> {
-      return [...state.likes]
     },
     async delist(repoId) {
       state.repos = state.repos.filter((r) => r.id !== repoId)
