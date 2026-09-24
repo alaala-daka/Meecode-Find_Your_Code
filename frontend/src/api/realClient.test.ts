@@ -50,13 +50,6 @@ describe('realClient', () => {
       expect.objectContaining({ method: 'POST', body: JSON.stringify({ repo_id: 5, kind: 'like', active: true }) }))
   })
 
-  it('myFavorites/myLikes 读 id 列表', async () => {
-    const f = stubFetch([1, 2])
-    vi.stubGlobal('fetch', f)
-    expect(await createRealClient().myLikes()).toEqual([1, 2])
-    expect(f).toHaveBeenCalledWith('/api/me/interaction-ids?kind=like', expect.anything())
-  })
-
   it('me 未登录透传 JSON null', async () => {
     const f = stubFetch(null)
     vi.stubGlobal('fetch', f)

@@ -40,6 +40,14 @@ describe('mockClient', () => {
     await api.interact(2, 'like', true)
     expect((await api.repo(2)).likes).toBe(before + 1)
   })
+  it('repo 详情自带 liked/favorited 回显并随 interact 更新', async () => {
+    const api = createMockClient()
+    expect((await api.repo(1)).liked).toBe(true)      // fixture 预置点赞 repo 1
+    expect((await api.repo(1)).favorited).toBe(false)
+    expect((await api.repo(3)).favorited).toBe(true)  // fixture 预置收藏 repo 3
+    await api.interact(1, 'like', false)
+    expect((await api.repo(1)).liked).toBe(false)
+  })
   it('interact 收藏切换 favorites_count 计数', async () => {
     const api = createMockClient()
     const before = (await api.repo(2)).favorites_count!

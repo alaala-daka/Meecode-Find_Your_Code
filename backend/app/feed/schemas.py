@@ -60,6 +60,8 @@ class RepoDetailOut(RepoCardOut):
     github_url: str
     default_branch: str = "main"
     discussions_open: bool = False
+    liked: bool = False       # 当前用户点赞态；未登录恒 false
+    favorited: bool = False   # 当前用户收藏态；未登录恒 false
 
 
 class TreeItem(BaseModel):
