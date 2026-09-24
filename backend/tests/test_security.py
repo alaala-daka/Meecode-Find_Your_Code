@@ -103,6 +103,11 @@ def test_bucket_for_routes():
     assert security.bucket_for("GET", "/api/repos/7") == "browse"
     assert security.bucket_for("GET", "/api/auth/callback") == "auth"
     assert security.bucket_for("GET", "/api/me") == "default"
+    assert security.bucket_for("POST", "/api/comments") == "ugc"
+    assert security.bucket_for("POST", "/api/comments/7/hide") == "ugc"
+    assert security.bucket_for("DELETE", "/api/comments/7") == "ugc"
+    assert security.bucket_for("GET", "/api/comments") == "browse"
+    assert security.bucket_for("POST", "/api/repos/7/delist") == "delist"   # 回归：不受影响
 
 
 # ---------- 限流器 ----------
@@ -237,3 +242,12 @@ def test_browse_traffic_does_not_consume_llm_quota(client, monkeypatch):
     assert client.post("/api/sessions").status_code == 200
     assert client.post("/api/sessions").status_code == 200
     assert client.post("/api/sessions").status_code == 429
+
+
+def test_ugc_endpoint_429_with_retry_after(client, monkeypatch):
+    monkeypatch.setitem(config.RATE_LIMITS, "ugc", 1)
+    client.post("/api/comments", json={"repo_id": 1, "content": "a"})
+    resp = client.post("/api/comments", json={"repo_id": 1, "content": "b"})
+    assert resp.status_code == 429
+    assert "Retry-After" in resp.headers
+    assert resp.json()["detail"] == "请求过于频繁，请稍后再试"

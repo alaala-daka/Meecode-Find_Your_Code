@@ -53,6 +53,7 @@ _RATE_LIMIT_DEFAULTS: dict[str, int] = {
     "session": 30,   # 白拿 session_id 是匿名打 LLM 的前置步
     "submit": 5,     # 投稿：GitHub 拉取 + LLM 精筛
     "interact": 60,  # 幂等互动写
+    "ugc": 10,       # 评论写操作：封 LLM 预审花费（spec 决策 9）
     "browse": 240,   # feed/search/详情：匿名写库放大面
     "auth": 10,      # OAuth 跳转与回调
     "delist": 5,     # 下架：高危写操作，与 submit 同档
