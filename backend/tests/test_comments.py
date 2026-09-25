@@ -201,6 +201,19 @@ def test_post_404_for_delisted_or_unknown_repo(conn, client, login):
     assert client.post("/api/comments", json={"repo_id": 999, "content": "x"}).status_code == 404
 
 
+def test_post_allows_pending_claim_repo(conn, client, login):
+    """采集仓库（pending_claim）可浏览/点赞，评论门槛须与互动同口径（!= 'delisted'）。"""
+    rid = add_repo(conn, gid=2, owner="crawler", status="pending_claim")
+    resp = client.post("/api/comments", json={"repo_id": rid, "content": "可以评论"})
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "pending"
+
+
+def test_get_allows_pending_claim_repo(conn, client, login):
+    rid = add_repo(conn, gid=2, owner="crawler", status="pending_claim")
+    assert client.get(f"/api/comments?repo_id={rid}").json() == {"items": [], "total": 0}
+
+
 def test_delete_own_comment_soft_deletes(conn, client, login):
     rid = add_repo(conn)
     cid = add_comment(conn, rid, login, content="自删", status="visible", screened=1)

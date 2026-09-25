@@ -99,7 +99,7 @@ def create_comment(
 ) -> CommentOut:
     """发表评论/回复。落库即 pending（LLM 预审由 Task 5 接入），响应不等判定。"""
     if conn.execute(
-        "SELECT 1 FROM repos WHERE id = ? AND status = 'published'", (body.repo_id,)
+        "SELECT 1 FROM repos WHERE id = ? AND status != 'delisted'", (body.repo_id,)
     ).fetchone() is None:
         raise HTTPException(status_code=404, detail="仓库不存在或已下架")
     user = auth.require_user(request, conn)
