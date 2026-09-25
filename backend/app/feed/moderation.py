@@ -64,6 +64,12 @@ def moderate_comment(conn: sqlite3.Connection, comment_id: int) -> None:
         " WHERE id = ? AND status = 'pending'",
         (status, reason, comment_id),
     )
+    if status == "hidden":
+        # 级联：被隐藏评论的回复一并隐藏（不写判定原因，徽标为「已隐藏」）
+        conn.execute(
+            "UPDATE comments SET status = 'hidden' WHERE parent_id = ? AND status != 'deleted'",
+            (comment_id,),
+        )
 
 
 def moderate_comment_bg(comment_id: int) -> None:

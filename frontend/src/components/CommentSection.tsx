@@ -118,7 +118,9 @@ export default function CommentSection({ repoId, canModerate, onNeedLogin }: Pro
           </ReactMarkdown>
         </div>
         <div className="comment-actions">
-          <button type="button" className="comment-action" onClick={() => setReplyTo(topId)}>回复</button>
+          {c.status !== 'hidden' && (
+            <button type="button" className="comment-action" onClick={() => setReplyTo(topId)}>回复</button>
+          )}
           {mine && <button type="button" className="comment-action" onClick={() => void remove(c)}>删除</button>}
           {canModerate && !mine && (
             <button type="button" className="comment-action" onClick={() => void hide(c)}>隐藏</button>

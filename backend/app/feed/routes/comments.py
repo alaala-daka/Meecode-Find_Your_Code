@@ -81,14 +81,25 @@ def list_comments(
 
 
 def _normalize_parent(conn: sqlite3.Connection, repo_id: int, parent_id: int) -> int:
-    """parent_id 归一到顶层祖先：两层平铺，对回复点「回复」落到同一顶层（spec 决策 3）。"""
+    """parent_id 归一到顶层祖先：两层平铺，对回复点「回复」落到同一顶层（spec 决策 3）。
+
+    被隐藏/已删除的评论不可回复（作者本人也不例外）：直接父与归一后的顶层
+    都必须是 pending/visible（spec 决策 12）。
+    """
     row = conn.execute(
-        "SELECT id, parent_id FROM comments WHERE id = ? AND repo_id = ? AND status != 'deleted'",
+        "SELECT id, parent_id, status FROM comments WHERE id = ? AND repo_id = ?",
         (parent_id, repo_id),
     ).fetchone()
     if row is None:
         raise HTTPException(status_code=422, detail="回复的父评论不存在")
-    return row["parent_id"] if row["parent_id"] is not None else row["id"]
+    if row["status"] in ("hidden", "deleted"):
+        raise HTTPException(status_code=422, detail="不能回复已隐藏或已删除的评论")
+    top_id = row["parent_id"] if row["parent_id"] is not None else row["id"]
+    if top_id != row["id"]:
+        top = conn.execute("SELECT status FROM comments WHERE id = ?", (top_id,)).fetchone()
+        if top is None or top["status"] in ("hidden", "deleted"):
+            raise HTTPException(status_code=422, detail="不能回复已隐藏或已删除的评论")
+    return top_id
 
 
 @router.post("/comments", response_model=CommentOut)
@@ -153,6 +164,10 @@ def delete_comment(
         raise HTTPException(status_code=403, detail="只能删除自己的评论")
     if row["status"] != "deleted":
         conn.execute("UPDATE comments SET status = 'deleted' WHERE id = ?", (comment_id,))
+        conn.execute(
+            "UPDATE comments SET status = 'deleted' WHERE parent_id = ? AND status != 'deleted'",
+            (comment_id,),
+        )
         conn.commit()
     return {"ok": True}
 
@@ -170,5 +185,9 @@ def hide_comment(
         raise HTTPException(status_code=403, detail="只有仓库作者可以隐藏评论")
     if row["status"] != "hidden":
         conn.execute("UPDATE comments SET status = 'hidden' WHERE id = ?", (comment_id,))
+        conn.execute(
+            "UPDATE comments SET status = 'hidden' WHERE parent_id = ? AND status != 'deleted'",
+            (comment_id,),
+        )
         conn.commit()
     return {"ok": True}

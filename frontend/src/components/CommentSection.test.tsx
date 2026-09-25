@@ -79,6 +79,29 @@ describe('CommentSection', () => {
     expect(screen.getByText('未通过审核')).toHaveAttribute('title', '命中广告')
   })
 
+  it('hidden 评论不显示「回复」按钮（作者本人也不可回复）', async () => {
+    const { api } = await import('../api/client')
+    vi.spyOn(api, 'comments').mockResolvedValue({
+      items: [
+        {
+          id: 1, repo_id: 1, user_id: 9, user_login: 'me', user_avatar: '', parent_id: null,
+          content: '被隐', status: 'hidden', created_at: 1, created_at_iso: '2026-01-01T00:00:00+00:00',
+          moderation_reason: '',
+        },
+        {
+          id: 2, repo_id: 1, user_id: 9, user_login: 'me', user_avatar: '', parent_id: null,
+          content: '正常', status: 'visible', created_at: 2, created_at_iso: '2026-01-01T00:01:00+00:00',
+          moderation_reason: '',
+        },
+      ],
+      total: 2,
+    })
+    render(<CommentSection repoId={1} canModerate={false} onNeedLogin={() => {}} />)
+    await screen.findByText('被隐')
+    expect(screen.getAllByRole('button', { name: '回复' })).toHaveLength(1)   // 仅正常评论有
+    expect(screen.getAllByRole('button', { name: '删除' })).toHaveLength(2)   // 删除不受限
+  })
+
   it('匿名点发送触发 onNeedLogin 且不发请求', async () => {
     mockUser = null
     const { api } = await import('../api/client')
