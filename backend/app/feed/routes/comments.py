@@ -7,9 +7,10 @@ from __future__ import annotations
 
 import sqlite3
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 
 from .. import auth, cards
+from .. import moderation
 from ..deps import get_conn
 from ..schemas import CommentIn, CommentOut, CommentsOut
 
@@ -93,6 +94,7 @@ def _normalize_parent(conn: sqlite3.Connection, repo_id: int, parent_id: int) ->
 def create_comment(
     body: CommentIn,
     request: Request,
+    background: BackgroundTasks,
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> CommentOut:
     """发表评论/回复。落库即 pending（LLM 预审由 Task 5 接入），响应不等判定。"""
@@ -110,10 +112,12 @@ def create_comment(
         (body.repo_id, user["id"], parent, body.content),
     )
     conn.commit()
+    comment_id = cur.lastrowid
+    background.add_task(moderation.moderate_comment_bg, comment_id)
     row = conn.execute(
         "SELECT c.*, u.login AS user_login, u.avatar_url AS user_avatar"
         " FROM comments c JOIN users u ON u.id = c.user_id WHERE c.id = ?",
-        (cur.lastrowid,),
+        (comment_id,),
     ).fetchone()
     return _to_out(row)
 

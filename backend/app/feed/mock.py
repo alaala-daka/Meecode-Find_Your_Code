@@ -75,3 +75,12 @@ def mock_screening(full_name: str) -> dict:
         "why_zh": f"{name} 的模拟推荐理由，用于前端联调与离线开发。",
         "quality": 4,
     }
+
+
+def mock_comment_verdict(content: str) -> dict:
+    """LLM 合规判定的确定性输出：命中关键词判不合规，便于测试与离线演示。"""
+    hit = next((w for w in ("垃圾", "广告", "刷屏") if w in content), "")
+    return {
+        "is_compliant": not hit,
+        "reason": f"命中「{hit}」" if hit else "正常技术讨论",
+    }

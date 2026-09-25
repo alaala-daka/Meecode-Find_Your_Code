@@ -172,3 +172,9 @@ class CommentIn(BaseModel):
         if len(v) > config.COMMENT_MAX_LEN:
             raise ValueError(f"评论内容过长（上限 {config.COMMENT_MAX_LEN} 字符）")
         return v
+
+
+class CommentVerdict(BaseModel):
+    """LLM 评论合规判定输出（spec 决策 8）。"""
+    is_compliant: bool
+    reason: str = ""

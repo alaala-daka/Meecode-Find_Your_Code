@@ -24,6 +24,14 @@ def login(conn, client):
     return uid
 
 
+@pytest.fixture(autouse=True)
+def _no_bg_file_db(monkeypatch):
+    """BackgroundTasks 的 moderate_comment_bg 自开文件连接——测试一律替换为空操作，
+    需断言调度的用例单独 patch 成记录器（见 test_post_schedules_background_moderation）。"""
+    from app.feed import moderation
+    monkeypatch.setattr(moderation, "moderate_comment_bg", lambda comment_id: None)
+
+
 def add_repo(conn, gid: int = 1, *, owner="demo", status="published"):
     conn.execute(
         "INSERT INTO repos (github_id, full_name, owner_login, language, source, status,"
@@ -267,3 +275,58 @@ def test_hide_on_deleted_404(conn, client, login):
 def test_hide_anonymous_401(conn, client):
     cid = 1
     assert client.post(f"/api/comments/{cid}/hide").status_code == 401
+
+
+def test_moderate_pass_sets_visible(conn, client, login):
+    from app.feed import moderation
+    rid = add_repo(conn)
+    cid = add_comment(conn, rid, login, content="这是一条正常的技术讨论")
+    moderation.moderate_comment(conn, cid)
+    conn.commit()
+    row = conn.execute("SELECT status, screened FROM comments WHERE id=?", (cid,)).fetchone()
+    assert row["status"] == "visible" and row["screened"] == 1
+
+
+def test_moderate_fail_sets_hidden(conn, client, login):
+    from app.feed import moderation
+    rid = add_repo(conn)
+    cid = add_comment(conn, rid, login, content="垃圾广告加微信")
+    moderation.moderate_comment(conn, cid)
+    conn.commit()
+    row = conn.execute("SELECT status, screened FROM comments WHERE id=?", (cid,)).fetchone()
+    assert row["status"] == "hidden" and row["screened"] == 1
+
+
+def test_moderate_error_keeps_pending_unscreened(conn, client, login, monkeypatch):
+    from app.feed import llm, moderation
+
+    def boom(**kwargs):
+        raise RuntimeError("LLM 挂了")
+
+    monkeypatch.setattr(config, "LLM_MOCK", False)
+    monkeypatch.setattr(llm, "chat_json", boom)
+    rid = add_repo(conn)
+    cid = add_comment(conn, rid, login, content="正常内容")
+    with pytest.raises(RuntimeError):
+        moderation.moderate_comment(conn, cid)
+    row = conn.execute("SELECT status, screened FROM comments WHERE id=?", (cid,)).fetchone()
+    assert row["status"] == "pending" and row["screened"] == 0
+
+
+def test_moderate_skips_deleted(conn, client, login):
+    from app.feed import moderation
+    rid = add_repo(conn)
+    cid = add_comment(conn, rid, login, content="垃圾", status="deleted", screened=1)
+    moderation.moderate_comment(conn, cid)
+    row = conn.execute("SELECT status, screened FROM comments WHERE id=?", (cid,)).fetchone()
+    assert row["status"] == "deleted" and row["screened"] == 1
+
+
+def test_post_schedules_background_moderation(conn, client, login, monkeypatch):
+    from app.feed import moderation
+    called: list[int] = []
+    monkeypatch.setattr(moderation, "moderate_comment_bg", called.append)
+    rid = add_repo(conn)
+    resp = client.post("/api/comments", json={"repo_id": rid, "content": "hi"})
+    assert resp.status_code == 200
+    assert called == [resp.json()["id"]]
