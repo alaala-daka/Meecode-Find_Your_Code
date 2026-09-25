@@ -322,6 +322,18 @@ def test_moderate_skips_deleted(conn, client, login):
     assert row["status"] == "deleted" and row["screened"] == 1
 
 
+def test_moderate_does_not_flip_hidden_back_to_visible(conn, client, login):
+    from app.feed import moderation
+    rid = add_repo(conn)
+    cid = add_comment(conn, rid, login, content="正常技术讨论")
+    conn.execute("UPDATE comments SET status='hidden' WHERE id=?", (cid,))
+    conn.commit()
+    moderation.moderate_comment(conn, cid)
+    conn.commit()
+    row = conn.execute("SELECT status, screened FROM comments WHERE id=?", (cid,)).fetchone()
+    assert row["status"] == "hidden" and row["screened"] == 0
+
+
 def test_post_schedules_background_moderation(conn, client, login, monkeypatch):
     from app.feed import moderation
     called: list[int] = []

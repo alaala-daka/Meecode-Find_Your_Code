@@ -43,7 +43,8 @@ def moderate_comment(conn: sqlite3.Connection, comment_id: int) -> None:
         )
     status = "visible" if verdict.is_compliant else "hidden"
     conn.execute(
-        "UPDATE comments SET status = ?, screened = 1 WHERE id = ?", (status, comment_id)
+        "UPDATE comments SET status = ?, screened = 1 WHERE id = ? AND status = 'pending'",
+        (status, comment_id),
     )
 
 
