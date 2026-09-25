@@ -1,0 +1,52 @@
+.comment-section {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  margin-top: 20px;
+  padding: 20px 24px;
+}
+.comment-title { font-size: 18px; display: flex; align-items: center; gap: 8px; }
+.comment-title::before {
+  content: ''; width: 7px; height: 7px; background: var(--brand); display: inline-block;
+}
+.comment-count { color: var(--ink-3); font-size: 13px; font-weight: 400; }
+.comment-list { list-style: none; margin: 16px 0 0; padding: 0; display: flex; flex-direction: column; gap: 16px; }
+.comment-item { border-top: 1px solid var(--line); padding-top: 12px; }
+.comment-reply { margin-left: 24px; border-top: none; padding-top: 4px; }
+.comment-head { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.comment-avatar { width: 24px; height: 24px; border-radius: 50%; object-fit: cover; }
+.comment-avatar-empty { background: var(--line); display: inline-block; }
+.comment-login { font-weight: 600; }
+.comment-time { color: var(--ink-3); }
+.comment-badge {
+  color: var(--ink-3); border: 1px solid var(--line); border-radius: 999px;
+  padding: 1px 8px; font-size: 12px;
+}
+.comment-body { margin-top: 6px; font-size: 14px; line-height: 1.6; }
+.comment-body p { margin: 4px 0; }
+.comment-actions { display: flex; gap: 12px; margin-top: 6px; }
+.comment-action {
+  background: none; border: none; color: var(--ink-3); font-size: 12px;
+  cursor: pointer; padding: 4px 0; min-height: 40px;
+}
+.comment-action:hover { color: var(--ink); }
+.comment-form, .comment-reply-box {
+  display: flex; flex-direction: column; gap: 8px; margin-top: 16px;
+}
+.comment-form textarea, .comment-reply-box textarea {
+  width: 100%; border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 10px 12px; font-size: 14px; resize: vertical; font-family: inherit;
+}
+.comment-form button, .comment-reply-box button {
+  align-self: flex-end; min-height: 40px; padding: 0 20px;
+  border: none; border-radius: var(--radius); background: var(--brand); color: #fff;
+  font-size: 14px; cursor: pointer;
+}
+.comment-form button:disabled, .comment-reply-box button:disabled { opacity: 0.6; }
+.comment-error { color: #b00020; font-size: 13px; margin-top: 8px; }
+
+@media (max-width: 760px) {
+  .comment-section { padding: 16px; }
+  .comment-reply { margin-left: 12px; }
+  .comment-form button, .comment-reply-box button { width: 100%; align-self: stretch; }
+}
