@@ -47,11 +47,12 @@ def add_user(conn, uid: int, login: str):
 
 
 def add_comment(conn, repo_id: int, user_id: int, *, parent_id=None,
-                content="内容", status="pending", screened=0, created_at=NOW) -> int:
+                content="内容", status="pending", screened=0, created_at=NOW,
+                reason="") -> int:
     conn.execute(
-        "INSERT INTO comments (repo_id, user_id, parent_id, content, status, screened, created_at)"
-        " VALUES (?,?,?,?,?,?,?)",
-        (repo_id, user_id, parent_id, content, status, screened, created_at))
+        "INSERT INTO comments (repo_id, user_id, parent_id, content, status, screened,"
+        " created_at, moderation_reason) VALUES (?,?,?,?,?,?,?,?)",
+        (repo_id, user_id, parent_id, content, status, screened, created_at, reason))
     conn.commit()
     return conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"]
 
@@ -189,6 +190,28 @@ def test_post_rejects_unknown_parent(conn, client, login):
     assert resp.status_code == 422
 
 
+def test_post_rejects_reply_to_hidden_or_deleted_parent(conn, client, login):
+    """被隐藏/已删除的评论不可回复——作者本人也不例外（2026-09-25 需求）。"""
+    rid = add_repo(conn)
+    hidden = add_comment(conn, rid, login, content="被隐", status="hidden", screened=1)
+    deleted = add_comment(conn, rid, login, content="已删", status="deleted", screened=1)
+    for pid in (hidden, deleted):
+        resp = client.post("/api/comments", json={"repo_id": rid, "content": "x", "parent_id": pid})
+        assert resp.status_code == 422
+        assert "不能回复" in resp.text
+
+
+def test_post_rejects_reply_under_hidden_top(conn, client, login):
+    """归一后的顶层被隐藏（含历史脏态）→ 该线程一并不可回复。"""
+    rid = add_repo(conn)
+    top = add_comment(conn, rid, login, content="被隐顶", status="hidden", screened=1)
+    rep = add_comment(conn, rid, login, parent_id=top, content="残留回复",
+                      status="visible", screened=1)
+    resp = client.post("/api/comments", json={"repo_id": rid, "content": "x", "parent_id": rep})
+    assert resp.status_code == 422
+    assert "不能回复" in resp.text
+
+
 def test_post_requires_login(conn, client):
     rid = add_repo(conn)
     resp = client.post("/api/comments", json={"repo_id": rid, "content": "x"})
@@ -199,6 +222,19 @@ def test_post_404_for_delisted_or_unknown_repo(conn, client, login):
     rid = add_repo(conn, status="delisted")
     assert client.post("/api/comments", json={"repo_id": rid, "content": "x"}).status_code == 404
     assert client.post("/api/comments", json={"repo_id": 999, "content": "x"}).status_code == 404
+
+
+def test_post_allows_pending_claim_repo(conn, client, login):
+    """采集仓库（pending_claim）可浏览/点赞，评论门槛须与互动同口径（!= 'delisted'）。"""
+    rid = add_repo(conn, gid=2, owner="crawler", status="pending_claim")
+    resp = client.post("/api/comments", json={"repo_id": rid, "content": "可以评论"})
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "pending"
+
+
+def test_get_allows_pending_claim_repo(conn, client, login):
+    rid = add_repo(conn, gid=2, owner="crawler", status="pending_claim")
+    assert client.get(f"/api/comments?repo_id={rid}").json() == {"items": [], "total": 0}
 
 
 def test_delete_own_comment_soft_deletes(conn, client, login):
@@ -232,6 +268,27 @@ def test_delete_idempotent_on_deleted(conn, client, login):
     rid = add_repo(conn)
     cid = add_comment(conn, rid, login, content="x", status="deleted", screened=1)
     assert client.delete(f"/api/comments/{cid}").status_code == 200
+
+
+def test_delete_cascades_to_replies(conn, client, login):
+    """删除连带软删回复（2026-09-25 需求）。"""
+    rid = add_repo(conn)
+    top = add_comment(conn, rid, login, content="顶", status="visible", screened=1)
+    rep = add_comment(conn, rid, login, parent_id=top, content="回", status="visible", screened=1)
+    assert client.delete(f"/api/comments/{top}").status_code == 200
+    rows = {r["id"]: r["status"] for r in conn.execute("SELECT id, status FROM comments")}
+    assert rows[top] == "deleted" and rows[rep] == "deleted"
+
+
+def test_hide_cascades_to_replies(conn, client, login):
+    """隐藏连带隐藏回复，且不写判定原因（徽标应为「已隐藏」非「未通过审核」）。"""
+    rid = add_repo(conn, owner="demo")
+    top = add_comment(conn, rid, login, content="顶", status="visible", screened=1)
+    rep = add_comment(conn, rid, login, parent_id=top, content="回", status="visible", screened=1)
+    assert client.post(f"/api/comments/{top}/hide").status_code == 200
+    rows = {r["id"]: r for r in conn.execute("SELECT * FROM comments")}
+    assert rows[top]["status"] == "hidden" and rows[rep]["status"] == "hidden"
+    assert rows[rep]["moderation_reason"] == ""
 
 
 def test_hide_by_author_owner_login(conn, client, login):
@@ -295,6 +352,52 @@ def test_moderate_fail_sets_hidden(conn, client, login):
     conn.commit()
     row = conn.execute("SELECT status, screened FROM comments WHERE id=?", (cid,)).fetchone()
     assert row["status"] == "hidden" and row["screened"] == 1
+
+
+def test_moderate_reject_writes_reason(conn, client, login):
+    """拒绝必须落判定原因——否则线上误杀无从诊断（2026-09-25 上线事故教训）。"""
+    from app.feed import moderation
+    rid = add_repo(conn)
+    cid = add_comment(conn, rid, login, content="垃圾广告加微信")
+    moderation.moderate_comment(conn, cid)
+    conn.commit()
+    row = conn.execute(
+        "SELECT status, moderation_reason FROM comments WHERE id=?", (cid,)).fetchone()
+    assert row["status"] == "hidden" and row["moderation_reason"] != ""
+
+
+def test_moderate_reject_cascades_hidden_to_replies(conn, client, login):
+    """LLM 拒绝顶层时其回复一并隐藏（2026-09-25 需求：被隐藏评论的回复一并隐藏）。"""
+    from app.feed import moderation
+    rid = add_repo(conn)
+    top = add_comment(conn, rid, login, content="垃圾广告")
+    rep = add_comment(conn, rid, login, parent_id=top, content="正常回复",
+                      status="visible", screened=1)
+    moderation.moderate_comment(conn, top)
+    conn.commit()
+    rows = {r["id"]: r for r in conn.execute("SELECT * FROM comments")}
+    assert rows[top]["status"] == "hidden" and rows[rep]["status"] == "hidden"
+    assert rows[rep]["moderation_reason"] == ""   # 级联隐藏不冒充判定原因
+
+
+def test_moderate_pass_keeps_reason_empty(conn, client, login):
+    """通过的评论不写原因——徽标靠原因空区分「未通过审核」与「作者隐藏」。"""
+    from app.feed import moderation
+    rid = add_repo(conn)
+    cid = add_comment(conn, rid, login, content="这是一条正常的技术讨论")
+    moderation.moderate_comment(conn, cid)
+    conn.commit()
+    row = conn.execute(
+        "SELECT status, moderation_reason FROM comments WHERE id=?", (cid,)).fetchone()
+    assert row["status"] == "visible" and row["moderation_reason"] == ""
+
+
+def test_get_includes_moderation_reason(conn, client, login):
+    rid = add_repo(conn)
+    add_comment(conn, rid, login, content="x", status="hidden", screened=1,
+                reason="命中测试原因")
+    body = client.get(f"/api/comments?repo_id={rid}").json()
+    assert body["items"][0]["moderation_reason"] == "命中测试原因"
 
 
 def test_moderate_error_keeps_pending_unscreened(conn, client, login, monkeypatch):

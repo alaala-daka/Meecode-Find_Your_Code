@@ -78,3 +78,35 @@ def test_init_db_migrates_legacy_users_without_session_epoch():
     row = legacy.execute("SELECT session_epoch FROM users WHERE github_id = 7").fetchone()
     assert row["session_epoch"] == 0
     legacy.close()
+
+
+def test_init_db_migrates_legacy_comments_without_moderation_reason():
+    """生产升级：旧库 comments 无 moderation_reason；ALTER 补列，并把误判 hidden 行
+    重置 pending 重审（2026-09-25 上线误杀存量的一次性恢复，仅在补列时执行一次）。"""
+    legacy = sqlite3.connect(":memory:")
+    legacy.row_factory = sqlite3.Row
+    legacy.executescript(
+        """
+        CREATE TABLE comments (
+            id         INTEGER PRIMARY KEY,
+            repo_id    INTEGER NOT NULL,
+            user_id    INTEGER NOT NULL,
+            parent_id  INTEGER,
+            content    TEXT    NOT NULL,
+            status     TEXT    NOT NULL DEFAULT 'pending',
+            screened   INTEGER NOT NULL DEFAULT 0,
+            created_at INTEGER NOT NULL DEFAULT (unixepoch())
+        );
+        INSERT INTO comments (repo_id, user_id, content, status, screened)
+            VALUES (1, 1, '被误杀', 'hidden', 1);
+        INSERT INTO comments (repo_id, user_id, content, status, screened)
+            VALUES (1, 1, '正常可见', 'visible', 1);
+        """
+    )
+    db.init_db(legacy)
+    cols = {r["name"] for r in legacy.execute("PRAGMA table_info(comments)")}
+    assert "moderation_reason" in cols
+    rows = {r["content"]: r for r in legacy.execute("SELECT * FROM comments")}
+    assert rows["被误杀"]["status"] == "pending" and rows["被误杀"]["screened"] == 0
+    assert rows["正常可见"]["status"] == "visible"
+    legacy.close()

@@ -72,7 +72,8 @@ CREATE TABLE IF NOT EXISTS comments (
     content     TEXT    NOT NULL,
     status      TEXT    NOT NULL DEFAULT 'pending'
                 CHECK (status IN ('pending','visible','hidden','deleted')),
-    screened    INTEGER NOT NULL DEFAULT 0,
+    screened    INTEGER NOT NULL DEFAULT 0,       -- 0=LLM 尚未判定（含失败待重试）；1=已判定
+    moderation_reason TEXT NOT NULL DEFAULT '',   -- LLM 拒绝原因（空=通过/作者隐藏）
     created_at  INTEGER NOT NULL DEFAULT (unixepoch())
 );
 
@@ -122,4 +123,10 @@ def init_db(conn: sqlite3.Connection) -> None:
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(users)")}
     if "session_epoch" not in cols:
         conn.execute("ALTER TABLE users ADD COLUMN session_epoch INTEGER NOT NULL DEFAULT 0")
+    ccols = {r["name"] for r in conn.execute("PRAGMA table_info(comments)")}
+    if "moderation_reason" not in ccols:
+        conn.execute("ALTER TABLE comments ADD COLUMN moderation_reason TEXT NOT NULL DEFAULT ''")
+        # 一次性重审：旧 prompt 误杀的存量 hidden 行转回 pending，由 cron/预审用新口径重判
+        # （作者手动隐藏的行也会重审——测试期样本，重判合规恢复可见，需再藏作者重操作）
+        conn.execute("UPDATE comments SET status = 'pending', screened = 0 WHERE status = 'hidden'")
     conn.commit()

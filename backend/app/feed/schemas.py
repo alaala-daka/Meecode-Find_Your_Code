@@ -137,7 +137,10 @@ class InteractionIn(BaseModel):
 
 
 class CommentOut(BaseModel):
-    """单条评论：两层平铺（parent_id 恒指顶层）。status 供前端渲染「审核中/已隐藏」标记。"""
+    """单条评论：两层平铺（parent_id 恒指顶层）。status 供前端渲染「审核中/未通过/已隐藏」标记。
+
+    moderation_reason 仅 LLM 拒绝时非空：前端以此区分「未通过审核」与「作者/管理隐藏」。
+    """
     id: int
     repo_id: int
     user_id: int
@@ -146,6 +149,7 @@ class CommentOut(BaseModel):
     parent_id: int | None = None
     content: str
     status: str
+    moderation_reason: str = ""
     created_at: int
     created_at_iso: str = ""
 

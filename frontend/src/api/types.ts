@@ -41,6 +41,7 @@ export interface Comment {
   parent_id: number | null
   content: string
   status: CommentStatus
+  moderation_reason: string   // 仅 LLM 拒绝时非空：徽标以此区分「未通过审核」与「作者隐藏」
   created_at: number
   created_at_iso: string
 }
