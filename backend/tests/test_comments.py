@@ -330,3 +330,80 @@ def test_post_schedules_background_moderation(conn, client, login, monkeypatch):
     resp = client.post("/api/comments", json={"repo_id": rid, "content": "hi"})
     assert resp.status_code == 200
     assert called == [resp.json()["id"]]
+
+
+def test_moderate_pending_picks_old_unscreened(conn, client, login, monkeypatch):
+    from app.feed.jobs import moderate as job
+    monkeypatch.setattr(config, "LLM_MOCK", True)
+    rid = add_repo(conn)
+    cid = add_comment(conn, rid, login, content="正常内容", created_at=NOW)
+    n = job.moderate_pending(conn, now=NOW + 200)
+    assert n == 1
+    row = conn.execute("SELECT status, screened FROM comments WHERE id=?", (cid,)).fetchone()
+    assert row["screened"] == 1 and row["status"] == "visible"
+
+
+def test_moderate_pending_skips_recent_within_grace(conn, client, login):
+    from app.feed.jobs import moderate as job
+    rid = add_repo(conn)
+    cid = add_comment(conn, rid, login, content="正常内容", created_at=NOW)
+    n = job.moderate_pending(conn, now=NOW + 10)   # 宽限期内
+    assert n == 0
+    row = conn.execute("SELECT screened FROM comments WHERE id=?", (cid,)).fetchone()
+    assert row["screened"] == 0
+
+
+def test_moderate_pending_respects_batch_limit(conn, client, login, monkeypatch):
+    from app.feed.jobs import moderate as job
+    monkeypatch.setattr(config, "LLM_MOCK", True)
+    rid = add_repo(conn)
+    for i in range(3):
+        add_comment(conn, rid, login, content=f"正常{i}", created_at=NOW + i)
+    n = job.moderate_pending(conn, now=NOW + 200, limit=2)
+    assert n == 2
+
+
+def test_moderate_pending_skips_screened(conn, client, login):
+    from app.feed.jobs import moderate as job
+    rid = add_repo(conn)
+    add_comment(conn, rid, login, content="已判", status="visible", screened=1, created_at=NOW)
+    assert job.moderate_pending(conn, now=NOW + 200) == 0
+
+
+def test_moderate_pending_skips_non_pending_status(conn, client, login, monkeypatch):
+    from app.feed.jobs import moderate as job
+    monkeypatch.setattr(config, "LLM_MOCK", True)
+    rid = add_repo(conn)
+    add_comment(conn, rid, login, content="已删", status="deleted", screened=0, created_at=NOW)
+    add_comment(conn, rid, login, content="已显", status="visible", screened=0, created_at=NOW)
+    assert job.moderate_pending(conn, now=NOW + 200) == 0
+
+
+def test_moderate_pending_default_batch_from_config(conn, client, login, monkeypatch):
+    from app.feed.jobs import moderate as job
+    monkeypatch.setattr(config, "LLM_MOCK", True)
+    monkeypatch.setattr(config, "MODERATE_BATCH", 2)
+    rid = add_repo(conn)
+    for i in range(3):
+        add_comment(conn, rid, login, content=f"正常{i}", created_at=NOW + i)
+    assert job.moderate_pending(conn, now=NOW + 200) == 2
+
+
+def test_moderate_pending_error_leaves_for_next_round(conn, client, login, monkeypatch):
+    from app.feed import llm
+    from app.feed.jobs import moderate as job
+
+    def boom(**kwargs):
+        raise RuntimeError("LLM 故障")
+
+    monkeypatch.setattr(config, "LLM_MOCK", False)
+    monkeypatch.setattr(llm, "chat_json", boom)
+    rid = add_repo(conn)
+    cid = add_comment(conn, rid, login, content="待重试", created_at=NOW)
+    assert job.moderate_pending(conn, now=NOW + 200) == 0
+    row = conn.execute("SELECT status, screened FROM comments WHERE id=?", (cid,)).fetchone()
+    assert row["status"] == "pending" and row["screened"] == 0
+    monkeypatch.setattr(config, "LLM_MOCK", True)   # 下轮恢复后补判
+    assert job.moderate_pending(conn, now=NOW + 400) == 1
+    row = conn.execute("SELECT status, screened FROM comments WHERE id=?", (cid,)).fetchone()
+    assert row["screened"] == 1 and row["status"] == "visible"

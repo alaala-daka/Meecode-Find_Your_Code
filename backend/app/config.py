@@ -100,6 +100,8 @@ MAX_FILE_CHARS: int = 200_000            # 超大文件截断阈值,避免塞爆
 TREE_CACHE_SIZE: int = 512               # 文件树缓存条目上限
 FILE_CACHE_SIZE: int = 1024              # 文件内容缓存条目上限
 COMMENT_MAX_LEN: int = int(os.getenv("COMMENT_MAX_LEN", "2000"))   # 评论内容上限(字符)
+MODERATE_BATCH: int = int(os.getenv("MODERATE_BATCH", "50"))                 # 重试 job 单轮上限
+MODERATE_GRACE_SECONDS: int = int(os.getenv("MODERATE_GRACE_SECONDS", "120"))  # 为 BackgroundTasks 在途留的宽限
 
 # ---------- 采集 ----------
 CRAWL_DAILY_QUOTA: int = 30             # 每日入库上限(防冲淡投稿)
