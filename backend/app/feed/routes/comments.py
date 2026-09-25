@@ -22,7 +22,8 @@ def _to_out(row: sqlite3.Row) -> CommentOut:
         id=row["id"], repo_id=row["repo_id"], user_id=row["user_id"],
         user_login=row["user_login"], user_avatar=row["user_avatar"] or "",
         parent_id=row["parent_id"], content=row["content"],
-        status=row["status"], created_at=row["created_at"],
+        status=row["status"], moderation_reason=row["moderation_reason"],
+        created_at=row["created_at"],
         created_at_iso=cards._iso(row["created_at"]),
     )
 

@@ -186,12 +186,14 @@ export function createMockClient(): ApiClient {
         id, repo_id: repoId, user_id: 0, user_login: FIXTURE_USER.login,
         user_avatar: FIXTURE_USER.avatar_url,
         parent_id: parentId ?? null, content, status: 'pending',
+        moderation_reason: '',
         created_at: now, created_at_iso: new Date(now * 1000).toISOString(),
       }
       state.comments.push(item)
       const snapshot: Comment = { ...item }   // 响应体恒 pending（模拟异步预审）
       const hit = /垃圾|广告|刷屏/.test(content)
       item.status = hit ? 'hidden' : 'visible'  // 内存行立即判定，下一次 GET 即终态
+      if (hit) item.moderation_reason = '命中违规关键词'
       return snapshot
     },
     async deleteComment(commentId) {

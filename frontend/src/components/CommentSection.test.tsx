@@ -17,17 +17,17 @@ const FIXTURE = {
   items: [
     {
       id: 1, repo_id: 1, user_id: 2, user_login: 'alice', user_avatar: 'https://a/a',
-      parent_id: null, content: '一楼', status: 'visible' as const,
+      parent_id: null, content: '一楼', status: 'visible' as const, moderation_reason: '',
       created_at: 1, created_at_iso: '2026-01-01T00:00:00+00:00',
     },
     {
       id: 2, repo_id: 1, user_id: 3, user_login: 'bob', user_avatar: '',
-      parent_id: 1, content: '回复一楼', status: 'visible' as const,
+      parent_id: 1, content: '回复一楼', status: 'visible' as const, moderation_reason: '',
       created_at: 2, created_at_iso: '2026-01-01T00:01:00+00:00',
     },
     {
       id: 3, repo_id: 1, user_id: 9, user_login: 'me', user_avatar: '',
-      parent_id: null, content: '审核中内容', status: 'pending' as const,
+      parent_id: null, content: '审核中内容', status: 'pending' as const, moderation_reason: '',
       created_at: 3, created_at_iso: '2026-01-01T00:02:00+00:00',
     },
   ],
@@ -56,6 +56,29 @@ describe('CommentSection', () => {
     expect(screen.getByText('审核中')).toBeInTheDocument()
   })
 
+  it('hidden 带判定原因显示「未通过审核」，无原因显示「已隐藏」', async () => {
+    const { api } = await import('../api/client')
+    vi.spyOn(api, 'comments').mockResolvedValue({
+      items: [
+        {
+          id: 1, repo_id: 1, user_id: 2, user_login: 'a', user_avatar: '', parent_id: null,
+          content: '被判', status: 'hidden', created_at: 1, created_at_iso: '2026-01-01T00:00:00+00:00',
+          moderation_reason: '命中广告',
+        },
+        {
+          id: 2, repo_id: 1, user_id: 2, user_login: 'a', user_avatar: '', parent_id: null,
+          content: '被作者隐', status: 'hidden', created_at: 2, created_at_iso: '2026-01-01T00:01:00+00:00',
+          moderation_reason: '',
+        },
+      ],
+      total: 2,
+    })
+    render(<CommentSection repoId={1} canModerate={false} onNeedLogin={() => {}} />)
+    expect(await screen.findByText('未通过审核')).toBeInTheDocument()
+    expect(screen.getByText('已隐藏')).toBeInTheDocument()
+    expect(screen.getByText('未通过审核')).toHaveAttribute('title', '命中广告')
+  })
+
   it('匿名点发送触发 onNeedLogin 且不发请求', async () => {
     mockUser = null
     const { api } = await import('../api/client')
@@ -75,7 +98,7 @@ describe('CommentSection', () => {
     vi.spyOn(api, 'comments').mockResolvedValue(FIXTURE)
     vi.spyOn(api, 'postComment').mockResolvedValue({
       id: 99, repo_id: 1, user_id: 9, user_login: 'me', user_avatar: '',
-      parent_id: null, content: '新评论', status: 'pending',
+      parent_id: null, content: '新评论', status: 'pending', moderation_reason: '',
       created_at: 9, created_at_iso: 'x',
     })
     render(<CommentSection repoId={1} canModerate={false} onNeedLogin={() => {}} />)

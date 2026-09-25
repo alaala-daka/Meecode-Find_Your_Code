@@ -47,11 +47,12 @@ def add_user(conn, uid: int, login: str):
 
 
 def add_comment(conn, repo_id: int, user_id: int, *, parent_id=None,
-                content="内容", status="pending", screened=0, created_at=NOW) -> int:
+                content="内容", status="pending", screened=0, created_at=NOW,
+                reason="") -> int:
     conn.execute(
-        "INSERT INTO comments (repo_id, user_id, parent_id, content, status, screened, created_at)"
-        " VALUES (?,?,?,?,?,?,?)",
-        (repo_id, user_id, parent_id, content, status, screened, created_at))
+        "INSERT INTO comments (repo_id, user_id, parent_id, content, status, screened,"
+        " created_at, moderation_reason) VALUES (?,?,?,?,?,?,?,?)",
+        (repo_id, user_id, parent_id, content, status, screened, created_at, reason))
     conn.commit()
     return conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"]
 
@@ -308,6 +309,38 @@ def test_moderate_fail_sets_hidden(conn, client, login):
     conn.commit()
     row = conn.execute("SELECT status, screened FROM comments WHERE id=?", (cid,)).fetchone()
     assert row["status"] == "hidden" and row["screened"] == 1
+
+
+def test_moderate_reject_writes_reason(conn, client, login):
+    """拒绝必须落判定原因——否则线上误杀无从诊断（2026-09-25 上线事故教训）。"""
+    from app.feed import moderation
+    rid = add_repo(conn)
+    cid = add_comment(conn, rid, login, content="垃圾广告加微信")
+    moderation.moderate_comment(conn, cid)
+    conn.commit()
+    row = conn.execute(
+        "SELECT status, moderation_reason FROM comments WHERE id=?", (cid,)).fetchone()
+    assert row["status"] == "hidden" and row["moderation_reason"] != ""
+
+
+def test_moderate_pass_keeps_reason_empty(conn, client, login):
+    """通过的评论不写原因——徽标靠原因空区分「未通过审核」与「作者隐藏」。"""
+    from app.feed import moderation
+    rid = add_repo(conn)
+    cid = add_comment(conn, rid, login, content="这是一条正常的技术讨论")
+    moderation.moderate_comment(conn, cid)
+    conn.commit()
+    row = conn.execute(
+        "SELECT status, moderation_reason FROM comments WHERE id=?", (cid,)).fetchone()
+    assert row["status"] == "visible" and row["moderation_reason"] == ""
+
+
+def test_get_includes_moderation_reason(conn, client, login):
+    rid = add_repo(conn)
+    add_comment(conn, rid, login, content="x", status="hidden", screened=1,
+                reason="命中测试原因")
+    body = client.get(f"/api/comments?repo_id={rid}").json()
+    assert body["items"][0]["moderation_reason"] == "命中测试原因"
 
 
 def test_moderate_error_keeps_pending_unscreened(conn, client, login, monkeypatch):

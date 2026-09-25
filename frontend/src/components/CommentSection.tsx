@@ -18,7 +18,13 @@ interface Props {
 
 const STATUS_LABEL: Record<string, string> = {
   pending: '审核中',
-  hidden: '已隐藏',
+}
+
+function hiddenLabel(c: Comment): { text: string; title?: string } {
+  // 原因非空 = LLM 拒绝；空 = 作者/管理隐藏（spec 4.6：「未通过或已隐藏」）
+  return c.moderation_reason
+    ? { text: '未通过审核', title: c.moderation_reason }
+    : { text: '已隐藏' }
 }
 
 export default function CommentSection({ repoId, canModerate, onNeedLogin }: Props) {
@@ -99,6 +105,9 @@ export default function CommentSection({ repoId, canModerate, onNeedLogin }: Pro
           <span className="comment-login">{c.user_login}</span>
           <span className="comment-time">{c.created_at_iso.slice(0, 10)}</span>
           {STATUS_LABEL[c.status] && <span className="comment-badge">{STATUS_LABEL[c.status]}</span>}
+          {c.status === 'hidden' && (
+            <span className="comment-badge" title={hiddenLabel(c).title}>{hiddenLabel(c).text}</span>
+          )}
         </div>
         <div className="comment-body">
           <ReactMarkdown
