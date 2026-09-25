@@ -84,6 +84,7 @@ SEO：robots/sitemap/JSON-LD 依赖 URL 结构稳定（第二、四批之后）�
 - 复用评论区的「表 + 表单 + 限流 + 管理端预览」模式，边际成本低。
 
 - 执行记录（2026-09-24）：评论区 11 Tasks 落地（含 spec 计划期修正两项：API 扁平化防 delist 桶冲突、分页对象定为顶层线程）；LLM 异步预审接 `feed/llm.py`；`moderate` cron 待部署后挂载。
+- 终审挂账（第三批顺手项）：conftest 级 `_no_bg_file_db` 上收、`moderate_pending` 补 `ORDER BY created_at ASC`、评论区「加载更多」分页 UI、作者判定三处内联（repos.py/submit.py/comments.py）抽单点。
 
 ### 第三批 · 管理端
 
