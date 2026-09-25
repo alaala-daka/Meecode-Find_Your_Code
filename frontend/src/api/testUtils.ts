@@ -12,5 +12,6 @@ export function toDetail(id: number): RepoDetail {
     default_branch: 'main',
     liked: false,
     favorited: false,
+    is_owner: false,
   }
 }

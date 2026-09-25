@@ -65,6 +65,10 @@ def get_repo(
     # 重读：views/likes 要含本次浏览（卡片口径实时算,不能拿浏览前的旧行）
     row = _load(conn, repo_id)
 
+    is_owner = False
+    if user is not None:
+        is_owner = row["claimed_by"] == user["id"] or row["owner_login"] == user["login"]
+
     liked = favorited = False
     if user is not None:
         kinds = {
@@ -86,6 +90,7 @@ def get_repo(
         default_branch=row["default_branch"],
         liked=liked,
         favorited=favorited,
+        is_owner=is_owner,
     )
 
 

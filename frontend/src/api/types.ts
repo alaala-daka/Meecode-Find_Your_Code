@@ -27,6 +27,7 @@ export interface RepoDetail extends RepoCardData {
   default_branch: string
   liked: boolean       // 当前用户点赞态；未登录恒 false
   favorited: boolean   // 当前用户收藏态；未登录恒 false
+  is_owner: boolean    // 当前用户是否为作者/认领者（canModerate 依据）
 }
 
 export type CommentStatus = 'pending' | 'visible' | 'hidden' | 'deleted'

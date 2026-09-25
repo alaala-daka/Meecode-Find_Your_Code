@@ -180,6 +180,20 @@ def test_detail_liked_favorited_false_for_anonymous(conn, client, repo_id):
     assert body["liked"] is False and body["favorited"] is False
 
 
+def test_detail_is_owner_for_claimer(conn, client, repo_id):
+    uid = auth.upsert_user(conn, {"id": 50, "login": "boss", "avatar_url": ""})
+    conn.execute("UPDATE repos SET claimed_by = ? WHERE id = ?", (uid, repo_id))
+    conn.commit()
+    client.cookies.set(config.SESSION_COOKIE, auth.sign(uid))
+    assert client.get(f"/api/repos/{repo_id}").json()["is_owner"] is True
+
+
+def test_detail_is_owner_false_for_stranger(conn, client, repo_id):
+    uid = auth.upsert_user(conn, {"id": 51, "login": "stranger", "avatar_url": ""})
+    client.cookies.set(config.SESSION_COOKIE, auth.sign(uid))
+    assert client.get(f"/api/repos/{repo_id}").json()["is_owner"] is False
+
+
 def test_tree_nested_and_types(monkeypatch, client_and_conn):
     client, conn = client_and_conn
     conn.execute(

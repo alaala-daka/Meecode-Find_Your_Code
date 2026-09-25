@@ -5,6 +5,7 @@ import { api } from '../api/client'
 import type { RepoDetail, RepoFile, RepoTreeItem } from '../api/types'
 import Capsule from '../components/Capsule'
 import CodeView from '../components/CodeView'
+import CommentSection from '../components/CommentSection'
 import EmptyState from '../components/EmptyState'
 import FileTree from '../components/FileTree'
 import IconAction from '../components/IconAction'
@@ -219,10 +220,11 @@ export default function RepoPage() {
 
             <ReadmeSection repoId={repoId} tree={tree} fullName={detail.full_name} defaultBranch={detail.default_branch} />
 
-            <section className="repo-discussions">
-              <h2 className="discussions-title">讨论</h2>
-              <p className="discussions-body">评论区开发中</p>
-            </section>
+            <CommentSection
+              repoId={Number(repoId)}
+              canModerate={detail.is_owner}
+              onNeedLogin={() => setLoginOpen(true)}
+            />
           </div>
 
           <RepoRail repo={detail} />

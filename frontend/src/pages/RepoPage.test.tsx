@@ -140,7 +140,7 @@ describe('RepoPage', () => {
     const { container } = renderAt('/repo/1')
     await screen.findAllByText('README.md')
     const readme = container.querySelector('.readme-section')
-    const discuss = container.querySelector('.repo-discussions')
+    const discuss = container.querySelector('.comment-section')
     expect(readme).toBeTruthy()
     expect(discuss).toBeTruthy()
     expect(readme!.compareDocumentPosition(discuss!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()

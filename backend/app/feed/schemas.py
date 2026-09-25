@@ -61,6 +61,7 @@ class RepoDetailOut(RepoCardOut):
     default_branch: str = "main"
     liked: bool = False       # 当前用户点赞态；未登录恒 false
     favorited: bool = False   # 当前用户收藏态；未登录恒 false
+    is_owner: bool = False   # 当前用户是否为作者/认领者（canModerate 依据）
 
 
 class TreeItem(BaseModel):

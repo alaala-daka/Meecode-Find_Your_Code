@@ -48,6 +48,7 @@ function toDetail(card: RepoCardData, liked = false, favorited = false): RepoDet
     default_branch: 'main',
     liked,
     favorited,
+    is_owner: true, // mock 恒同用户
   }
 }
 
