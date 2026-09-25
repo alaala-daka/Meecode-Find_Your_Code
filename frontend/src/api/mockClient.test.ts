@@ -88,4 +88,31 @@ describe('mockClient', () => {
     await api.logout()
     expect((await api.me())?.login).toBe('alice')
   })
+  it('postComment 响应为 pending，下一次 GET 为判定终态', async () => {
+    const client = createMockClient()
+    const created = await client.postComment(1, '正常技术讨论')
+    expect(created.status).toBe('pending')
+    const page = await client.comments(1)
+    expect(page.items.find((c) => c.id === created.id)?.status).toBe('visible')
+    const bad = await client.postComment(1, '垃圾广告')
+    const page2 = await client.comments(1)
+    expect(page2.items.find((c) => c.id === bad.id)?.status).toBe('hidden')
+  })
+
+  it('deleteComment 后 GET 不再返回', async () => {
+    const client = createMockClient()
+    const created = await client.postComment(1, 'x')
+    await client.deleteComment(created.id)
+    const page = await client.comments(1)
+    expect(page.items.find((c) => c.id === created.id)).toBeUndefined()
+  })
+
+  it('hideComment 后他人视角消失（mock 恒同用户故断言状态）', async () => {
+    const client = createMockClient()
+    const created = await client.postComment(1, 'x')
+    await client.hideComment(created.id)
+    const page = await client.comments(1)
+    const found = page.items.find((c) => c.id === created.id)
+    expect(found === undefined || found.status === 'hidden').toBe(true)
+  })
 })

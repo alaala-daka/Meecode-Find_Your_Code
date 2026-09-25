@@ -65,32 +65,6 @@
   }
 }
 
-/* 讨论 */
-.repo-discussions {
-  margin-top: 20px;
-  padding: 20px 24px;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-lg);
-}
-.discussions-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 16px;
-  font-weight: 700;
-  margin-bottom: 12px;
-}
-.discussions-title::before {
-  content: "";
-  width: 7px;
-  height: 7px;
-  background: var(--brand);
-  border-radius: 2px;
-}
-.discussions-body { color: var(--ink-3); font-size: 13px; }
-.discussions-closed { color: var(--ink-3); font-size: 13px; }
-
 /* 左滚右停双列 */
 .repo-page-grid {
   display: grid;

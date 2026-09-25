@@ -65,6 +65,10 @@ def get_repo(
     # 重读：views/likes 要含本次浏览（卡片口径实时算,不能拿浏览前的旧行）
     row = _load(conn, repo_id)
 
+    is_owner = False
+    if user is not None:
+        is_owner = row["claimed_by"] == user["id"] or row["owner_login"] == user["login"]
+
     liked = favorited = False
     if user is not None:
         kinds = {
@@ -78,21 +82,15 @@ def get_repo(
         liked = "like" in kinds
         favorited = "favorite" in kinds
 
-    giscus = None
-    try:
-        giscus = github.get_discussion_meta(row["full_name"])
-    except github.GitHubError:
-        giscus = None  # 获取失败时前端隐藏评论区，不阻塞仓库页
-
     card = cards.to_card(row)
     return RepoDetailOut(
         **card.model_dump(),
         intro_zh=row["intro_zh"],
         github_url=f"https://github.com/{row['full_name']}",
         default_branch=row["default_branch"],
-        discussions_open=bool(giscus and giscus.get("repo_id")),
         liked=liked,
         favorited=favorited,
+        is_owner=is_owner,
     )
 
 

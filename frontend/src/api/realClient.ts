@@ -1,7 +1,7 @@
 // src/api/realClient.ts —— 真实后端客户端:fetch('/api/...') + cookie 凭证
 import type {
-  AiDraftResult, ApiClient, CurrentUser, FeedPage, InteractKind, MyGithubRepo, RepoCardData,
-  RepoDetail, RepoFile, RepoTreeItem, SearchResult, SubmitPayload, UserProfile,
+  AiDraftResult, ApiClient, Comment, CommentPage, CurrentUser, FeedPage, InteractKind, MyGithubRepo,
+  RepoCardData, RepoDetail, RepoFile, RepoTreeItem, SearchResult, SubmitPayload, UserProfile,
 } from './types'
 
 async function http<T>(path: string, init?: RequestInit): Promise<T> {
@@ -78,6 +78,23 @@ export function createRealClient(): ApiClient {
     },
     async interact(repoId, kind: InteractKind, on) {
       await http('/api/interactions', jsonInit('POST', { repo_id: repoId, kind, active: on }))
+    },
+    async comments(repoId, limit = 20, offset = 0): Promise<CommentPage> {
+      const qs = new URLSearchParams({
+        repo_id: String(repoId), limit: String(limit), offset: String(offset),
+      })
+      return http<CommentPage>(`/api/comments?${qs}`)
+    },
+    async postComment(repoId, content, parentId = null): Promise<Comment> {
+      return http<Comment>('/api/comments', jsonInit('POST', {
+        repo_id: repoId, content, parent_id: parentId,
+      }))
+    },
+    async deleteComment(commentId) {
+      await http(`/api/comments/${commentId}`, { method: 'DELETE' })
+    },
+    async hideComment(commentId) {
+      await http(`/api/comments/${commentId}/hide`, jsonInit('POST'))
     },
     async delist(repoId) {
       await http(`/api/repos/${repoId}/delist`, jsonInit('POST'))

@@ -64,6 +64,22 @@ CREATE TABLE IF NOT EXISTS interactions (
 CREATE INDEX IF NOT EXISTS idx_interactions_lookup
     ON interactions (user_id, kind, updated_at DESC);
 
+CREATE TABLE IF NOT EXISTS comments (
+    id          INTEGER PRIMARY KEY,
+    repo_id     INTEGER NOT NULL REFERENCES repos(id),
+    user_id     INTEGER NOT NULL REFERENCES users(id),
+    parent_id   INTEGER REFERENCES comments(id),  -- NULL=顶层；非 NULL 恒指顶层
+    content     TEXT    NOT NULL,
+    status      TEXT    NOT NULL DEFAULT 'pending'
+                CHECK (status IN ('pending','visible','hidden','deleted')),
+    screened    INTEGER NOT NULL DEFAULT 0,
+    created_at  INTEGER NOT NULL DEFAULT (unixepoch())
+);
+
+CREATE INDEX IF NOT EXISTS idx_comments_repo ON comments (repo_id, status, created_at);
+CREATE INDEX IF NOT EXISTS idx_comments_parent ON comments (parent_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_comments_unscreen ON comments (screened, created_at);
+
 -- 搜索：external content 表，rowid 对齐 repos.id
 CREATE VIRTUAL TABLE IF NOT EXISTS repos_fts USING fts5 (
     full_name, tagline_zh, intro_zh, topics,

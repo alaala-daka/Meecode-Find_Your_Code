@@ -53,6 +53,7 @@ _RATE_LIMIT_DEFAULTS: dict[str, int] = {
     "session": 30,   # 白拿 session_id 是匿名打 LLM 的前置步
     "submit": 5,     # 投稿：GitHub 拉取 + LLM 精筛
     "interact": 60,  # 幂等互动写
+    "ugc": 10,       # 评论写操作：封 LLM 预审花费（spec 决策 9）
     "browse": 240,   # feed/search/详情：匿名写库放大面
     "auth": 10,      # OAuth 跳转与回调
     "delist": 5,     # 下架：高危写操作，与 submit 同档
@@ -98,6 +99,9 @@ RELATED_LIMIT: int = 4                   # 仓库页「相关推荐」条数
 MAX_FILE_CHARS: int = 200_000            # 超大文件截断阈值,避免塞爆响应
 TREE_CACHE_SIZE: int = 512               # 文件树缓存条目上限
 FILE_CACHE_SIZE: int = 1024              # 文件内容缓存条目上限
+COMMENT_MAX_LEN: int = int(os.getenv("COMMENT_MAX_LEN", "2000"))   # 评论内容上限(字符)
+MODERATE_BATCH: int = int(os.getenv("MODERATE_BATCH", "50"))                 # 重试 job 单轮上限
+MODERATE_GRACE_SECONDS: int = int(os.getenv("MODERATE_GRACE_SECONDS", "120"))  # 为 BackgroundTasks 在途留的宽限
 
 # ---------- 采集 ----------
 CRAWL_DAILY_QUOTA: int = 30             # 每日入库上限(防冲淡投稿)

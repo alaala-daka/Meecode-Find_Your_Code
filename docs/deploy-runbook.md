@@ -133,6 +133,7 @@ rsync -az --delete -e "ssh -i <部署私钥>" frontend/dist/ deploy@<服务器IP
 ```cron
 0 3 * * * cd /opt/meecode/backend && .venv/bin/python -m app.feed.jobs.crawl >> /var/log/meecode-crawl.log 2>&1
 0 4 * * * cd /opt/meecode/backend && .venv/bin/python -m app.feed.jobs.report >> /var/log/meecode-report.log 2>&1
+*/5 * * * * cd /opt/meecode/backend && .venv/bin/python -m app.feed.jobs.moderate >> /var/log/meecode-moderate.log 2>&1
 ```
 
 5. 冒烟：`curl -s "https://<domain>/api/feed" | head -c 200`（有 DB 内容后返回 cards）；`curl -s "https://<domain>/api/categories"` 返回 8 分类。

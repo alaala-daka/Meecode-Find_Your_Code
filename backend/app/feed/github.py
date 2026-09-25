@@ -79,60 +79,6 @@ def _get(path: str, params: dict | None = None, *,
     raise GitHubError(f"GitHub 重试 {retries} 次仍失败:{last}")
 
 
-def _graphql(query: str, variables: dict) -> dict:
-    """GitHub GraphQL 调用：用于读取 giscus 所需的 Discussion 元数据。"""
-    if not config.GITHUB_TOKEN:
-        raise GitHubError("GraphQL 查询需要配置 GITHUB_TOKEN")
-    headers = {
-        "Authorization": f"Bearer {config.GITHUB_TOKEN}",
-        "Content-Type": "application/json",
-    }
-    try:
-        resp = httpx.post(
-            "https://api.github.com/graphql",
-            headers=headers,
-            json={"query": query, "variables": variables},
-            timeout=TIMEOUT,
-        )
-    except httpx.HTTPError as exc:
-        raise GitHubError(f"GitHub GraphQL 请求失败：{exc}") from exc
-    if resp.status_code >= 400:
-        raise GitHubError(f"GitHub GraphQL {resp.status_code}：{resp.text[:200]}")
-    data = resp.json()
-    if data.get("errors"):
-        raise GitHubError(f"GitHub GraphQL 错误：{data['errors']}")
-    return data
-
-
-def get_discussion_meta(full_name: str) -> dict | None:
-    """返回 giscus 所需元数据；仓库未启用 Discussions 或调用失败时返回 None。"""
-    if config.GITHUB_MOCK:
-        # mock 仓库不是真实 GitHub 仓库，giscus 无法工作，返回 None 让前端隐藏评论区
-        return None
-    owner, _, name = full_name.partition("/")
-    query = """
-        query($owner: String!, $name: String!) {
-          repository(owner: $owner, name: $name) {
-            id
-            discussionCategories(first: 10) {
-              nodes { id name }
-            }
-          }
-        }
-    """
-    data = _graphql(query, {"owner": owner, "name": name})
-    repo = (data.get("data") or {}).get("repository") or {}
-    cats = ((repo.get("discussionCategories") or {}).get("nodes") or [])
-    if not cats:
-        return None
-    cat = cats[0]
-    return {
-        "repo_id": repo.get("id", ""),
-        "category": cat.get("name", "General"),
-        "category_id": cat.get("id", ""),
-    }
-
-
 def search_new_repos(language: str, *, now: int | None = None) -> list[dict]:
     """按语言分片查近期新仓库（Search API 单查询上限 1000，故分片）。"""
     if config.GITHUB_MOCK:

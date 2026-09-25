@@ -59,9 +59,9 @@ class RepoDetailOut(RepoCardOut):
     intro_zh: str = ""
     github_url: str
     default_branch: str = "main"
-    discussions_open: bool = False
     liked: bool = False       # 当前用户点赞态；未登录恒 false
     favorited: bool = False   # 当前用户收藏态；未登录恒 false
+    is_owner: bool = False   # 当前用户是否为作者/认领者（canModerate 依据）
 
 
 class TreeItem(BaseModel):
@@ -134,3 +134,47 @@ class InteractionIn(BaseModel):
     repo_id: int
     kind: str    # 仅 like / favorite;visit 由服务端在详情接口写入
     active: bool
+
+
+class CommentOut(BaseModel):
+    """单条评论：两层平铺（parent_id 恒指顶层）。status 供前端渲染「审核中/已隐藏」标记。"""
+    id: int
+    repo_id: int
+    user_id: int
+    user_login: str
+    user_avatar: str = ""
+    parent_id: int | None = None
+    content: str
+    status: str
+    created_at: int
+    created_at_iso: str = ""
+
+
+class CommentsOut(BaseModel):
+    """平铺列表：items 每顶层线程后跟其可见回复；total 为顶层线程数。"""
+    items: list[CommentOut]
+    total: int
+
+
+class CommentIn(BaseModel):
+    """发表评论/回复。content 校验带中文错误，前端可直出（同 SubmitIn 风格）。"""
+    repo_id: int
+    content: str
+    parent_id: int | None = None
+
+    @field_validator("content")
+    @classmethod
+    def _check_content(cls, v: str) -> str:
+        from .. import config
+        v = v.strip()
+        if not v:
+            raise ValueError("评论内容不能为空")
+        if len(v) > config.COMMENT_MAX_LEN:
+            raise ValueError(f"评论内容过长（上限 {config.COMMENT_MAX_LEN} 字符）")
+        return v
+
+
+class CommentVerdict(BaseModel):
+    """LLM 评论合规判定输出（spec 决策 8）。"""
+    is_compliant: bool
+    reason: str = ""

@@ -53,7 +53,7 @@ SEO：robots/sitemap/JSON-LD 依赖 URL 结构稳定（第二、四批之后）�
 | 批次 | 内容 | 状态 | spec | plan |
 |---|---|---|---|---|
 | 一 | 安全基线 | 代码完成（8 commits + 两轮审查修复，后端 215 测试全绿）；**待提交/push 部署 + 服务器 nginx reload** | `specs/2026-09-21-觅码-安全基线-design.md` | `plans/2026-09-21-觅码-安全基线.md` |
-| 二 | 评论区 → 反馈渠道 | 未启动 | — | — |
+| 二 | 评论区 → 反馈渠道 | 评论区代码完成（11 Tasks，前后端全绿）；反馈渠道未启动 | `specs/2026-09-24-觅码-评论区-design.md` | `plans/2026-09-24-觅码-评论区.md` |
 | 三 | 管理端 | 未启动 | — | — |
 | 四 | 作者获星点赞提醒 | 未启动 | — | — |
 | 五 | 精确筛选 ∥ 手机端 | 未启动 | — | — |
@@ -82,6 +82,9 @@ SEO：robots/sitemap/JSON-LD 依赖 URL 结构稳定（第二、四批之后）�
 
 - `feedback` 表（user_id 可空 / type=bug|idea|other / content / contact / status）+ 页脚或悬浮入口表单 + 提交确认。
 - 复用评论区的「表 + 表单 + 限流 + 管理端预览」模式，边际成本低。
+
+- 执行记录（2026-09-24）：评论区 11 Tasks 落地（含 spec 计划期修正两项：API 扁平化防 delist 桶冲突、分页对象定为顶层线程）；LLM 异步预审接 `feed/llm.py`；`moderate` cron 待部署后挂载。
+- 终审挂账（第三批顺手项）：conftest 级 `_no_bg_file_db` 上收、`moderate_pending` 补 `ORDER BY created_at ASC`、评论区「加载更多」分页 UI、作者判定三处内联（repos.py/submit.py/comments.py）抽单点。
 
 ### 第三批 · 管理端
 
