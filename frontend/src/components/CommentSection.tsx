@@ -20,6 +20,8 @@ const STATUS_LABEL: Record<string, string> = {
   pending: '审核中',
 }
 
+const POLL_MS = 3000
+
 function hiddenLabel(c: Comment): { text: string; title?: string } {
   // 原因非空 = LLM 拒绝；空 = 作者/管理隐藏（spec 4.6：「未通过或已隐藏」）
   return c.moderation_reason
@@ -48,6 +50,21 @@ export default function CommentSection({ repoId, canModerate, onNeedLogin }: Pro
     })
   }, [repoId])
 
+  const hasPending = items.some((c) => c.status === 'pending')
+
+  useEffect(() => {
+    if (!hasPending) return
+    const timer = setInterval(() => {
+      const token = ++reqRef.current
+      api.comments(repoId).then((page) => {
+        if (token !== reqRef.current) return
+        setItems(page.items)
+        setTotal(page.total)
+      }).catch(() => {})
+    }, POLL_MS)
+    return () => clearInterval(timer)
+  }, [hasPending, repoId])
+
   const tops = items.filter((c) => c.parent_id === null)
   const repliesOf = (id: number) => items.filter((c) => c.parent_id === id)
 
@@ -57,6 +74,7 @@ export default function CommentSection({ repoId, canModerate, onNeedLogin }: Pro
     if (!text || busy) return
     setBusy(true)
     setActionError('')
+    reqRef.current += 1
     try {
       const created = await api.postComment(repoId, text, replyTo)
       setItems((prev) => [...prev, created])
@@ -72,6 +90,7 @@ export default function CommentSection({ repoId, canModerate, onNeedLogin }: Pro
 
   async function remove(c: Comment) {
     const prev = items
+    reqRef.current += 1
     setItems((p) => p.filter((x) => x.id !== c.id && x.parent_id !== c.id))
     try {
       await api.deleteComment(c.id)
@@ -84,6 +103,7 @@ export default function CommentSection({ repoId, canModerate, onNeedLogin }: Pro
 
   async function hide(c: Comment) {
     const prev = items
+    reqRef.current += 1
     setItems((p) => p.filter((x) => x.id !== c.id && x.parent_id !== c.id))
     try {
       await api.hideComment(c.id)
