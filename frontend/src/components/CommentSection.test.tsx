@@ -1,5 +1,5 @@
 // src/components/CommentSection.test.tsx
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi, afterEach } from 'vitest'
 import type { CurrentUser } from '../api/types'
@@ -150,5 +150,61 @@ describe('CommentSection', () => {
     await userEvent.click(screen.getAllByRole('button', { name: '删除' })[0])
     expect(await screen.findByText('操作失败，请重试')).toBeInTheDocument()
     expect(screen.getByText('审核中内容')).toBeInTheDocument()
+  })
+
+  it('含审核中评论时轮询刷新，状态即时更新且定格后停止', async () => {
+    const { api } = await import('../api/client')
+    const spy = vi.spyOn(api, 'comments')
+      .mockResolvedValueOnce({ items: [FIXTURE.items[2]], total: 1 })
+      .mockResolvedValue({ items: [{ ...FIXTURE.items[2], status: 'visible' as const }], total: 1 })
+    vi.useFakeTimers()
+    try {
+      render(<CommentSection repoId={1} canModerate={false} onNeedLogin={() => {}} />)
+      await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+      expect(screen.getByText('审核中')).toBeInTheDocument()
+      expect(spy).toHaveBeenCalledTimes(1)
+      await act(async () => { await vi.advanceTimersByTimeAsync(3000) })
+      expect(spy).toHaveBeenCalledTimes(2)
+      expect(screen.queryByText('审核中')).not.toBeInTheDocument()
+      expect(screen.getByText('审核中内容')).toBeInTheDocument()
+      await act(async () => { await vi.advanceTimersByTimeAsync(20000) })
+      expect(spy).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('无 pending 评论时不发起轮询', async () => {
+    const { api } = await import('../api/client')
+    const spy = vi.spyOn(api, 'comments')
+      .mockResolvedValue({ items: [FIXTURE.items[0], FIXTURE.items[1]], total: 2 })
+    vi.useFakeTimers()
+    try {
+      render(<CommentSection repoId={1} canModerate={false} onNeedLogin={() => {}} />)
+      await act(async () => { await vi.advanceTimersByTimeAsync(15000) })
+      expect(spy).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('轮询失败静默：保留原列表不报错，恢复后继续', async () => {
+    const { api } = await import('../api/client')
+    vi.spyOn(api, 'comments')
+      .mockResolvedValueOnce({ items: [FIXTURE.items[2]], total: 1 })
+      .mockRejectedValueOnce(new Error('net'))
+      .mockResolvedValue({ items: [{ ...FIXTURE.items[2], status: 'visible' as const }], total: 1 })
+    vi.useFakeTimers()
+    try {
+      render(<CommentSection repoId={1} canModerate={false} onNeedLogin={() => {}} />)
+      await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+      await act(async () => { await vi.advanceTimersByTimeAsync(3000) })
+      expect(screen.getByText('审核中')).toBeInTheDocument()
+      expect(screen.queryByText('评论加载失败')).not.toBeInTheDocument()
+      await act(async () => { await vi.advanceTimersByTimeAsync(3000) })
+      expect(screen.queryByText('审核中')).not.toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
