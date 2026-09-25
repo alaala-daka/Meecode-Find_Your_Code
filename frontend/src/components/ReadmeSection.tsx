@@ -3,10 +3,11 @@ import { useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeRaw from 'rehype-raw'
-import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
+import rehypeSanitize from 'rehype-sanitize'
 import type { Components } from 'react-markdown'
 import type { RepoTreeItem } from '../api/types'
 import { api } from '../api/client'
+import { sanitizeSchema } from '../lib/sanitizeSchema'
 import './ReadmeSection.css'
 
 const README_RE = /^readme(\.(md|markdown|txt))?$/i
@@ -16,19 +17,6 @@ const BLOB_BASE = 'https://github.com'
 function findReadme(tree: RepoTreeItem[]): string | null {
   const hit = tree.find((n) => n.type === 'file' && README_RE.test(n.name))
   return hit?.path ?? null
-}
-
-/* 安全基线（决策 #9 修订）：README 内嵌 HTML 经 rehype-raw 解析后，必须先过
-   rehype-sanitize 白名单消毒（script/iframe/事件属性等全部剔除）再渲染；
-   外链新窗口打开，仓库内相对路径资源解析到 raw.githubusercontent.com */
-const sanitizeSchema: typeof defaultSchema = {
-  ...defaultSchema,
-  tagNames: [...(defaultSchema.tagNames ?? []), 'video'],
-  attributes: {
-    ...defaultSchema.attributes,
-    video: ['src', 'controls', 'width', 'height', 'poster', 'autoPlay', 'loop', 'muted', 'preload', 'playsInline'],
-    source: ['src', 'type', 'media', 'srcSet'],
-  },
 }
 
 // repo 内相对路径 → 可达的 GitHub URL；返回 null 表示不可外链（页内锚点等）
