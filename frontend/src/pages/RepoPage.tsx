@@ -221,11 +221,7 @@ export default function RepoPage() {
 
             <section className="repo-discussions">
               <h2 className="discussions-title">讨论</h2>
-              {detail.discussions_open ? (
-                <p className="discussions-body">评论区（giscus，后端就绪后接入）</p>
-              ) : (
-                <p className="discussions-closed">作者未开启讨论</p>
-              )}
+              <p className="discussions-body">评论区开发中</p>
             </section>
           </div>
 

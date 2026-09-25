@@ -66,30 +66,6 @@ def test_detail_no_visit_row_for_anonymous(conn, client, repo_id):
     assert conn.execute("SELECT count(*) c FROM interactions").fetchone()["c"] == 0
 
 
-def test_detail_discussions_open(client, repo_id, monkeypatch):
-    monkeypatch.setattr(github, "get_discussion_meta", lambda fn: {
-        "repo_id": "R_test",
-        "category": "General",
-        "category_id": "D_test",
-    })
-    body = client.get(f"/api/repos/{repo_id}").json()
-    assert body["discussions_open"] is True
-
-
-def test_mock_giscus_meta_is_disabled(monkeypatch):
-    monkeypatch.setattr(config, "GITHUB_MOCK", True)
-    assert github.get_discussion_meta("demo/agent-runtime") is None
-
-
-def test_detail_discussions_closed_when_github_fails(client, repo_id, monkeypatch):
-    monkeypatch.setattr(config, "GITHUB_MOCK", False)
-    def boom(*a, **kw):
-        raise github.GitHubError("限流")
-    monkeypatch.setattr(github, "get_discussion_meta", boom)
-    body = client.get(f"/api/repos/{repo_id}").json()
-    assert body["discussions_open"] is False
-
-
 def test_detail_404_for_unknown(client):
     assert client.get("/api/repos/9999").status_code == 404
 
@@ -176,7 +152,6 @@ def test_repo_detail_frontend_shape(client_and_conn):
     assert body["github_url"] == "https://github.com/a/b"
     assert body["default_branch"] == "main"
     assert body["intro_zh"] == "介绍"
-    assert isinstance(body["discussions_open"], bool)
     assert body["liked"] is False and body["favorited"] is False
     assert "readme_md" not in body and "giscus_repo_id" not in body
 

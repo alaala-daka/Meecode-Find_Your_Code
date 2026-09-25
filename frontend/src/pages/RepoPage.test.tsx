@@ -81,12 +81,6 @@ describe('RepoPage', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
-  it('Discussions 未开启显示提示（fixture：偶数 id 未开启）', async () => {
-    renderAt('/repo/2')
-    await screen.findByText('tinyfetch')
-    expect(screen.getByText('作者未开启讨论')).toBeInTheDocument()
-  })
-
   it('仓库不存在显示空态并可回首页', async () => {
     renderAt('/repo/999')
     expect(await screen.findByText('仓库不存在或已下架')).toBeInTheDocument()

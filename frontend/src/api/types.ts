@@ -25,7 +25,6 @@ export interface RepoDetail extends RepoCardData {
   intro_zh: string
   github_url: string
   default_branch: string
-  discussions_open: boolean
   liked: boolean       // 当前用户点赞态；未登录恒 false
   favorited: boolean   // 当前用户收藏态；未登录恒 false
 }

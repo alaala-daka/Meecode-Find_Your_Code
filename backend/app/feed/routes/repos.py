@@ -78,19 +78,12 @@ def get_repo(
         liked = "like" in kinds
         favorited = "favorite" in kinds
 
-    giscus = None
-    try:
-        giscus = github.get_discussion_meta(row["full_name"])
-    except github.GitHubError:
-        giscus = None  # 获取失败时前端隐藏评论区，不阻塞仓库页
-
     card = cards.to_card(row)
     return RepoDetailOut(
         **card.model_dump(),
         intro_zh=row["intro_zh"],
         github_url=f"https://github.com/{row['full_name']}",
         default_branch=row["default_branch"],
-        discussions_open=bool(giscus and giscus.get("repo_id")),
         liked=liked,
         favorited=favorited,
     )
