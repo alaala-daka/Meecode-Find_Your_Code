@@ -3,8 +3,8 @@ import {
   CATEGORIES, FIXTURE_FILES, FIXTURE_REPOS, FIXTURE_TREE, FIXTURE_USER,
 } from './fixtures'
 import type {
-  AiDraftResult, ApiClient, CurrentUser, FeedPage, InteractKind, MyGithubRepo, RepoCardData, RepoDetail,
-  RepoFile, RepoTreeItem, SearchResult, SubmitPayload, UserProfile,
+  AiDraftResult, ApiClient, Comment, CommentPage, CurrentUser, FeedPage, InteractKind,
+  MyGithubRepo, RepoCardData, RepoDetail, RepoFile, RepoTreeItem, SearchResult, SubmitPayload, UserProfile,
 } from './types'
 
 const PAGE_SIZE = 8
@@ -58,6 +58,8 @@ export function createMockClient(): ApiClient {
     likes: new Set<number>([1]),
     history: [2, 1],
     bio: FIXTURE_USER.bio,
+    comments: [] as Comment[],
+    nextCommentId: 1,
   }
   return {
     async categories() {
@@ -166,6 +168,38 @@ export function createMockClient(): ApiClient {
       const card = state.repos.find((r) => r.id === repoId)
       if (card && kind === 'like') card.likes += on ? 1 : -1
       if (card && kind === 'favorite' && card.favorites_count !== undefined) card.favorites_count += on ? 1 : -1
+    },
+    async comments(repoId): Promise<CommentPage> {
+      const all = state.comments.filter((c) => c.repo_id === repoId && c.status !== 'deleted')
+      const tops = all.filter((c) => c.parent_id === null)
+      const items = tops.flatMap((t) => [
+        t,
+        ...all.filter((c) => c.parent_id === t.id).sort((a, b) => a.created_at - b.created_at),
+      ])
+      return { items, total: tops.length }
+    },
+    async postComment(repoId, content, parentId = null): Promise<Comment> {
+      const id = state.nextCommentId++
+      const now = Math.floor(Date.now() / 1000)
+      const item: Comment = {
+        id, repo_id: repoId, user_id: 0, user_login: FIXTURE_USER.login,
+        user_avatar: FIXTURE_USER.avatar_url,
+        parent_id: parentId ?? null, content, status: 'pending',
+        created_at: now, created_at_iso: new Date(now * 1000).toISOString(),
+      }
+      state.comments.push(item)
+      const snapshot: Comment = { ...item }   // 响应体恒 pending（模拟异步预审）
+      const hit = /垃圾|广告|刷屏/.test(content)
+      item.status = hit ? 'hidden' : 'visible'  // 内存行立即判定，下一次 GET 即终态
+      return snapshot
+    },
+    async deleteComment(commentId) {
+      const row = state.comments.find((c) => c.id === commentId)
+      if (row) row.status = 'deleted'
+    },
+    async hideComment(commentId) {
+      const row = state.comments.find((c) => c.id === commentId)
+      if (row && row.status !== 'deleted') row.status = 'hidden'
     },
     async delist(repoId) {
       state.repos = state.repos.filter((r) => r.id !== repoId)

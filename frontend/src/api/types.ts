@@ -29,6 +29,26 @@ export interface RepoDetail extends RepoCardData {
   favorited: boolean   // 当前用户收藏态；未登录恒 false
 }
 
+export type CommentStatus = 'pending' | 'visible' | 'hidden' | 'deleted'
+
+export interface Comment {
+  id: number
+  repo_id: number
+  user_id: number
+  user_login: string
+  user_avatar: string
+  parent_id: number | null
+  content: string
+  status: CommentStatus
+  created_at: number
+  created_at_iso: string
+}
+
+export interface CommentPage {
+  items: Comment[]
+  total: number
+}
+
 export interface UserProfile {
   login: string
   avatar_url: string
@@ -107,6 +127,10 @@ export interface ApiClient {
   userHistory(login: string): Promise<RepoCardData[]>
   setBio(bio: string): Promise<void>
   interact(repoId: number, kind: InteractKind, on: boolean): Promise<void>
+  comments(repoId: number, limit?: number, offset?: number): Promise<CommentPage>
+  postComment(repoId: number, content: string, parentId?: number | null): Promise<Comment>
+  deleteComment(commentId: number): Promise<void>
+  hideComment(commentId: number): Promise<void>
   delist(repoId: number): Promise<void>
   loginUrl(): string
   me(): Promise<CurrentUser | null> // GET /api/me：会话引导，未登录返回 null

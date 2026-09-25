@@ -71,4 +71,40 @@ describe('realClient', () => {
     expect(f).toHaveBeenCalledWith('/api/auth/logout',
       expect.objectContaining({ method: 'POST', credentials: 'include' }))
   })
+
+  it('comments 拼 repo_id/limit/offset', async () => {
+    const f = stubFetch({ items: [], total: 0 })
+    vi.stubGlobal('fetch', f)
+    await createRealClient().comments(3, 10, 20)
+    expect(f).toHaveBeenCalledWith('/api/comments?repo_id=3&limit=10&offset=20',
+      expect.objectContaining({ credentials: 'include' }))
+  })
+
+  it('postComment 发送 repo_id/content/parent_id 并返回 Comment', async () => {
+    const f = stubFetch({
+      id: 9, repo_id: 1, user_id: 2, user_login: 'u', user_avatar: '',
+      parent_id: null, content: 'hi', status: 'pending', created_at: 1, created_at_iso: 'x',
+    })
+    vi.stubGlobal('fetch', f)
+    const out = await createRealClient().postComment(1, 'hi')
+    expect(out.status).toBe('pending')
+    expect(f).toHaveBeenCalledWith('/api/comments',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ repo_id: 1, content: 'hi', parent_id: null }),
+      }))
+  })
+
+  it('deleteComment/hideComment 命中正确端点与方法', async () => {
+    const f = stubFetch({ ok: true })
+    vi.stubGlobal('fetch', f)
+    const c = createRealClient()
+    await c.deleteComment(7)
+    await c.hideComment(7)
+    const calls = f.mock.calls.map((x) => [x[0] as string, (x[1] as RequestInit)?.method])
+    expect(calls).toEqual([
+      ['/api/comments/7', 'DELETE'],
+      ['/api/comments/7/hide', 'POST'],
+    ])
+  })
 })
