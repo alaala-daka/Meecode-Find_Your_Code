@@ -213,6 +213,10 @@ cd frontend && npm run typecheck
 - [docs/superpowers/specs/](docs/superpowers/specs/) — 各子项目设计文档（收录与浏览、UI 规范、仓库解读、线上部署、信息流全链路）
 - [docs/superpowers/plans/](docs/superpowers/plans/) — 对应实现计划
 
+## 使用声明
+
+本仓库仅作为源码展示与学习参考。**保留所有权利**：禁止部署上线、二次分发、修改复用及任何商业使用。可用于学习研究、本地运行。
+
 ---
 
 <div align="center">

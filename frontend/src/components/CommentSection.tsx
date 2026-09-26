@@ -34,7 +34,7 @@ export default function CommentSection({ repoId, canModerate, onNeedLogin }: Pro
   const [items, setItems] = useState<Comment[]>([])
   const [total, setTotal] = useState(0)
   const [content, setContent] = useState('')
-  const [replyTo, setReplyTo] = useState<number | null>(null)
+  const [replyTo, setReplyTo] = useState<{ topId: number; login: string } | null>(null)
   const [busy, setBusy] = useState(false)
   const [actionError, setActionError] = useState('')
   const reqRef = useRef(0)
@@ -76,7 +76,7 @@ export default function CommentSection({ repoId, canModerate, onNeedLogin }: Pro
     setActionError('')
     reqRef.current += 1
     try {
-      const created = await api.postComment(repoId, text, replyTo)
+      const created = await api.postComment(repoId, text, replyTo?.topId ?? null)
       setItems((prev) => [...prev, created])
       setTotal((t) => t + (created.parent_id === null ? 1 : 0))
       setContent('')
@@ -139,22 +139,34 @@ export default function CommentSection({ repoId, canModerate, onNeedLogin }: Pro
         </div>
         <div className="comment-actions">
           {c.status !== 'hidden' && (
-            <button type="button" className="comment-action" onClick={() => setReplyTo(topId)}>回复</button>
+            <button type="button" className="comment-action" onClick={() => setReplyTo({ topId, login: c.user_login })}>回复</button>
           )}
           {mine && <button type="button" className="comment-action" onClick={() => void remove(c)}>删除</button>}
           {canModerate && !mine && (
             <button type="button" className="comment-action" onClick={() => void hide(c)}>隐藏</button>
           )}
         </div>
-        {replyTo === topId && c.parent_id === null && (
+        {replyTo?.topId === topId && c.parent_id === null && (
           <div className="comment-reply-box">
+            <button
+              type="button"
+              className="comment-reply-cancel"
+              aria-label="回到上级评论"
+              title="回到上级评论"
+              onClick={() => setReplyTo(null)}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M18.0702 9.57L12.0002 3.5L5.93018 9.57" stroke="currentColor" strokeWidth="1.5" strokeMiterlimit="10" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M12 20.4999V3.66992" stroke="currentColor" strokeWidth="1.5" strokeMiterlimit="10" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
             <textarea
               value={content}
               onChange={(e) => setContent(e.target.value)}
-              placeholder="写下回复…"
+              placeholder={`回复 @${replyTo.login}：`}
               rows={3}
             />
-            <button type="button" onClick={() => void send()} disabled={busy}>发送</button>
+            <button type="button" className="comment-send" onClick={() => void send()} disabled={busy}>发送</button>
           </div>
         )}
       </li>
@@ -181,7 +193,7 @@ export default function CommentSection({ repoId, canModerate, onNeedLogin }: Pro
             placeholder={user ? '写下你的评论…' : '登录后参与讨论'}
             rows={3}
           />
-          <button type="button" onClick={() => void send()} disabled={busy}>发送</button>
+          <button type="button" className="comment-send" onClick={() => void send()} disabled={busy}>发送</button>
         </div>
       )}
     </section>
