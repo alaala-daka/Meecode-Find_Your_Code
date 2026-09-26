@@ -33,20 +33,28 @@
 .comment-form, .comment-reply-box {
   display: flex; flex-direction: column; gap: 8px; margin-top: 16px;
 }
+.comment-reply-box { position: relative; }
 .comment-form textarea, .comment-reply-box textarea {
   width: 100%; border: 1px solid var(--line); border-radius: var(--radius-md);
   padding: 10px 12px; font-size: 14px; resize: vertical; font-family: inherit;
 }
-.comment-form button, .comment-reply-box button {
+.comment-send {
   align-self: flex-end; min-height: 40px; padding: 0 20px;
   border: none; border-radius: var(--radius-md); background: var(--brand); color: #fff;
   font-size: 14px; cursor: pointer;
 }
-.comment-form button:disabled, .comment-reply-box button:disabled { opacity: 0.6; }
+.comment-send:disabled { opacity: 0.6; }
+.comment-reply-cancel {
+  position: absolute; top: 4px; right: 4px; z-index: 1;
+  width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;
+  border: none; border-radius: var(--radius-sm); background: none;
+  color: var(--ink-3); cursor: pointer;
+}
+.comment-reply-cancel:hover { color: var(--ink); background: var(--tint); }
 .comment-error { color: #b00020; font-size: 13px; margin-top: 8px; }
 
 @media (max-width: 760px) {
   .comment-section { padding: 16px; }
   .comment-reply { margin-left: 12px; }
-  .comment-form button, .comment-reply-box button { width: 100%; align-self: stretch; }
+  .comment-send { width: 100%; align-self: stretch; }
 }

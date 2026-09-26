@@ -141,6 +141,42 @@ describe('CommentSection', () => {
     await waitFor(() => expect(hideSpy).toHaveBeenCalledWith(1))
   })
 
+  it('回复态未键入时占位显示「回复 @对象：」，对象为被点评论的作者', async () => {
+    const { api } = await import('../api/client')
+    vi.spyOn(api, 'comments').mockResolvedValue(FIXTURE)
+    render(<CommentSection repoId={1} canModerate={false} onNeedLogin={() => {}} />)
+    await screen.findByText('一楼')
+    await userEvent.click(screen.getAllByRole('button', { name: '回复' })[1])
+    expect(screen.getByRole('textbox')).toHaveAttribute('placeholder', '回复 @bob：')
+  })
+
+  it('点「回到上级评论」上箭头退出回复态，主表单恢复', async () => {
+    const { api } = await import('../api/client')
+    vi.spyOn(api, 'comments').mockResolvedValue(FIXTURE)
+    render(<CommentSection repoId={1} canModerate={false} onNeedLogin={() => {}} />)
+    await screen.findByText('一楼')
+    await userEvent.click(screen.getAllByRole('button', { name: '回复' })[0])
+    await userEvent.click(screen.getByRole('button', { name: '回到上级评论' }))
+    expect(screen.queryByRole('button', { name: '回到上级评论' })).not.toBeInTheDocument()
+    expect(screen.getByRole('textbox')).toHaveAttribute('placeholder', '写下你的评论…')
+  })
+
+  it('回复发送带顶层 parent_id', async () => {
+    const { api } = await import('../api/client')
+    vi.spyOn(api, 'comments').mockResolvedValue(FIXTURE)
+    const postSpy = vi.spyOn(api, 'postComment').mockResolvedValue({
+      id: 99, repo_id: 1, user_id: 9, user_login: 'me', user_avatar: '',
+      parent_id: 1, content: '回你', status: 'pending', moderation_reason: '',
+      created_at: 9, created_at_iso: 'x',
+    })
+    render(<CommentSection repoId={1} canModerate={false} onNeedLogin={() => {}} />)
+    await screen.findByText('一楼')
+    await userEvent.click(screen.getAllByRole('button', { name: '回复' })[1])   // bob 的回复
+    await userEvent.type(screen.getByRole('textbox'), '回你')
+    await userEvent.click(screen.getByRole('button', { name: '发送' }))
+    await waitFor(() => expect(postSpy).toHaveBeenCalledWith(1, '回你', 1))
+  })
+
   it('删除自己的评论失败时回滚并提示', async () => {
     const { api } = await import('../api/client')
     vi.spyOn(api, 'comments').mockResolvedValue(FIXTURE)
