@@ -26,6 +26,9 @@ GITHUB_CLIENT_SECRET: str = os.getenv("GITHUB_CLIENT_SECRET", "")
 GITHUB_MOCK: bool = os.getenv("GITHUB_MOCK", "").lower() in ("1", "true", "yes")
 GITHUB_API: str = "https://api.github.com"
 
+# 点星 token 加密密钥（base64 32 字节）。空 = dev 从 SESSION_SECRET 派生（启动见 security 模块）。
+TOKEN_ENC_KEY: str = os.getenv("TOKEN_ENC_KEY", "")
+
 # ---------- 会话 ----------
 _DEV_SESSION_SECRET = "dev-only-insecure-secret"
 SESSION_SECRET: str = os.getenv("SESSION_SECRET") or _DEV_SESSION_SECRET

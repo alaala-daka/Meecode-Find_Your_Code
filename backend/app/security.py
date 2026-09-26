@@ -7,9 +7,14 @@
 """
 from __future__ import annotations
 
+import base64
+import hashlib
+import os
 import threading
 import time
 
+from cryptography.exceptions import InvalidTag
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -151,3 +156,35 @@ class SecurityMiddleware(BaseHTTPMiddleware):
                     headers={"Retry-After": str(retry_after)},
                 )
         return await call_next(request)
+
+
+# ---------- GitHub token 密封（spec 2026-09-26 决策 1：红线修订的补偿面） ----------
+_TOKEN_SALT = b"meecode-gh-token-v1"
+
+
+def _token_key() -> bytes:
+    """AES-GCM 密钥：TOKEN_ENC_KEY（base64 32 字节）优先；空则从 SESSION_SECRET 派生（仅 dev）。"""
+    raw = config.TOKEN_ENC_KEY
+    if raw:
+        key = base64.b64decode(raw)
+        if len(key) != 32:
+            raise RuntimeError("TOKEN_ENC_KEY 必须是 base64 编码的 32 字节")
+        return key
+    return hashlib.pbkdf2_hmac("sha256", config.SESSION_SECRET.encode(), _TOKEN_SALT, 200_000, dklen=32)
+
+
+def seal_token(plaintext: str) -> str:
+    nonce = os.urandom(12)
+    ct = AESGCM(_token_key()).encrypt(nonce, plaintext.encode("utf-8"), None)
+    return base64.urlsafe_b64encode(nonce + ct).decode("ascii")
+
+
+def open_token(blob: str) -> str:
+    """解封 token。任何失败（坏 base64、篡改、换钥）一律 ValueError，绝不部分返回。"""
+    try:
+        raw = base64.urlsafe_b64decode(blob)
+        if len(raw) < 13:
+            raise ValueError("密文过短")
+        return AESGCM(_token_key()).decrypt(raw[:12], raw[12:], None).decode("utf-8")
+    except (ValueError, InvalidTag) as exc:
+        raise ValueError("token 解封失败") from exc

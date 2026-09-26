@@ -3,6 +3,8 @@
 conftest 已 autouse 关闭限流；本文件 autouse 开回（模块级 autouse 后于 conftest
 执行，已实验验证），并用 monkeypatch 把阈值压到 1~2 做超限断言，避免真发几百个请求。
 """
+import base64
+
 import pytest
 from fastapi.testclient import TestClient
 from starlette.requests import Request
@@ -251,3 +253,28 @@ def test_ugc_endpoint_429_with_retry_after(client, monkeypatch):
     assert resp.status_code == 429
     assert "Retry-After" in resp.headers
     assert resp.json()["detail"] == "请求过于频繁，请稍后再试"
+
+
+# ---------- token 加密封装（spec 2026-09-26 决策 1） ----------
+def test_seal_open_roundtrip(monkeypatch):
+    monkeypatch.setattr(config, "TOKEN_ENC_KEY", "")
+    blob = security.seal_token("ghp_secret_example")
+    assert blob != "ghp_secret_example"
+    assert "ghp_secret_example" not in blob
+    assert security.open_token(blob) == "ghp_secret_example"
+
+
+def test_open_token_rejects_tampered_blob(monkeypatch):
+    monkeypatch.setattr(config, "TOKEN_ENC_KEY", "")
+    blob = security.seal_token("ghp_secret_example")
+    bad = blob[:-4] + ("AAAA" if not blob.endswith("AAAA") else "BBBB")
+    with pytest.raises(ValueError):
+        security.open_token(bad)
+
+
+def test_open_token_rejects_key_mismatch(monkeypatch):
+    monkeypatch.setattr(config, "TOKEN_ENC_KEY", base64.b64encode(b"k" * 32).decode())
+    blob = security.seal_token("t")
+    monkeypatch.setattr(config, "TOKEN_ENC_KEY", base64.b64encode(b"j" * 32).decode())
+    with pytest.raises(ValueError):
+        security.open_token(blob)
