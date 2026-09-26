@@ -166,7 +166,10 @@ def _token_key() -> bytes:
     """AES-GCM 密钥：TOKEN_ENC_KEY（base64 32 字节）优先；空则从 SESSION_SECRET 派生（仅 dev）。"""
     raw = config.TOKEN_ENC_KEY
     if raw:
-        key = base64.b64decode(raw)
+        try:
+            key = base64.b64decode(raw)
+        except ValueError as exc:
+            raise RuntimeError("TOKEN_ENC_KEY 必须是 base64 编码的 32 字节") from exc
         if len(key) != 32:
             raise RuntimeError("TOKEN_ENC_KEY 必须是 base64 编码的 32 字节")
         return key
@@ -180,11 +183,12 @@ def seal_token(plaintext: str) -> str:
 
 
 def open_token(blob: str) -> str:
-    """解封 token。任何失败（坏 base64、篡改、换钥）一律 ValueError，绝不部分返回。"""
+    """解封 token。解封失败（坏 base64、篡改、换钥）一律 ValueError，绝不部分返回；密钥配置错误独立上抛。"""
+    key = _token_key()
     try:
-        raw = base64.urlsafe_b64decode(blob)
+        raw = base64.b64decode(blob, altchars=b"-_", validate=True)
         if len(raw) < 13:
             raise ValueError("密文过短")
-        return AESGCM(_token_key()).decrypt(raw[:12], raw[12:], None).decode("utf-8")
+        return AESGCM(key).decrypt(raw[:12], raw[12:], None).decode("utf-8")
     except (ValueError, InvalidTag) as exc:
         raise ValueError("token 解封失败") from exc

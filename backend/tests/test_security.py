@@ -278,3 +278,19 @@ def test_open_token_rejects_key_mismatch(monkeypatch):
     monkeypatch.setattr(config, "TOKEN_ENC_KEY", base64.b64encode(b"j" * 32).decode())
     with pytest.raises(ValueError):
         security.open_token(blob)
+
+
+# ---------- 回归：严格 base64 + 配置错误独立上抛（fix round 1） ----------
+def test_open_token_rejects_non_alphabet_char(monkeypatch):
+    monkeypatch.setattr(config, "TOKEN_ENC_KEY", "")
+    blob = security.seal_token("ghp_secret_example")
+    with pytest.raises(ValueError):
+        security.open_token(blob[:4] + "!" + blob[4:])
+
+
+def test_open_token_malformed_key_is_config_error(monkeypatch):
+    monkeypatch.setattr(config, "TOKEN_ENC_KEY", base64.b64encode(b"k" * 32).decode())
+    blob = security.seal_token("t")
+    monkeypatch.setattr(config, "TOKEN_ENC_KEY", "not-base64")
+    with pytest.raises(RuntimeError):
+        security.open_token(blob)
