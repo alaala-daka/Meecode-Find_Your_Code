@@ -181,3 +181,57 @@ def test_interactive_readme_no_sleep_on_rate_limit(monkeypatch):
     with pytest.raises(github.GitHubError):
         github.get_readme("a/b", interactive=True)
     assert sleeps == []
+
+
+# ---------- 用户 token 点星（spec 2026-09-26） ----------
+def _user_transport(handler):
+    # 注入点是 github._user_client(token) 工厂——lambda 须接收 token 参数
+    return lambda token=None: httpx.Client(transport=httpx.MockTransport(handler))
+
+
+def test_is_starred_true_false_by_status(monkeypatch):
+    monkeypatch.setattr(github.config, "GITHUB_MOCK", False)
+    monkeypatch.setattr(github, "_user_client",
+                        _user_transport(lambda r: httpx.Response(204)))
+    assert github.is_starred("tok", "a/b") is True
+    monkeypatch.setattr(github, "_user_client",
+                        _user_transport(lambda r: httpx.Response(404, json={"message": "Not Found"})))
+    assert github.is_starred("tok", "a/b") is False
+
+
+def test_star_and_unstar_call_verb_and_path(monkeypatch):
+    monkeypatch.setattr(github.config, "GITHUB_MOCK", False)
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.method, request.url.path))
+        return httpx.Response(204)
+
+    monkeypatch.setattr(github, "_user_client", _user_transport(handler))
+    github.star_repo("tok", "a/b")
+    github.unstar_repo("tok", "a/b")
+    assert seen == [("PUT", "/user/starred/a/b"), ("DELETE", "/user/starred/a/b")]
+
+
+def test_user_calls_carry_bearer_and_expose_status(monkeypatch):
+    monkeypatch.setattr(github.config, "GITHUB_MOCK", False)
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["auth"] = request.headers.get("authorization")
+        return httpx.Response(401, json={"message": "Bad credentials"})
+
+    monkeypatch.setattr(github, "_user_client", _user_transport(handler))
+    with pytest.raises(github.GitHubError) as exc:
+        github.star_repo("tok", "a/b")
+    assert exc.value.status == 401
+    assert seen["auth"] == "Bearer tok"
+
+
+def test_revoke_oauth_token_never_raises(monkeypatch):
+    monkeypatch.setattr(github.config, "GITHUB_MOCK", False)
+    # revoke 走 httpx.post 直调（Basic Auth 换 token 撤销端点），断网也必须吞错
+    def boom(*a, **k):
+        raise github.httpx.HTTPError("net down")
+    monkeypatch.setattr(github.httpx, "post", boom)
+    github.revoke_oauth_token("tok")  # 不抛即通过
