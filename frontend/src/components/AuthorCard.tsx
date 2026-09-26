@@ -16,6 +16,7 @@ export default function AuthorCard({ ownerLogin, githubUrl }: Props) {
           login={ownerLogin}
           avatarUrl={`https://github.com/${ownerLogin}.png?size=96`}
           className="author-card-avatar"
+          variant="square"
         />
         <span className="author-card-name">{ownerLogin}</span>
       </div>

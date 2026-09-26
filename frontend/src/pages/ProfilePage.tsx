@@ -87,7 +87,7 @@ export default function ProfilePage() {
       <TopBar />
       <div className="profile-banner">
         <header className="page-shell profile-head-wrap">
-          <Avatar login={profile.login} avatarUrl={profile.avatar_url} className="profile-avatar" />
+          <Avatar login={profile.login} avatarUrl={profile.avatar_url} className="profile-avatar" variant="square" />
           <div className="profile-info">
             <h1 className="profile-name">{profile.login}</h1>
             {editingBio ? (
