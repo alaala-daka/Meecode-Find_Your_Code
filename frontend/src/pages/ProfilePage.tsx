@@ -117,6 +117,7 @@ export default function ProfilePage() {
               {isMe && me && 'gh_star_authed' in me && me.gh_star_authed && (
                 <button
                   className="star-sync-off"
+                  title="断开后 GitHub 上已点的星保留，需自行取消"
                   onClick={() => {
                     void api.ghStarDisconnect().then(() => {
                       const disconnected: CurrentUser = { ...me, gh_star_authed: false }
