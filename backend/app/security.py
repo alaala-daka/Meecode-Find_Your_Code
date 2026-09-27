@@ -1,6 +1,7 @@
 """安全中间件：内存滑动窗口限流 + Origin 白名单 CSRF 校验。
 
-零第三方依赖：计数器为进程内 dict，单 worker 部署（systemd 单元）语义完备。
+限流/校验面零第三方依赖（token 密封面用 cryptography，见文件末尾）：
+计数器为进程内 dict，单 worker 部署（systemd 单元）语义完备。
 限流键登录用户优先（HMAC cookie 验签，不查库），匿名取客户端 IP——仅受信对端
 的 XFF 末段采信，非受信来源一律取 socket 对端（防伪造 XFF 换限流键）。
 设计依据：docs/superpowers/specs/2026-09-21-觅码-安全基线-design.md。
