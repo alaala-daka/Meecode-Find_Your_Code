@@ -294,3 +294,29 @@ def test_open_token_malformed_key_is_config_error(monkeypatch):
     monkeypatch.setattr(config, "TOKEN_ENC_KEY", "not-base64")
     with pytest.raises(RuntimeError):
         security.open_token(blob)
+
+
+# ---------- TOKEN_ENC_KEY 启动校验 + 派生告警（spec §4.2，final review Important 3） ----------
+def test_ensure_token_key_rejects_wrong_length(monkeypatch):
+    monkeypatch.setattr(config, "TOKEN_ENC_KEY", base64.b64encode(b"short").decode())
+    with pytest.raises(RuntimeError):
+        security.ensure_token_key()
+
+
+def test_ensure_token_key_rejects_bad_base64(monkeypatch):
+    monkeypatch.setattr(config, "TOKEN_ENC_KEY", "not-base64")
+    with pytest.raises(RuntimeError):
+        security.ensure_token_key()
+
+
+def test_ensure_token_key_accepts_valid(monkeypatch):
+    monkeypatch.setattr(config, "TOKEN_ENC_KEY", base64.b64encode(b"k" * 32).decode())
+    security.ensure_token_key()  # 不抛即通过
+
+
+def test_ensure_token_key_warns_when_unset(monkeypatch, caplog):
+    monkeypatch.setattr(config, "TOKEN_ENC_KEY", "")
+    with caplog.at_level("WARNING"):
+        security.ensure_token_key()
+    assert any("TOKEN_ENC_KEY" in r.message and "生产请配置" in r.message
+               for r in caplog.records)

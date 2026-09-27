@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import logging
 import os
 import threading
 import time
@@ -163,7 +164,8 @@ _TOKEN_SALT = b"meecode-gh-token-v1"
 
 
 def _token_key() -> bytes:
-    """AES-GCM 密钥：TOKEN_ENC_KEY（base64 32 字节）优先；空则从 SESSION_SECRET 派生（仅 dev）。"""
+    """AES-GCM 密钥：TOKEN_ENC_KEY（base64 32 字节）优先；空则从 SESSION_SECRET 派生（仅 dev）。
+    密钥配置错误（长度/base64 非法）独立上抛 RuntimeError，不混入解封 ValueError。"""
     raw = config.TOKEN_ENC_KEY
     if raw:
         try:
@@ -174,6 +176,20 @@ def _token_key() -> bytes:
             raise RuntimeError("TOKEN_ENC_KEY 必须是 base64 编码的 32 字节")
         return key
     return hashlib.pbkdf2_hmac("sha256", config.SESSION_SECRET.encode(), _TOKEN_SALT, 200_000, dklen=32)
+
+
+def ensure_token_key() -> None:
+    """启动校验 TOKEN_ENC_KEY（spec §4.2，final review Important 3）。
+
+    配错 fail-fast 拒启：否则到首个 seal_token/open_token 才以 RuntimeError 爆炸，
+    set_interaction 本地已 commit 后 500（违反决策 5「本地永远成功返回」）。
+    未配置时从 SESSION_SECRET 派生属 dev 行为，启动打警告提醒生产补配。
+    """
+    if config.TOKEN_ENC_KEY:
+        _token_key()  # 配错（非法 base64 / 非 32 字节）即 RuntimeError 拒启
+        return
+    logging.getLogger(__name__).warning(
+        "TOKEN_ENC_KEY 未配置：dev 派生密钥，生产请配置 TOKEN_ENC_KEY")
 
 
 def seal_token(plaintext: str) -> str:

@@ -1,4 +1,5 @@
 """登录、签名、互动显式 on/off、个人三个 tab。"""
+import base64
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
@@ -380,3 +381,17 @@ def test_like_has_empty_sync(conn, client, login):
     body = client.post("/api/interactions",
                        json={"repo_id": rid, "kind": "like", "active": True}).json()
     assert body == {"active": True, "sync": ""}
+
+
+def test_interaction_sync_error_degrades_to_pending(conn, client, login, monkeypatch):
+    """同步边界兜底（final review Important 3）：TOKEN_ENC_KEY 配错在 seal/open 以
+    RuntimeError 爆炸时，不得 500；本地已提交不回滚，sync 降级 pending。"""
+    monkeypatch.setattr(config, "TOKEN_ENC_KEY", base64.b64encode(b"short").decode())
+    conn.execute("UPDATE users SET gh_token_enc='blob' WHERE id=?", (login,))
+    conn.commit()
+    rid = add_repo(conn, 1)
+    body = client.post("/api/interactions",
+                       json={"repo_id": rid, "kind": "favorite", "active": True}).json()
+    assert body == {"active": True, "sync": "pending"}
+    assert conn.execute("SELECT count(*) c FROM interactions WHERE kind='favorite'"
+                        ).fetchone()["c"] == 1  # 本地已提交不回滚
