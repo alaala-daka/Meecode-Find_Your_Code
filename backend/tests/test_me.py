@@ -101,13 +101,16 @@ def test_bio_requires_login(client):
 def test_interaction_on_and_off_explicit(conn, client, login):
     rid = add_repo(conn, 1)
     on = InteractionIn(repo_id=rid, kind="favorite", active=True).model_dump()
-    assert client.post("/api/interactions", json=on).json() == {"active": True}
-    # 显式语义:重复 on 不翻面,响应恒为传入的目标状态
-    assert client.post("/api/interactions", json=on).json() == {"active": True}
+    r1 = client.post("/api/interactions", json=on).json()
+    assert r1["active"] is True and r1["sync"] == "need_auth"
+    # 显式语义:重复 on 不翻转;响应恒为传入的目标状态
+    r2 = client.post("/api/interactions", json=on).json()
+    assert r2["active"] is True and r2["sync"] == "need_auth"
     assert conn.execute(
         "SELECT count(*) c FROM interactions WHERE kind='favorite'").fetchone()["c"] == 1
     off = InteractionIn(repo_id=rid, kind="favorite", active=False).model_dump()
-    assert client.post("/api/interactions", json=off).json() == {"active": False}
+    r3 = client.post("/api/interactions", json=off).json()
+    assert r3["active"] is False and r3["sync"] == "kept"
     assert conn.execute(
         "SELECT count(*) c FROM interactions WHERE kind='favorite'").fetchone()["c"] == 0
 
@@ -318,3 +321,35 @@ def test_disconnect_star_auth_clears_everything(conn, client, login):
 
 def test_disconnect_star_auth_requires_login(client):
     assert client.delete("/api/me/gh-star-auth").status_code == 401
+
+
+# ---------- interactions 内联同步（spec 2026-09-26） ----------
+def test_favorite_without_token_returns_need_auth(conn, client, login):
+    rid = add_repo(conn, 1)
+    body = client.post("/api/interactions",
+                       json={"repo_id": rid, "kind": "favorite", "active": True}).json()
+    assert body == {"active": True, "sync": "need_auth"}
+    assert conn.execute("SELECT count(*) c FROM star_syncs").fetchone()["c"] == 0
+
+
+def test_favorite_with_token_syncs_in_mock(conn, client, login):
+    from app import security
+    conn.execute("UPDATE users SET gh_token_enc=? WHERE id=?", (security.seal_token("tok"), login))
+    conn.commit()
+    rid = add_repo(conn, 1, owner="other")  # owner 不能是登录用户 demo：自己的仓库点不了星，状态机回 skipped
+    on = client.post("/api/interactions",
+                     json={"repo_id": rid, "kind": "favorite", "active": True}).json()
+    assert on == {"active": True, "sync": "synced"}
+    row = conn.execute("SELECT * FROM star_syncs").fetchone()
+    assert (row["desired"], row["applied"], row["origin"]) == ("starred", "done", "meecode")
+    off = client.post("/api/interactions",
+                      json={"repo_id": rid, "kind": "favorite", "active": False}).json()
+    assert off == {"active": False, "sync": "unstarred"}
+    assert conn.execute("SELECT count(*) c FROM star_syncs").fetchone()["c"] == 0
+
+
+def test_like_has_empty_sync(conn, client, login):
+    rid = add_repo(conn, 1)
+    body = client.post("/api/interactions",
+                       json={"repo_id": rid, "kind": "like", "active": True}).json()
+    assert body == {"active": True, "sync": ""}

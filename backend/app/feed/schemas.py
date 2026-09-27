@@ -137,6 +137,13 @@ class InteractionIn(BaseModel):
     active: bool
 
 
+class InteractionOut(BaseModel):
+    """互动响应。sync：favorite 为 SyncState（need_auth/synced/pending/kept/unstarred/skipped）；
+    like 无 GitHub 对应物恒空串（Global Constraints）。"""
+    active: bool
+    sync: str = ""
+
+
 class CommentOut(BaseModel):
     """单条评论：两层平铺（parent_id 恒指顶层）。status 供前端渲染「审核中/未通过/已隐藏」标记。
 

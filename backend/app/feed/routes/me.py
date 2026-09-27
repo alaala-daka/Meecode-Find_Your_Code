@@ -18,7 +18,7 @@ from ... import config, security
 from .. import auth, github, star_sync
 from ..cards import to_card, _card_select
 from ..deps import get_conn
-from ..schemas import BioIn, InteractionIn, RepoCardOut, UserOut
+from ..schemas import BioIn, InteractionIn, InteractionOut, RepoCardOut, UserOut
 
 router = APIRouter()
 
@@ -134,22 +134,27 @@ def _set_interaction_row(
         )
 
 
-@router.post("/interactions")
+@router.post("/interactions", response_model=InteractionOut)
 def set_interaction(
     body: InteractionIn, request: Request, conn: sqlite3.Connection = Depends(get_conn)
-) -> dict:
-    """点赞/收藏显式切换(前端传目标状态)。visit 不走这里 —— 它由详情接口写入。"""
+) -> InteractionOut:
+    """点赞/收藏显式切换(前端传目标状态)。visit 不走这里 —— 它由详情接口写入。
+    favorite 内联同步 GitHub 星（本地先成功，GitHub 失败不影响本地，spec 决策 5）。"""
     user = auth.require_user(request, conn)
     if body.kind not in TOGGLEABLE:
         raise HTTPException(status_code=422, detail="kind 只能是 like 或 favorite")
-    exists = conn.execute(
-        "SELECT id FROM repos WHERE id = ? AND status != 'delisted'", (body.repo_id,)
+    repo = conn.execute(
+        "SELECT * FROM repos WHERE id = ? AND status != 'delisted'", (body.repo_id,)
     ).fetchone()
-    if exists is None:
+    if repo is None:
         raise HTTPException(status_code=404, detail="仓库不存在或已下架")
     _set_interaction_row(conn, user["id"], body.repo_id, body.kind, body.active)
     conn.commit()
-    return {"active": body.active}
+    if body.kind != "favorite":
+        return InteractionOut(active=body.active, sync="")
+    sync = (star_sync.sync_favorite_on(conn, user, repo) if body.active
+            else star_sync.sync_favorite_off(conn, user, repo))
+    return InteractionOut(active=body.active, sync=sync)
 
 
 @router.get("/me/interaction-ids", response_model=list[int])
