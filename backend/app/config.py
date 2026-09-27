@@ -106,6 +106,9 @@ COMMENT_MAX_LEN: int = int(os.getenv("COMMENT_MAX_LEN", "2000"))   # 评论内�
 MODERATE_BATCH: int = int(os.getenv("MODERATE_BATCH", "50"))                 # 重试 job 单轮上限
 MODERATE_GRACE_SECONDS: int = int(os.getenv("MODERATE_GRACE_SECONDS", "120"))  # 为 BackgroundTasks 在途留的宽限
 
+# ---------- 收藏同步 GitHub 星 ----------
+STAR_SYNC_MAX_ATTEMPTS: int = int(os.getenv("STAR_SYNC_MAX_ATTEMPTS", "10"))
+
 # ---------- 采集 ----------
 CRAWL_DAILY_QUOTA: int = 30             # 每日入库上限(防冲淡投稿)
 CRAWL_SCREEN_BUFFER: int = 5            # LLM 精筛 top-K 的缓冲量(K = 配额 + 缓冲)
