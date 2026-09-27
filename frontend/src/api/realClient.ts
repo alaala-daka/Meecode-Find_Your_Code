@@ -1,6 +1,6 @@
 // src/api/realClient.ts —— 真实后端客户端:fetch('/api/...') + cookie 凭证
 import type {
-  AiDraftResult, ApiClient, Comment, CommentPage, CurrentUser, FeedPage, InteractKind, MyGithubRepo,
+  AiDraftResult, ApiClient, Comment, CommentPage, CurrentUser, FeedPage, InteractKind, InteractResult, MyGithubRepo,
   RepoCardData, RepoDetail, RepoFile, RepoTreeItem, SearchResult, SubmitPayload, UserProfile,
 } from './types'
 
@@ -76,8 +76,11 @@ export function createRealClient(): ApiClient {
     async setBio(bio) {
       await http('/api/me/bio', jsonInit('PUT', { bio }))
     },
-    async interact(repoId, kind: InteractKind, on) {
-      await http('/api/interactions', jsonInit('POST', { repo_id: repoId, kind, active: on }))
+    async interact(repoId, kind: InteractKind, on): Promise<InteractResult> {
+      return http<InteractResult>('/api/interactions', jsonInit('POST', { repo_id: repoId, kind, active: on }))
+    },
+    async ghStarDisconnect() {
+      await http('/api/me/gh-star-auth', { method: 'DELETE' })
     },
     async comments(repoId, limit = 20, offset = 0): Promise<CommentPage> {
       const qs = new URLSearchParams({

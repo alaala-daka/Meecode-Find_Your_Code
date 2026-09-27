@@ -84,7 +84,7 @@ describe('mockClient', () => {
   })
   it('me 恒返回模拟用户，logout 为空操作（mock 无会话概念）', async () => {
     const api = createMockClient()
-    expect(await api.me()).toEqual({ id: 0, login: 'alice', avatar_url: '', bio: '在写小而可读的系统软件。' })
+    expect(await api.me()).toEqual({ id: 0, login: 'alice', avatar_url: '', bio: '在写小而可读的系统软件。', gh_star_authed: false })
     await api.logout()
     expect((await api.me())?.login).toBe('alice')
   })
@@ -114,5 +114,21 @@ describe('mockClient', () => {
     const page = await client.comments(1)
     const found = page.items.find((c) => c.id === created.id)
     expect(found === undefined || found.status === 'hidden').toBe(true)
+  })
+
+  it('favorite interact 返回 sync 语义：on=need_auth / off=kept（mock 无 token 世界）', async () => {
+    const api = createMockClient()
+    expect(await api.interact(1, 'favorite', true)).toEqual({ active: true, sync: 'need_auth' })
+    expect(await api.interact(1, 'favorite', false)).toEqual({ active: false, sync: 'kept' })
+  })
+
+  it('like 的 sync 恒空串；me 自带 gh_star_authed=false', async () => {
+    const api = createMockClient()
+    expect((await api.interact(1, 'like', true)).sync).toBe('')
+    expect((await api.me())!.gh_star_authed).toBe(false)
+  })
+
+  it('ghStarDisconnect 空实现可调用', async () => {
+    await createMockClient().ghStarDisconnect() // 不抛即通过
   })
 })
