@@ -23,8 +23,7 @@ def _put_row(conn: sqlite3.Connection, user_id: int, repo_id: int, *,
     row = conn.execute(
         "SELECT attempts FROM star_syncs WHERE user_id = ? AND repo_id = ?", (user_id, repo_id)
     ).fetchone()
-    prior = row["attempts"] if row else 0
-    attempts = (max(prior, 1) + 1) if (row and bump) else (prior + 1 if bump else prior)
+    attempts = ((row["attempts"] if row else 0) + 1) if bump else (row["attempts"] if row else 0)
     if final:
         attempts = config.STAR_SYNC_MAX_ATTEMPTS
     conn.execute(
@@ -65,6 +64,11 @@ def sync_favorite_on(conn: sqlite3.Connection, user: sqlite3.Row, repo: sqlite3.
                      interactive: bool = True) -> str:
     token = _load_token(conn, user)
     if token is None:
+        if conn.execute("SELECT 1 FROM star_syncs WHERE user_id = ? AND repo_id = ?",
+                        (user["id"], repo["id"])).fetchone():
+            conn.execute("UPDATE star_syncs SET desired = 'starred', updated_at = ?"
+                         " WHERE user_id = ? AND repo_id = ?", (_now(), user["id"], repo["id"]))
+            conn.commit()
         return "need_auth"
     if repo["owner_login"] == user["login"]:
         _put_row(conn, user["id"], repo["id"], desired="starred", applied="done", origin="external")

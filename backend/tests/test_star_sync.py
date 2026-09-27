@@ -57,6 +57,18 @@ def test_on_without_token_is_need_auth_without_row(conn):
     assert sync_row(conn) is None
 
 
+def test_on_without_token_flips_pending_desired_to_starred(conn):
+    user = make_user(conn, token="")
+    repo = make_repo(conn)
+    conn.execute("INSERT INTO star_syncs (user_id, repo_id, desired, applied, origin, attempts, last_error, updated_at)"
+                 " VALUES (1, 1, 'unstarred', 'pending', 'meecode', 1, 'boom', 1)")
+    conn.commit()
+    assert star_sync.sync_favorite_on(conn, user, repo) == "need_auth"
+    row = sync_row(conn)
+    assert row["desired"] == "starred"
+    assert (row["applied"], row["origin"], row["attempts"], row["last_error"]) == ("pending", "meecode", 1, "boom")
+
+
 def test_on_own_repo_is_skipped(conn, monkeypatch):
     user = make_user(conn, login="alice")
     repo = make_repo(conn, owner="alice", full_name="alice/proj")
@@ -178,8 +190,8 @@ def test_off_unstar_failure_keeps_pending_row(conn, monkeypatch):
     from app.feed import github
     user = make_user(conn)
     repo = make_repo(conn)
-    conn.execute("INSERT INTO star_syncs (user_id, repo_id, desired, applied, origin, updated_at)"
-                 " VALUES (1, 1, 'unstarred', 'pending', 'meecode', 1)")
+    conn.execute("INSERT INTO star_syncs (user_id, repo_id, desired, applied, origin, attempts, updated_at)"
+                 " VALUES (1, 1, 'unstarred', 'pending', 'meecode', 1, 1)")
     conn.commit()
     patch_github(monkeypatch, unstar=github.GitHubError("boom", status=500))
     assert star_sync.sync_favorite_off(conn, user, repo) == "pending"
