@@ -235,3 +235,18 @@ def test_revoke_oauth_token_never_raises(monkeypatch):
         raise github.httpx.HTTPError("net down")
     monkeypatch.setattr(github.httpx, "post", boom)
     github.revoke_oauth_token("tok")  # 不抛即通过
+
+
+def test_mock_mode_dispatches_write_ops_to_mock_module(monkeypatch):
+    monkeypatch.setattr(github.config, "GITHUB_MOCK", True)
+    seen = []
+    monkeypatch.setattr(github.mock, "mock_star_repo",
+                        lambda full_name: seen.append(("star", full_name)))
+    monkeypatch.setattr(github.mock, "mock_unstar_repo",
+                        lambda full_name: seen.append(("unstar", full_name)))
+    monkeypatch.setattr(github.mock, "mock_revoke_token",
+                        lambda token: seen.append(("revoke", token)))
+    github.star_repo("tok", "a/b")
+    github.unstar_repo("tok", "a/b")
+    github.revoke_oauth_token("tok")
+    assert seen == [("star", "a/b"), ("unstar", "a/b"), ("revoke", "tok")]

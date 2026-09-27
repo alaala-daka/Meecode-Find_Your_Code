@@ -290,20 +290,20 @@ def is_starred(token: str, full_name: str, *, interactive: bool = True) -> bool:
 
 def star_repo(token: str, full_name: str, *, interactive: bool = True) -> None:
     if config.GITHUB_MOCK:
-        return
+        return mock.mock_star_repo(full_name)
     _user_call("PUT", f"/user/starred/{full_name}", token, interactive=interactive)
 
 
 def unstar_repo(token: str, full_name: str, *, interactive: bool = True) -> None:
     if config.GITHUB_MOCK:
-        return
+        return mock.mock_unstar_repo(full_name)
     _user_call("DELETE", f"/user/starred/{full_name}", token, interactive=interactive)
 
 
 def revoke_oauth_token(token: str) -> None:
     """撤销 OAuth token（断开点星授权）。失败一律吞掉：用户意图是断开，本地清理由调用方完成。"""
     if config.GITHUB_MOCK:
-        return
+        return mock.mock_revoke_token(token)
     try:
         httpx.post(
             f"{config.GITHUB_API}/applications/{config.GITHUB_CLIENT_ID}/token/revoke",
