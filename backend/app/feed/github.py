@@ -235,7 +235,9 @@ def get_authenticated_user(token: str) -> dict:
 
 # ---------- 用户 token 写操作：点星/取消星/撤销授权（spec 2026-09-26） ----------
 def _user_client(token: str) -> httpx.Client:
-    """per-user token 客户端：进程级 _shared_client 挂的是平台 token，不能混用。"""
+    """per-user token 客户端：进程级 _shared_client 挂的是平台 token，不能混用。
+
+    调用方须以 with 确定性关闭（_user_call 每次调用建一回，含全部重试）。"""
     return httpx.Client(
         headers={"Authorization": f"Bearer {token}",
                  "Accept": "application/vnd.github+json",
@@ -247,31 +249,34 @@ def _user_client(token: str) -> httpx.Client:
 def _user_call(method: str, path: str, token: str, *,
                ok: tuple[int, ...] = (204,), interactive: bool = True) -> int:
     """以用户 token 调 GitHub，返回状态码；非 ok 状态抛 GitHubError(status=...)。
-    限流/重试语义与 _get 一致：interactive 路径立即失败不等待。"""
+    限流/重试语义与 _get 一致：interactive 路径立即失败不等待。
+    客户端生命周期：一次调用一个 client（覆盖全部重试），with 出栈即关闭，
+    不再每次 request 新建一个永不关闭的连接池（A4）。"""
     retries = INTERACTIVE_RETRIES if interactive else MAX_RETRIES
     last = ""
-    for attempt in range(retries):
-        try:
-            resp = _user_client(token).request(
-                method, f"{config.GITHUB_API}{path}",
-                headers={"Authorization": f"Bearer {token}"})
-        except httpx.HTTPError as exc:
-            last = f"网络错误:{exc}"
-            if interactive:
-                break
-            time.sleep(DEFAULT_BACKOFF * (attempt + 1))
-            continue
-        if resp.status_code in ok:
-            return resp.status_code
-        if resp.status_code in (403, 429) and resp.headers.get("X-RateLimit-Remaining") == "0":
-            wait = _retry_after(resp.headers, DEFAULT_BACKOFF * (attempt + 1))
-            last = f"触发限流(剩余配额 0),需等待 {wait}s"
-            if interactive:
-                break
-            time.sleep(wait)
-            continue
-        if resp.status_code >= 400:
-            raise GitHubError(f"GitHub {resp.status_code}:{resp.text[:200]}", status=resp.status_code)
+    with _user_client(token) as client:
+        for attempt in range(retries):
+            try:
+                resp = client.request(
+                    method, f"{config.GITHUB_API}{path}",
+                    headers={"Authorization": f"Bearer {token}"})
+            except httpx.HTTPError as exc:
+                last = f"网络错误:{exc}"
+                if interactive:
+                    break
+                time.sleep(DEFAULT_BACKOFF * (attempt + 1))
+                continue
+            if resp.status_code in ok:
+                return resp.status_code
+            if resp.status_code in (403, 429) and resp.headers.get("X-RateLimit-Remaining") == "0":
+                wait = _retry_after(resp.headers, DEFAULT_BACKOFF * (attempt + 1))
+                last = f"触发限流(剩余配额 0),需等待 {wait}s"
+                if interactive:
+                    break
+                time.sleep(wait)
+                continue
+            if resp.status_code >= 400:
+                raise GitHubError(f"GitHub {resp.status_code}:{resp.text[:200]}", status=resp.status_code)
     raise GitHubError(f"GitHub {method} {path} 重试 {retries} 次仍失败:{last}")
 
 

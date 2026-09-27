@@ -228,6 +228,35 @@ def test_user_calls_carry_bearer_and_expose_status(monkeypatch):
     assert seen["auth"] == "Bearer tok"
 
 
+def test_user_call_closes_client_deterministically(monkeypatch):
+    """A4：_user_call 每次调用一个 client（覆盖全部重试），with 出栈即关闭；
+    旧实现每 request 新建一个永不关闭的连接池。异常路径同样要关。"""
+    monkeypatch.setattr(github.config, "GITHUB_MOCK", False)
+    made: list[httpx.Client] = []
+
+    def factory_ok(token=None):
+        c = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(204)))
+        made.append(c)
+        return c
+
+    monkeypatch.setattr(github, "_user_client", factory_ok)
+    github.star_repo("tok", "a/b")
+    assert len(made) == 1 and made[0].is_closed
+
+    made.clear()
+
+    def factory_err(token=None):
+        c = httpx.Client(transport=httpx.MockTransport(
+            lambda r: httpx.Response(500, json={"message": "boom"})))
+        made.append(c)
+        return c
+
+    monkeypatch.setattr(github, "_user_client", factory_err)
+    with pytest.raises(github.GitHubError):
+        github.star_repo("tok", "a/b")
+    assert made and all(c.is_closed for c in made)
+
+
 def test_revoke_oauth_token_never_raises(monkeypatch):
     monkeypatch.setattr(github.config, "GITHUB_MOCK", False)
     # revoke 走 httpx.post 直调（Basic Auth 换 token 撤销端点），断网也必须吞错
