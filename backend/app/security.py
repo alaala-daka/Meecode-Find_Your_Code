@@ -40,6 +40,7 @@ _RATE_RULES: tuple[tuple[str | None, str, str], ...] = (
     ("POST", "/api/submit", "submit"),
     ("GET", "/api/my/github-repos", "submit"),
     ("POST", "/api/interactions", "interact"),
+    ("DELETE", "/api/me/gh-star-auth", "interact"),
     ("POST", "/api/comments", "ugc"),
     ("DELETE", "/api/comments", "ugc"),
     ("GET", "/api/comments", "browse"),

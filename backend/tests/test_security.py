@@ -100,6 +100,7 @@ def test_bucket_for_routes():
     assert security.bucket_for("POST", "/api/submit") == "submit"
     assert security.bucket_for("GET", "/api/my/github-repos") == "submit"
     assert security.bucket_for("POST", "/api/interactions") == "interact"
+    assert security.bucket_for("DELETE", "/api/me/gh-star-auth") == "interact"  # spec §4.5 沿用 interact 桶
     assert security.bucket_for("POST", "/api/repos/7/delist") == "delist"
     assert security.bucket_for("GET", "/api/feed") == "browse"
     assert security.bucket_for("GET", "/api/repos/7") == "browse"

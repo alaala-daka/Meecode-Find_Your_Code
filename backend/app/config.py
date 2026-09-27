@@ -108,6 +108,7 @@ MODERATE_GRACE_SECONDS: int = int(os.getenv("MODERATE_GRACE_SECONDS", "120"))  #
 
 # ---------- 收藏同步 GitHub 星 ----------
 STAR_SYNC_MAX_ATTEMPTS: int = int(os.getenv("STAR_SYNC_MAX_ATTEMPTS", "10"))
+# 重试节奏 = runbook cron 档位（建议 */5 * * * *），见 deploy-runbook.md（STAR_SYNC_CRON）
 
 # ---------- 采集 ----------
 CRAWL_DAILY_QUOTA: int = 30             # 每日入库上限(防冲淡投稿)
