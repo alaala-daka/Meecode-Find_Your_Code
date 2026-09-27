@@ -173,4 +173,15 @@ describe('RepoPage', () => {
     await userEvent.click(screen.getByRole('button', { name: '收藏' }))
     expect(await screen.findByText(/已取消收藏，GitHub 上的星未改动/)).toBeInTheDocument()
   })
+
+  it('收藏 pending：提示稍后自动重试文案', async () => {
+    useAuthStore.setState({ user: FIXTURE_USER })
+    const { api } = await import('../api/client')
+    const spy = vi.spyOn(api, 'interact').mockResolvedValueOnce({ active: true, sync: 'pending' })
+    renderAt('/repo/4')
+    await screen.findByText('csv-crunch')
+    await userEvent.click(screen.getByRole('button', { name: '收藏' }))
+    expect(await screen.findByText(/稍后自动重试/)).toBeInTheDocument()
+    spy.mockRestore()
+  })
 })
