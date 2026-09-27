@@ -4,7 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 from fastapi.testclient import TestClient
 
-from app.feed import auth, deps, star_sync
+from app.feed import auth, deps, github, star_sync
 from app.feed.routes.me import _set_interaction_row
 from app.feed.schemas import InteractionIn
 from app import config
@@ -307,8 +307,35 @@ def test_me_carries_gh_star_authed(conn, client, login):
     assert client.get("/api/me").json()["gh_star_authed"] is True
 
 
-def test_disconnect_star_auth_clears_everything(conn, client, login):
-    conn.execute("UPDATE users SET gh_token_enc='sealed' WHERE id=?", (login,))
+def test_disconnect_star_auth_clears_everything(conn, client, login, monkeypatch):
+    from app import security
+    revoked = []
+    monkeypatch.setattr(github, "revoke_oauth_token", lambda tok: revoked.append(tok))
+    conn.execute("UPDATE users SET gh_token_enc=? WHERE id=?",
+                 (security.seal_token("tok"), login))  # 真实密封密文：open_token 成功才轮到 revoke
+    add_repo(conn, 1)
+    conn.execute("INSERT INTO star_syncs (user_id, repo_id, desired, applied, origin, updated_at)"
+                 " VALUES (?, 1, 'starred', 'done', 'meecode', 1)", (login,))
+    conn.commit()
+    assert client.delete("/api/me/gh-star-auth").json() == {"ok": True}
+    assert revoked == ["tok"]                       # revoke 被调用
+    row = conn.execute("SELECT * FROM users WHERE id=?", (login,)).fetchone()
+    assert row["gh_token_enc"] == "" and row["gh_star_authed_at"] == 0
+    assert conn.execute("SELECT count(*) c FROM star_syncs").fetchone()["c"] == 0
+
+
+def test_disconnect_survives_revoke_exception(conn, client, login, monkeypatch):
+    """spec §4.2「失败也照清本地」（final review Critical 2）：revoke 抛非 HTTPError
+    （httpx.InvalidURL 等）也必须清 gh_token_enc/gh_star_authed_at、删 star_syncs、返回 ok。"""
+    import httpx
+    from app import security
+
+    def boom(_tok):
+        raise httpx.InvalidURL("not a url")
+
+    monkeypatch.setattr(github, "revoke_oauth_token", boom)
+    conn.execute("UPDATE users SET gh_token_enc=? WHERE id=?",
+                 (security.seal_token("tok"), login))
     add_repo(conn, 1)
     conn.execute("INSERT INTO star_syncs (user_id, repo_id, desired, applied, origin, updated_at)"
                  " VALUES (?, 1, 'starred', 'done', 'meecode', 1)", (login,))
