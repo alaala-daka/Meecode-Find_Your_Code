@@ -25,6 +25,7 @@ class UserOut(BaseModel):
     login: str
     avatar_url: str = ""
     bio: str = ""
+    gh_star_authed: bool = False   # 是否已授权点星同步（users.gh_token_enc 非空）
 
 
 class RepoCardOut(BaseModel):

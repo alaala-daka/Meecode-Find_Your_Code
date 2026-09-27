@@ -143,3 +143,12 @@ def backfill_user(conn: sqlite3.Connection, user_id: int) -> None:
         if exists is None:
             sync_favorite_on(conn, user, repo, interactive=False)
     conn.commit()
+
+
+def backfill_after_auth(user_id: int) -> None:
+    """BackgroundTasks 入口：自开连接（请求级 conn 已随响应关闭，moderate_comment_bg 同款）。"""
+    conn = db.connect()
+    try:
+        backfill_user(conn, user_id)
+    finally:
+        conn.close()

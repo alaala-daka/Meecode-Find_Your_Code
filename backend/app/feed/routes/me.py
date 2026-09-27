@@ -1,7 +1,8 @@
 """登录、个人数据、互动显式 on/off。
 
 登录仅 GitHub OAuth：觅码账号即 GitHub 账号，无独立注册。
-OAuth scope 只要 read:user —— 不申请 repo（不读私有代码，见 spec 账号边界）。
+OAuth scope 为 read:user + public_repo —— public_repo 仅为用户点星/取消星
+（spec 2026-09-26 决策 1），不读私有代码（见 spec 账号边界）。
 """
 from __future__ import annotations
 
@@ -10,11 +11,11 @@ import sqlite3
 import time
 import urllib.parse
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import RedirectResponse
 
-from ... import config
-from .. import auth, github
+from ... import config, security
+from .. import auth, github, star_sync
 from ..cards import to_card, _card_select
 from ..deps import get_conn
 from ..schemas import BioIn, InteractionIn, RepoCardOut, UserOut
@@ -30,7 +31,7 @@ def oauth_entry() -> RedirectResponse:
     state = secrets.token_urlsafe(32)
     params = urllib.parse.urlencode({
         "client_id": config.GITHUB_CLIENT_ID,
-        "scope": "read:user",  # 只读身份，不要 repo 权限
+        "scope": "read:user public_repo",  # public_repo：仅为用户点星/取消星（spec 2026-09-26 决策 1）
         "state": state,
     })
     resp = RedirectResponse(f"https://github.com/login/oauth/authorize?{params}")
@@ -45,11 +46,12 @@ def oauth_entry() -> RedirectResponse:
 @router.get("/auth/callback")
 def oauth_callback(
     request: Request,
+    background: BackgroundTasks,
     code: str = Query(...),
     state: str = Query(...),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> RedirectResponse:
-    """用 code 换一次性 token 读身份，随即丢弃 token（不入库）。"""
+    """用 code 换 token 读身份，token 密封落库供点星同步（spec 2026-09-26 决策 1）。"""
     saved_state = request.cookies.get(OAUTH_STATE_COOKIE, "")
     if not state or not saved_state or not secrets.compare_digest(state, saved_state):
         raise HTTPException(status_code=400, detail="OAuth state 不匹配，请重新登录")
@@ -61,6 +63,12 @@ def oauth_callback(
         raise HTTPException(status_code=502, detail=f"GitHub 登录失败：{exc}") from exc
 
     user_id = auth.upsert_user(conn, gh_user)
+    conn.execute(
+        "UPDATE users SET gh_token_enc = ?, gh_star_authed_at = ? WHERE id = ?",
+        (security.seal_token(token), int(time.time()), user_id),
+    )
+    conn.commit()
+    background.add_task(star_sync.backfill_after_auth, user_id)
     resp = RedirectResponse(config.FRONTEND_ORIGIN)
     resp.delete_cookie(OAUTH_STATE_COOKIE)
     resp.set_cookie(
@@ -93,7 +101,8 @@ def get_me(
     if user is None:
         return None
     return UserOut(id=user["id"], login=user["login"],
-                   avatar_url=user["avatar_url"], bio=user["bio"])
+                   avatar_url=user["avatar_url"], bio=user["bio"],
+                   gh_star_authed=bool(user["gh_token_enc"]))
 
 
 @router.put("/me/bio", response_model=UserOut)
@@ -104,7 +113,8 @@ def update_bio(
     conn.execute("UPDATE users SET bio = ? WHERE id = ?", (body.bio.strip(), user["id"]))
     conn.commit()
     return UserOut(id=user["id"], login=user["login"],
-                   avatar_url=user["avatar_url"], bio=body.bio.strip())
+                   avatar_url=user["avatar_url"], bio=body.bio.strip(),
+                   gh_star_authed=bool(user["gh_token_enc"]))
 
 
 def _set_interaction_row(
@@ -203,3 +213,24 @@ def my_history(
 ) -> list[RepoCardOut]:
     user = auth.require_user(request, conn)
     return _by_kind(conn, user["id"], "visit")
+
+
+@router.delete("/me/gh-star-auth")
+def disconnect_star_sync(
+    request: Request, conn: sqlite3.Connection = Depends(get_conn)
+) -> dict:
+    """断开点星同步：撤销 GitHub token + 清本地密文 + 删同步行（spec 决策 9）。"""
+    user = auth.require_user(request, conn)
+    token = ""
+    if user["gh_token_enc"]:
+        try:
+            token = security.open_token(user["gh_token_enc"])
+        except ValueError:
+            token = ""
+    if token:
+        github.revoke_oauth_token(token)
+    conn.execute("UPDATE users SET gh_token_enc = '', gh_star_authed_at = 0 WHERE id = ?",
+                 (user["id"],))
+    conn.execute("DELETE FROM star_syncs WHERE user_id = ?", (user["id"],))
+    conn.commit()
+    return {"ok": True}

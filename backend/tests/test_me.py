@@ -4,7 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 from fastapi.testclient import TestClient
 
-from app.feed import auth, deps
+from app.feed import auth, deps, star_sync
 from app.feed.routes.me import _set_interaction_row
 from app.feed.schemas import InteractionIn
 from app import config
@@ -266,3 +266,55 @@ def test_logout_revokes_all_sessions(conn, client):
 
     client.cookies.set(config.SESSION_COOKIE, token, domain="testserver.local")
     assert client.get("/api/me").json() is None      # 旧 cookie 已吊销
+
+
+@pytest.fixture(autouse=True)
+def _no_bg_file_db(monkeypatch):
+    """BackgroundTasks 的 backfill_after_auth 自开文件连接——测试一律替换为空操作，
+    需断言调度的用例单独 patch 成记录器（见 test_oauth_callback_seals_token）。"""
+    monkeypatch.setattr(star_sync, "backfill_after_auth", lambda uid: None)
+
+
+# ---------- 收藏同步 GitHub 星：OAuth 扩权与 token 落库（spec 2026-09-26） ----------
+def test_oauth_entry_requests_public_repo_scope(client):
+    from urllib.parse import parse_qs, urlparse
+    entry = client.get("/api/auth/github", follow_redirects=False)
+    q = parse_qs(urlparse(entry.headers["location"]).query)
+    assert "public_repo" in q["scope"][0].split()
+
+
+def test_oauth_callback_seals_token(conn, client, monkeypatch):
+    from app import security
+    scheduled = []
+    monkeypatch.setattr(star_sync, "backfill_after_auth", lambda uid: scheduled.append(uid))
+    from urllib.parse import parse_qs, urlparse
+    entry = client.get("/api/auth/github", follow_redirects=False)
+    state = parse_qs(urlparse(entry.headers["location"]).query)["state"][0]
+    client.get("/api/auth/callback", params={"code": "x", "state": state}, follow_redirects=False)
+    row = conn.execute("SELECT * FROM users").fetchone()
+    assert security.open_token(row["gh_token_enc"]) == "mock-token"
+    assert row["gh_star_authed_at"] > 0
+    assert scheduled == [row["id"]]
+
+
+def test_me_carries_gh_star_authed(conn, client, login):
+    assert client.get("/api/me").json()["gh_star_authed"] is False
+    conn.execute("UPDATE users SET gh_token_enc='sealed' WHERE id=?", (login,))
+    conn.commit()
+    assert client.get("/api/me").json()["gh_star_authed"] is True
+
+
+def test_disconnect_star_auth_clears_everything(conn, client, login):
+    conn.execute("UPDATE users SET gh_token_enc='sealed' WHERE id=?", (login,))
+    add_repo(conn, 1)
+    conn.execute("INSERT INTO star_syncs (user_id, repo_id, desired, applied, origin, updated_at)"
+                 " VALUES (?, 1, 'starred', 'done', 'meecode', 1)", (login,))
+    conn.commit()
+    assert client.delete("/api/me/gh-star-auth").json() == {"ok": True}
+    row = conn.execute("SELECT * FROM users WHERE id=?", (login,)).fetchone()
+    assert row["gh_token_enc"] == "" and row["gh_star_authed_at"] == 0
+    assert conn.execute("SELECT count(*) c FROM star_syncs").fetchone()["c"] == 0
+
+
+def test_disconnect_star_auth_requires_login(client):
+    assert client.delete("/api/me/gh-star-auth").status_code == 401

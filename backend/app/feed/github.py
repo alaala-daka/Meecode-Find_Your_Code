@@ -189,7 +189,7 @@ def list_user_repos(login: str) -> list[dict]:
 
 
 def exchange_oauth_code(code: str) -> str:
-    """用 code 换 access_token；用完即弃，绝不入库（见 Global Constraints）。"""
+    """用 code 换 access_token；密封保存于 users.gh_token_enc（spec 2026-09-26 决策 1），仅用于点星同步。"""
     if config.GITHUB_MOCK:
         return "mock-token"
     try:

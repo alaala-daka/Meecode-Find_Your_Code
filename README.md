@@ -128,7 +128,7 @@ docs/                 # 设计文档（specs/plans）+ 部署 Runbook
 | 前端 | React 18 · TypeScript · Vite · Zustand | 图谱引擎 d3-force/drag/zoom，Markdown 渲染 react-markdown + sanitize |
 | 后端 | FastAPI · LangGraph · httpx | OpenAI 兼容 SDK 接任意服务商，默认 DeepSeek |
 | 数据 | SQLite（WAL + FTS5） | 单机 MVP 足够，扛不住再换 Postgres |
-| 登录 | GitHub OAuth | 登录态是 HMAC 签名 cookie，**access token 用完即弃，不落库** |
+| 登录 | GitHub OAuth | 登录态是 HMAC 签名 cookie；GitHub token 仅 AES-GCM 密文落库、只用于收藏点星同步（spec 2026-09-26 修订） |
 
 ## 快速开始
 
