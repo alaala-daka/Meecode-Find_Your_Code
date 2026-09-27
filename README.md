@@ -45,6 +45,7 @@
 - 全文搜索：SQLite FTS5（bm25 相关度 / 最新 / 星数三种排序），短词自动回退 LIKE
 - 仓库详情：README 消毒渲染、嵌套文件树与代码预览（GitHub API 实时代理 + 缓存）、同类推荐
 - 互动与个人主页：点赞 / 收藏 / 浏览计数（幂等并发安全），公开档案页，浏览历史仅本人可见
+- 收藏同步 GitHub 星：收藏即以你的账号给 GitHub 对应仓库点星，取消收藏只撤销觅码代点的星；本地优先，失败自动重试
 
 **仓库解读（AI）**
 - 以仓库为根自动建图：后端拉取「仓库理解包」→ LangGraph 生成主题陈述 → 自动首层展开
@@ -111,7 +112,7 @@ backend/
     agent/             # LangGraph：建图、展开、精读、伴读、联网检索、mock
     feed/              # 信息流域：db/auth/github/cards/ranking/screening
       routes/          # feed · repos · submit · me · users
-      jobs/            # crawl.py 每日采集 · report.py 曝光日报
+      jobs/            # crawl.py 每日采集 · report.py 曝光日报 · moderate.py 评论预审 · star_sync.py 点星重试
   tests/               # 测试模块：筛选、排序、预留位、并发竞态回归、契约形状
 frontend/
   src/
@@ -120,7 +121,7 @@ frontend/
     api/               # ApiClient 接口 + mock/real 双实现，VITE_USE_MOCK 分流
     components/        # 卡片、文件树、TopBar、登录弹窗等
 deploy/               # systemd 单元 + Nginx 模板
-docs/                 # 设计文档（specs/plans）+ 部署 Runbook
+docs/                 # 部署 Runbook 与界面素材（设计/计划文档仅本地留存，不入库）
 ```
 
 | 层 | 选型 | 说明 |
@@ -128,7 +129,7 @@ docs/                 # 设计文档（specs/plans）+ 部署 Runbook
 | 前端 | React 18 · TypeScript · Vite · Zustand | 图谱引擎 d3-force/drag/zoom，Markdown 渲染 react-markdown + sanitize |
 | 后端 | FastAPI · LangGraph · httpx | OpenAI 兼容 SDK 接任意服务商，默认 DeepSeek |
 | 数据 | SQLite（WAL + FTS5） | 单机 MVP 足够，扛不住再换 Postgres |
-| 登录 | GitHub OAuth | 登录态是 HMAC 签名 cookie；GitHub token 仅 AES-GCM 密文落库、只用于收藏点星同步（spec 2026-09-26 修订） |
+| 登录 | GitHub OAuth | 登录态是 HMAC 签名 cookie；GitHub token 仅 AES-GCM 密文落库、只用于收藏点星同步 |
 
 ## 快速开始
 
@@ -164,7 +165,7 @@ python -m app.feed.jobs.report   # 输出投稿保底曝光达标率日报
 
 ### 接入真实服务
 
-在 `backend/.env` 填入 `LLM_API_KEY`（OpenAI 兼容）、`GITHUB_TOKEN`、`TAVILY_API_KEY`，并将 `LLM_MOCK` / `GITHUB_MOCK` 置为 `false`；前端 `VITE_USE_MOCK=false` 切到真实客户端。生产模式（`GITHUB_MOCK=false`）必须设置 `SESSION_SECRET`，否则后端拒绝启动。
+在 `backend/.env` 填入 `LLM_API_KEY`（OpenAI 兼容）、`GITHUB_TOKEN`、`TAVILY_API_KEY`，并将 `LLM_MOCK` / `GITHUB_MOCK` 置为 `false`；前端 `VITE_USE_MOCK=false` 切到真实客户端。生产模式（`GITHUB_MOCK=false`）必须设置 `SESSION_SECRET` 与 `TOKEN_ENC_KEY`，否则后端拒绝启动。
 
 ## 环境变量（backend/.env）
 
@@ -176,9 +177,10 @@ python -m app.feed.jobs.report   # 输出投稿保底曝光达标率日报
 | `LLM_MOCK` | `true` | 不调真实 LLM，返回确定性演示数据 |
 | `TAVILY_API_KEY` | — | 伴读联网检索（也可在解读设置区按会话覆盖） |
 | `GITHUB_TOKEN` | — | 平台 token：读公开信息 + 爬取配额 5000/h |
-| `GITHUB_CLIENT_ID` / `_SECRET` | — | OAuth 登录（callback：`https://<domain>/api/auth/callback`） |
+| `GITHUB_CLIENT_ID` / `_SECRET` | — | OAuth 登录 + 点星同步（scope `read:user public_repo`，callback：`https://<domain>/api/auth/callback`） |
 | `GITHUB_MOCK` | `true` | 不访问真实 GitHub；生产必须 `false` |
 | `SESSION_SECRET` | 仅开发默认值 | 签名 cookie 密钥，**生产必填** |
+| `TOKEN_ENC_KEY` | 仅开发可缺省 | 用户 GitHub token 加密密钥（`openssl rand -base64 32`），**生产必填**，缺省时 dev 从 `SESSION_SECRET` 派生并告警 |
 | `FRONTEND_ORIGIN` | `http://localhost:5173` | CORS 白名单与 OAuth 回跳来源 |
 | `DB_PATH` | `meecode.db` | SQLite 路径 |
 
@@ -201,6 +203,8 @@ cd frontend && npm run typecheck
 ```cron
 0 3 * * * cd /opt/meecode/backend && .venv/bin/python -m app.feed.jobs.crawl  >> /var/log/meecode-crawl.log 2>&1
 0 4 * * * cd /opt/meecode/backend && .venv/bin/python -m app.feed.jobs.report >> /var/log/meecode-report.log 2>&1
+*/5 * * * * cd /opt/meecode/backend && .venv/bin/python -m app.feed.jobs.moderate >> /var/log/meecode-moderate.log 2>&1
+*/5 * * * * cd /opt/meecode/backend && .venv/bin/python -m app.feed.jobs.star_sync >> /var/log/meecode-star-sync.log 2>&1
 ```
 
 ## 可调参数
@@ -210,8 +214,7 @@ cd frontend && npm run typecheck
 ## 项目文档
 
 - [docs/deploy-runbook.md](docs/deploy-runbook.md) — 服务器初始化、CI 部署、回滚、排障
-- [docs/superpowers/specs/](docs/superpowers/specs/) — 各子项目设计文档（收录与浏览、UI 规范、仓库解读、线上部署、信息流全链路）
-- [docs/superpowers/plans/](docs/superpowers/plans/) — 对应实现计划
+- [docs/deploy-runbook-explained.md](docs/deploy-runbook-explained.md) — runbook 逐条讲解
 
 ## 使用声明
 
