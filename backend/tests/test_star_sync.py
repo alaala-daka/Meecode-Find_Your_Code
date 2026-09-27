@@ -3,6 +3,7 @@ import pytest
 
 from app import config, security
 from app.feed import star_sync
+from app.feed.jobs import star_sync as sync_job
 
 NOW = 1_700_000_000
 
@@ -241,3 +242,55 @@ def test_backfill_only_touches_favorites_without_rows(conn, monkeypatch):
     star_sync.backfill_user(conn, 1)
     assert calls["star"] == ["other/b"]  # repo 1 已有行不动，repo 2 补同步
     assert sync_row(conn, rid=2)["applied"] == "done"
+
+
+# ---------- 重试 job（spec 2026-09-26 §4.4） ----------
+def _seed_sync_row(conn, *, rid=1, desired="starred", applied="pending", origin="meecode", attempts=1):
+    conn.execute("INSERT INTO star_syncs (user_id, repo_id, desired, applied, origin, attempts, updated_at)"
+                 " VALUES (1, ?, ?, ?, ?, ?, 1)", (rid, desired, applied, origin, attempts))
+    conn.commit()
+
+
+def test_job_retries_pending_row(conn, monkeypatch):
+    make_user(conn)
+    make_repo(conn)
+    _seed_sync_row(conn)
+    calls = patch_github(monkeypatch)
+    stats = sync_job.sync_pending_once(conn)
+    assert stats == {"picked": 1, "done": 1, "failed": 0, "skipped": 0}
+    assert calls["star"] == ["other/proj"]
+    assert sync_row(conn)["applied"] == "done"
+
+
+def test_job_skips_rows_without_token(conn, monkeypatch):
+    make_user(conn, token="")
+    make_repo(conn)
+    _seed_sync_row(conn)
+    calls = patch_github(monkeypatch)
+    stats = sync_job.sync_pending_once(conn)
+    assert stats == {"picked": 0, "done": 0, "failed": 0, "skipped": 1}
+    assert calls["star"] == []
+    assert sync_row(conn)["attempts"] == 1  # 不烧 attempts
+
+
+def test_job_ignores_exhausted_and_done_rows(conn, monkeypatch):
+    make_user(conn)
+    make_repo(conn, rid=1, gid=5001, full_name="other/a")
+    make_repo(conn, rid=2, gid=5002, full_name="other/b")
+    _seed_sync_row(conn, rid=1, applied="done")
+    _seed_sync_row(conn, rid=2, attempts=config.STAR_SYNC_MAX_ATTEMPTS)
+    calls = patch_github(monkeypatch)
+    stats = sync_job.sync_pending_once(conn)
+    assert stats == {"picked": 0, "done": 0, "failed": 0, "skipped": 0}
+    assert calls["star"] == []
+
+
+def test_job_retries_unstar_desired(conn, monkeypatch):
+    make_user(conn)
+    make_repo(conn)
+    _seed_sync_row(conn, desired="unstarred", origin="meecode", attempts=1)
+    calls = patch_github(monkeypatch)
+    stats = sync_job.sync_pending_once(conn)
+    assert stats == {"picked": 1, "done": 1, "failed": 0, "skipped": 0}
+    assert calls["unstar"] == ["other/proj"]
+    assert sync_row(conn) is None
