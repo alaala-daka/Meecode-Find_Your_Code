@@ -65,7 +65,7 @@ def oauth_callback(
     user_id = auth.upsert_user(conn, gh_user)
     conn.execute(
         "UPDATE users SET gh_token_enc = ?, gh_star_authed_at = ? WHERE id = ?",
-        (security.seal_token(token), int(time.time()), user_id),
+        (security.seal_token(token, str(user_id)), int(time.time()), user_id),
     )
     conn.commit()
     background.add_task(star_sync.backfill_after_auth, user_id)
@@ -229,12 +229,21 @@ def my_history(
 def disconnect_star_sync(
     request: Request, conn: sqlite3.Connection = Depends(get_conn)
 ) -> dict:
-    """断开点星同步：撤销 GitHub token + 清本地密文 + 删同步行（spec 决策 9）。"""
+    """断开点星同步：撤销 GitHub token + 清本地密文 + 删同步行（spec 决策 9）。
+
+    注意：断开只撤销授权并清本地，GitHub 上已为用户点过的星保留，需用户自行取消。
+    """
     user = auth.require_user(request, conn)
     token = ""
     if user["gh_token_enc"]:
         try:
-            token = security.open_token(user["gh_token_enc"])
+            token = security.open_token(user["gh_token_enc"], str(user["id"]))
+        except security.TokenKeyMismatchError:
+            # 密钥不匹配：密文凭原密钥仍可恢复（A1）——fail loud，不清列不删行。
+            # 静默清列会连带丢掉可恢复密文与待撤星意图，GitHub 侧 token 彻底孤儿化。
+            raise HTTPException(
+                status_code=502,
+                detail="加密密钥不匹配，无法撤销 GitHub 授权；请恢复 TOKEN_ENC_KEY 后重试")
         except ValueError:
             token = ""
     if token:

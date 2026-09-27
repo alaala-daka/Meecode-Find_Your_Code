@@ -2,7 +2,7 @@
 
 本地 interactions 是第一真源，GitHub 星是投影：本模块把投影推向 desired 状态。
 不变量（Global Constraints + final review Critical 1 修订）：origin 溯源保持；
-origin='meecode' 取消一律收敛撤星（不得按 applied='pending' 跳过）；写回前重查
+origin='meecode' 取消一律收敛撤星（不得按 applied='pending' 跳过）；写回前后重查
 interactions 真源，撤销并发取消后的本次动作；401 清 token 返 need_auth；
 收藏方向 404/422 置 attempts=MAX 停止重试。
 """
@@ -52,11 +52,19 @@ def _mark_token_dead(conn: sqlite3.Connection, user_id: int) -> None:
 
 
 def _load_token(conn: sqlite3.Connection, user: sqlite3.Row) -> str | None:
+    """解封用户 token。AAD 绑定 user_id（A3）：跨行互换的密文解不开。
+
+    换钥（TokenKeyMismatchError）不销毁密文直接上抛（A1）：密文凭原密钥仍可恢复，
+    同步边界把异常降级 sync='pending' 保留密文，等运维恢复 TOKEN_ENC_KEY 后收敛；
+    篡改（kid 相符但解不开）才按死 token 清密文——已无恢复可能。
+    """
     enc = user["gh_token_enc"]
     if not enc:
         return None
     try:
-        return security.open_token(enc)
+        return security.open_token(enc, str(user["id"]))
+    except security.TokenKeyMismatchError:
+        raise
     except ValueError:
         _mark_token_dead(conn, user["id"])
         return None
@@ -134,8 +142,13 @@ def sync_favorite_on(conn: sqlite3.Connection, user: sqlite3.Row, repo: sqlite3.
         # 溯源保持：星是觅码点的就仍是 meecode，防止取消收藏时漏撤
         origin = "meecode" if (prev and prev["origin"] == "meecode") else "external"
         _put_row(conn, user["id"], repo["id"], desired="starred", applied="done", origin=origin)
-        return "synced"
-    _put_row(conn, user["id"], repo["id"], desired="starred", applied="done", origin="meecode")
+    else:
+        _put_row(conn, user["id"], repo["id"], desired="starred", applied="done", origin="meecode")
+    # 写回后复查（A6）：取消正落在上面检查与 (starred, done) 写回之间的夹缝时，
+    # done 行不会再被 job 拾起（只捡 pending），必须就地撤销，孤儿行不得存活。
+    if not _favorite_still_wanted(conn, user["id"], repo["id"]):
+        return _retract_star(conn, user, repo, token, interactive=interactive,
+                             undo=star_attempted or bool(prev and prev["origin"] == "meecode"))
     return "synced"
 
 

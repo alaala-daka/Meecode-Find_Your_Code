@@ -164,13 +164,28 @@ class SecurityMiddleware(BaseHTTPMiddleware):
 _TOKEN_SALT = b"meecode-gh-token-v1"
 
 
+class TokenKeyMismatchError(ValueError):
+    """密文的密钥指纹（kid）与当前 TOKEN_ENC_KEY 不匹配：换钥/配错钥。
+
+    与篡改 ValueError 区分：密文仍可凭原密钥恢复，调用方不得销毁密文/清列，
+    应保留并提示运维恢复密钥（A1）。继承 ValueError 兼容既有 except ValueError。
+    """
+
+
+def _key_id(key: bytes) -> str:
+    """密钥指纹 kid：sha256(key)[:8] 的 base64url（去 padding），随密文存储供换钥识别。"""
+    return base64.urlsafe_b64encode(hashlib.sha256(key).digest()[:8]).decode("ascii").rstrip("=")
+
+
 def _token_key() -> bytes:
     """AES-GCM 密钥：TOKEN_ENC_KEY（base64 32 字节）优先；空则从 SESSION_SECRET 派生（仅 dev）。
-    密钥配置错误（长度/base64 非法）独立上抛 RuntimeError，不混入解封 ValueError。"""
+    密钥配置错误（长度/base64 非法）独立上抛 RuntimeError，不混入解封 ValueError。
+    base64 严格解码（validate=True）：夹带非法字符一律拒收（宽松解码会静默丢弃，
+    凭「凑出来 32 字节」蒙混过关）；仅容缺 padding（openssl rand -base64 32 去尾等号仍可跑）。"""
     raw = config.TOKEN_ENC_KEY
     if raw:
         try:
-            key = base64.b64decode(raw)
+            key = base64.b64decode(raw + "=" * (-len(raw) % 4), validate=True)
         except ValueError as exc:
             raise RuntimeError("TOKEN_ENC_KEY 必须是 base64 编码的 32 字节") from exc
         if len(key) != 32:
@@ -184,28 +199,47 @@ def ensure_token_key() -> None:
 
     配错 fail-fast 拒启：否则到首个 seal_token/open_token 才以 RuntimeError 爆炸，
     set_interaction 本地已 commit 后 500（违反决策 5「本地永远成功返回」）。
-    未配置时从 SESSION_SECRET 派生属 dev 行为，启动打警告提醒生产补配。
+    生产（GITHUB_MOCK=false）缺配同样拒启（对齐 ensure_prod_secrets）：派生密钥随
+    SESSION_SECRET/机器漂移，会让已存 token 无法解封且无法撤销 GitHub 授权。
+    未配置仅 dev（GITHUB_MOCK）从 SESSION_SECRET 派生，启动打警告提醒补配。
     """
     if config.TOKEN_ENC_KEY:
         _token_key()  # 配错（非法 base64 / 非 32 字节）即 RuntimeError 拒启
         return
+    if not config.GITHUB_MOCK:
+        raise RuntimeError(
+            "GITHUB_MOCK=false 时必须配置 TOKEN_ENC_KEY（生产加密密钥，"
+            "openssl rand -base64 32 生成；缺失时 dev 派生密钥不稳，"
+            "换机会导致已存 GitHub token 无法解封也无法撤销）")
     logging.getLogger(__name__).warning(
         "TOKEN_ENC_KEY 未配置：dev 派生密钥，生产请配置 TOKEN_ENC_KEY")
 
 
-def seal_token(plaintext: str) -> str:
-    nonce = os.urandom(12)
-    ct = AESGCM(_token_key()).encrypt(nonce, plaintext.encode("utf-8"), None)
-    return base64.urlsafe_b64encode(nonce + ct).decode("ascii")
+def seal_token(plaintext: str, aad: str) -> str:
+    """密封 token，输出 v1.<kid>.<base64url(nonce+ct)>。
 
-
-def open_token(blob: str) -> str:
-    """解封 token。解封失败（坏 base64、篡改、换钥）一律 ValueError，绝不部分返回；密钥配置错误独立上抛。"""
+    kid = 当前密钥指纹，open_token 据此把换钥（TokenKeyMismatchError，密文可恢复）
+    与篡改（ValueError）分开（A1）；AAD 绑定 user_id，跨行互换密文解不开（A3）。"""
     key = _token_key()
+    nonce = os.urandom(12)
+    ct = AESGCM(key).encrypt(nonce, plaintext.encode("utf-8"), aad.encode("utf-8"))
+    payload = base64.urlsafe_b64encode(nonce + ct).decode("ascii")
+    return f"v1.{_key_id(key)}.{payload}"
+
+
+def open_token(blob: str, aad: str) -> str:
+    """解封 token。换钥（kid 不符）上抛 TokenKeyMismatchError；篡改/坏格式/AAD 不符
+    一律 ValueError，绝不部分返回；密钥配置错误独立上抛。"""
+    key = _token_key()
+    parts = blob.split(".")
+    if len(parts) != 3 or parts[0] != "v1" or not parts[1] or not parts[2]:
+        raise ValueError("token 解封失败")
+    if parts[1] != _key_id(key):
+        raise TokenKeyMismatchError("TOKEN_ENC_KEY 与密封时所用密钥不匹配")
     try:
-        raw = base64.b64decode(blob, altchars=b"-_", validate=True)
+        raw = base64.b64decode(parts[2], altchars=b"-_", validate=True)
         if len(raw) < 13:
             raise ValueError("密文过短")
-        return AESGCM(key).decrypt(raw[:12], raw[12:], None).decode("utf-8")
+        return AESGCM(key).decrypt(raw[:12], raw[12:], aad.encode("utf-8")).decode("utf-8")
     except (ValueError, InvalidTag) as exc:
         raise ValueError("token 解封失败") from exc

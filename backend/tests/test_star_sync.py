@@ -1,4 +1,6 @@
 """收藏同步 GitHub 星：状态机全分支（spec 2026-09-26）。"""
+import base64
+
 import pytest
 
 from app import config, security
@@ -12,7 +14,8 @@ def make_user(conn, *, uid=1, login="demo", token="ghp_t"):
     conn.execute(
         "INSERT INTO users (id, github_id, login, gh_token_enc, gh_star_authed_at)"
         " VALUES (?,?,?,?,?)",
-        (uid, 1000 + uid, login, security.seal_token(token) if token else "", NOW if token else 0),
+        (uid, 1000 + uid, login,
+         security.seal_token(token, str(uid)) if token else "", NOW if token else 0),
     )
     conn.commit()
     return conn.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
@@ -274,7 +277,7 @@ def test_cancel_after_token_loss_never_leaks_star(conn, monkeypatch):
     row = sync_row(conn)
     assert row is not None and row["desired"] == "unstarred"             # 星仍在 GitHub，行必须留痕
     conn.execute("UPDATE users SET gh_token_enc=? WHERE id=1",
-                 (security.seal_token("tok2"),))
+                 (security.seal_token("tok2", "1"),))
     conn.commit()
     stats = sync_job.sync_pending_once(conn)                             # token 恢复后收敛
     assert stats == {"picked": 1, "done": 1, "failed": 0, "skipped": 0}
@@ -438,3 +441,57 @@ def test_job_failure_counts_failed_without_aborting_batch(conn, monkeypatch):
     assert calls["star"] == ["other/a", "other/b"]
     assert sync_row(conn, rid=1)["applied"] == "pending"
     assert sync_row(conn, rid=2)["applied"] == "done"
+
+
+# ---------- 密钥指纹/换钥保密文（final review A1） ----------
+def test_load_token_key_mismatch_raises_and_keeps_ciphertext(conn, monkeypatch):
+    """换钥（错但合法的 key）不得销毁密文：TokenKeyMismatchError 上抛，
+    gh_token_enc 原样保留——密文凭原密钥可恢复，恢复 key 后 job/断开还能收敛撤销。"""
+    monkeypatch.setattr(config, "TOKEN_ENC_KEY", base64.b64encode(b"k" * 32).decode())
+    user = make_user(conn)
+    sealed = user["gh_token_enc"]
+    monkeypatch.setattr(config, "TOKEN_ENC_KEY", base64.b64encode(b"j" * 32).decode())
+    with pytest.raises(security.TokenKeyMismatchError):
+        star_sync._load_token(conn, user)
+    u = conn.execute("SELECT gh_token_enc, gh_star_authed_at FROM users WHERE id=1").fetchone()
+    assert u["gh_token_enc"] == sealed and u["gh_star_authed_at"] > 0
+    assert conn.execute("SELECT count(*) c FROM star_syncs WHERE last_error='token revoked'"
+                        ).fetchone()["c"] == 0
+
+
+def test_load_token_tamper_still_wipes_dead_token(conn):
+    """对照：kid 相符但解不开（真篡改）才按死 token 清密文——已无恢复可能。"""
+    user = make_user(conn)
+    head, kid, payload = user["gh_token_enc"].split(".")
+    tampered = f"{head}.{kid}.{'A' if payload[0] != 'A' else 'B'}{payload[1:]}"
+    conn.execute("UPDATE users SET gh_token_enc=? WHERE id=1", (tampered,))
+    conn.commit()
+    user = conn.execute("SELECT * FROM users WHERE id=1").fetchone()
+    assert star_sync._load_token(conn, user) is None
+    u = conn.execute("SELECT gh_token_enc FROM users WHERE id=1").fetchone()
+    assert u["gh_token_enc"] == ""
+
+
+def test_on_done_writeback_retracted_when_cancel_lands_midwrite(conn, monkeypatch):
+    """A6 写回夹缝 TOCTOU：取消落在「写回前检查」与 (starred, done) 写回之间——
+    守卫翻转模拟该夹缝，写回后复查必须走撤销路径，孤儿 done 行不得存活。"""
+    user = make_user(conn)
+    repo = make_repo(conn)
+    make_fav(conn)
+    calls = patch_github(monkeypatch, starred=False)
+    real = star_sync._favorite_still_wanted
+    state = {"checks": 0}
+
+    def flip(c, uid, rid):
+        state["checks"] += 1
+        if state["checks"] == 2:  # 写回后复查：此刻用户取消已落地
+            c.execute("DELETE FROM interactions WHERE user_id=? AND repo_id=? AND kind='favorite'",
+                      (uid, rid))
+            c.commit()
+        return real(c, uid, rid)
+
+    monkeypatch.setattr(star_sync, "_favorite_still_wanted", flip)
+    assert star_sync.sync_favorite_on(conn, user, repo) == "unstarred"
+    assert calls["star"] == ["other/proj"]      # 点星已发出
+    assert calls["unstar"] == ["other/proj"]    # 写回被复查撤销
+    assert sync_row(conn) is None               # 无孤儿 (starred, done) 行

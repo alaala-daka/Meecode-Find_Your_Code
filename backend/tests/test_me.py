@@ -1,5 +1,6 @@
 """登录、签名、互动显式 on/off、个人三个 tab。"""
 import base64
+import json
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
@@ -296,7 +297,7 @@ def test_oauth_callback_seals_token(conn, client, monkeypatch):
     state = parse_qs(urlparse(entry.headers["location"]).query)["state"][0]
     client.get("/api/auth/callback", params={"code": "x", "state": state}, follow_redirects=False)
     row = conn.execute("SELECT * FROM users").fetchone()
-    assert security.open_token(row["gh_token_enc"]) == "mock-token"
+    assert security.open_token(row["gh_token_enc"], str(row["id"])) == "mock-token"
     assert row["gh_star_authed_at"] > 0
     assert scheduled == [row["id"]]
 
@@ -313,7 +314,7 @@ def test_disconnect_star_auth_clears_everything(conn, client, login, monkeypatch
     revoked = []
     monkeypatch.setattr(github, "revoke_oauth_token", lambda tok: revoked.append(tok))
     conn.execute("UPDATE users SET gh_token_enc=? WHERE id=?",
-                 (security.seal_token("tok"), login))  # 真实密封密文：open_token 成功才轮到 revoke
+                 (security.seal_token("tok", str(login)), login))  # 真实密封密文：open_token 成功才轮到 revoke
     add_repo(conn, 1)
     conn.execute("INSERT INTO star_syncs (user_id, repo_id, desired, applied, origin, updated_at)"
                  " VALUES (?, 1, 'starred', 'done', 'meecode', 1)", (login,))
@@ -336,7 +337,7 @@ def test_disconnect_survives_revoke_exception(conn, client, login, monkeypatch):
 
     monkeypatch.setattr(github, "revoke_oauth_token", boom)
     conn.execute("UPDATE users SET gh_token_enc=? WHERE id=?",
-                 (security.seal_token("tok"), login))
+                 (security.seal_token("tok", str(login)), login))
     add_repo(conn, 1)
     conn.execute("INSERT INTO star_syncs (user_id, repo_id, desired, applied, origin, updated_at)"
                  " VALUES (?, 1, 'starred', 'done', 'meecode', 1)", (login,))
@@ -362,7 +363,8 @@ def test_favorite_without_token_returns_need_auth(conn, client, login):
 
 def test_favorite_with_token_syncs_in_mock(conn, client, login):
     from app import security
-    conn.execute("UPDATE users SET gh_token_enc=? WHERE id=?", (security.seal_token("tok"), login))
+    conn.execute("UPDATE users SET gh_token_enc=? WHERE id=?",
+                 (security.seal_token("tok", str(login)), login))
     conn.commit()
     rid = add_repo(conn, 1, owner="other")  # owner 不能是登录用户 demo：自己的仓库点不了星，状态机回 skipped
     on = client.post("/api/interactions",
@@ -395,3 +397,82 @@ def test_interaction_sync_error_degrades_to_pending(conn, client, login, monkeyp
     assert body == {"active": True, "sync": "pending"}
     assert conn.execute("SELECT count(*) c FROM interactions WHERE kind='favorite'"
                         ).fetchone()["c"] == 1  # 本地已提交不回滚
+
+
+# ---------- 密钥指纹/换钥路径（final review A1） ----------
+def test_disconnect_key_mismatch_502_keeps_ciphertext_and_rows(conn, client, login, monkeypatch):
+    """断开撞上换钥：fail loud 502 + 中文指引，密文/同步行原样保留等恢复密钥。
+    旧路径静默 token="" 后照清列——密文销毁 + 撤销跳过，GitHub 侧 token 彻底孤儿化。"""
+    from app import security
+    monkeypatch.setattr(config, "TOKEN_ENC_KEY", base64.b64encode(b"k" * 32).decode())
+    conn.execute("UPDATE users SET gh_token_enc=?, gh_star_authed_at=? WHERE id=?",
+                 (security.seal_token("tok", str(login)), NOW, login))
+    add_repo(conn, 1)
+    conn.execute("INSERT INTO star_syncs (user_id, repo_id, desired, applied, origin, updated_at)"
+                 " VALUES (?, 1, 'starred', 'done', 'meecode', 1)", (login,))
+    conn.commit()
+    monkeypatch.setattr(config, "TOKEN_ENC_KEY", base64.b64encode(b"j" * 32).decode())
+    resp = client.delete("/api/me/gh-star-auth")
+    assert resp.status_code == 502
+    assert resp.json()["detail"] == "加密密钥不匹配，无法撤销 GitHub 授权；请恢复 TOKEN_ENC_KEY 后重试"
+    row = conn.execute("SELECT * FROM users WHERE id=?", (login,)).fetchone()
+    assert row["gh_token_enc"] != "" and row["gh_star_authed_at"] > 0
+    assert conn.execute("SELECT count(*) c FROM star_syncs").fetchone()["c"] == 1
+
+
+def test_interaction_key_mismatch_degrades_pending_without_wipe(conn, client, login, monkeypatch):
+    """换钥撞上同步边界：sync 降级 pending（决策 5 本地成功），密文不得被销毁。"""
+    from app import security
+    monkeypatch.setattr(config, "TOKEN_ENC_KEY", base64.b64encode(b"k" * 32).decode())
+    conn.execute("UPDATE users SET gh_token_enc=? WHERE id=?",
+                 (security.seal_token("tok", str(login)), login))
+    conn.commit()
+    rid = add_repo(conn, 1, owner="other")
+    monkeypatch.setattr(config, "TOKEN_ENC_KEY", base64.b64encode(b"j" * 32).decode())
+    body = client.post("/api/interactions",
+                       json={"repo_id": rid, "kind": "favorite", "active": True}).json()
+    assert body == {"active": True, "sync": "pending"}
+    row = conn.execute("SELECT * FROM users WHERE id=?", (login,)).fetchone()
+    assert row["gh_token_enc"] != ""  # 密文保留，恢复 key 后可继续收敛/撤销
+    assert conn.execute("SELECT count(*) c FROM interactions WHERE kind='favorite'"
+                        ).fetchone()["c"] == 1
+
+
+def test_token_plaintext_never_leaks_to_api_or_last_error(conn, client, login, monkeypatch):
+    """安全覆盖缺口回归：密封明文 token 不得出现在任何 API 响应体、异常 detail、
+    last_error 或落库序列化输出中。同步错误路径全走一遍后统一 grep。"""
+    from app import security
+    canary = "ghp_CANARY_plain_secret_9f2x"
+    conn.execute("UPDATE users SET gh_token_enc=? WHERE id=?",
+                 (security.seal_token(canary, str(login)), login))
+    conn.commit()
+    rid = add_repo(conn, 1, owner="other")
+    outputs: list[str] = []
+
+    def boom(_token, _full_name, **_kw):
+        raise github.GitHubError("upstream boom", status=500)
+
+    monkeypatch.setattr(github, "is_starred", lambda token, full_name, **kw: False)
+    monkeypatch.setattr(github, "star_repo", boom)
+    monkeypatch.setattr(github, "unstar_repo", boom)
+
+    def hit(resp):
+        outputs.append(resp.text)
+        return resp
+
+    hit(client.post("/api/interactions", json={"repo_id": rid, "kind": "favorite", "active": True}))
+    hit(client.post("/api/interactions", json={"repo_id": rid, "kind": "favorite", "active": False}))
+    user = conn.execute("SELECT * FROM users WHERE id=?", (login,)).fetchone()
+    repo = conn.execute("SELECT * FROM repos WHERE id=?", (rid,)).fetchone()
+    try:
+        star_sync.sync_favorite_on(conn, user, repo)   # 异常面：detail/repr 也不得带明文
+        star_sync.sync_favorite_off(conn, user, repo)
+    except Exception as exc:
+        outputs.append(repr(exc))
+    for table in ("star_syncs", "users"):               # 断开清列前先抓落库序列化输出
+        for row in conn.execute(f"SELECT * FROM {table}").fetchall():
+            outputs.append(json.dumps(dict(row), ensure_ascii=False, default=str))
+    hit(client.delete("/api/me/gh-star-auth"))
+    hit(client.get("/api/me"))
+    hit(client.get("/api/me/favorites"))
+    assert outputs and all(canary not in o for o in outputs)
