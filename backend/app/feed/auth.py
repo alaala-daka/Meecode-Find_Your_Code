@@ -1,7 +1,9 @@
-"""登录态：GitHub OAuth 换取一次性 token 读身份，随即丢弃。
+"""登录态：GitHub OAuth 密封保存 token，签名 cookie 自证会话。
 
-觅码不存 access_token（见 Global Constraints）：登录态是 stdlib HMAC 签名
-cookie，格式 base64(user_id:issued_at:session_epoch).hexsig。数据库泄露也带不走任何人的
+觅码**加密存储** access_token（AES-GCM，见 spec 2026-09-26 决策 1，红线由
+『不存 token』修订）：仅用于收藏点星同步，密钥独立于数据库，DB 泄露不带走 GitHub
+权限。登录态仍是 stdlib HMAC 签名 cookie，格式
+base64(user_id:issued_at:session_epoch).hexsig。数据库泄露也带不走任何人的
 GitHub 权限。session_epoch 嵌入 cookie，revoke_all 自增即全端吊销（比对在
 current_user 查库完成）。格式变更一次性全员重登：旧版 base64(user_id:issued)
 无 epoch 段，解析失败一律按未登录。

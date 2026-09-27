@@ -1,6 +1,8 @@
 """Pydantic 模型：LLM 结构化输出 + API 出入参。"""
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -25,6 +27,7 @@ class UserOut(BaseModel):
     login: str
     avatar_url: str = ""
     bio: str = ""
+    gh_star_authed: bool = False   # 是否已授权点星同步（users.gh_token_enc 非空）
 
 
 class RepoCardOut(BaseModel):
@@ -134,6 +137,13 @@ class InteractionIn(BaseModel):
     repo_id: int
     kind: str    # 仅 like / favorite;visit 由服务端在详情接口写入
     active: bool
+
+
+class InteractionOut(BaseModel):
+    """互动响应。sync：favorite 为 SyncState（need_auth/synced/pending/kept/unstarred/skipped）；
+    like 无 GitHub 对应物恒空串（Global Constraints）。"""
+    active: bool
+    sync: Literal["", "need_auth", "synced", "pending", "kept", "unstarred", "skipped"] = ""
 
 
 class CommentOut(BaseModel):

@@ -181,3 +181,101 @@ def test_interactive_readme_no_sleep_on_rate_limit(monkeypatch):
     with pytest.raises(github.GitHubError):
         github.get_readme("a/b", interactive=True)
     assert sleeps == []
+
+
+# ---------- 用户 token 点星（spec 2026-09-26） ----------
+def _user_transport(handler):
+    # 注入点是 github._user_client(token) 工厂——lambda 须接收 token 参数
+    return lambda token=None: httpx.Client(transport=httpx.MockTransport(handler))
+
+
+def test_is_starred_true_false_by_status(monkeypatch):
+    monkeypatch.setattr(github.config, "GITHUB_MOCK", False)
+    monkeypatch.setattr(github, "_user_client",
+                        _user_transport(lambda r: httpx.Response(204)))
+    assert github.is_starred("tok", "a/b") is True
+    monkeypatch.setattr(github, "_user_client",
+                        _user_transport(lambda r: httpx.Response(404, json={"message": "Not Found"})))
+    assert github.is_starred("tok", "a/b") is False
+
+
+def test_star_and_unstar_call_verb_and_path(monkeypatch):
+    monkeypatch.setattr(github.config, "GITHUB_MOCK", False)
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.method, request.url.path))
+        return httpx.Response(204)
+
+    monkeypatch.setattr(github, "_user_client", _user_transport(handler))
+    github.star_repo("tok", "a/b")
+    github.unstar_repo("tok", "a/b")
+    assert seen == [("PUT", "/user/starred/a/b"), ("DELETE", "/user/starred/a/b")]
+
+
+def test_user_calls_carry_bearer_and_expose_status(monkeypatch):
+    monkeypatch.setattr(github.config, "GITHUB_MOCK", False)
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["auth"] = request.headers.get("authorization")
+        return httpx.Response(401, json={"message": "Bad credentials"})
+
+    monkeypatch.setattr(github, "_user_client", _user_transport(handler))
+    with pytest.raises(github.GitHubError) as exc:
+        github.star_repo("tok", "a/b")
+    assert exc.value.status == 401
+    assert seen["auth"] == "Bearer tok"
+
+
+def test_user_call_closes_client_deterministically(monkeypatch):
+    """A4：_user_call 每次调用一个 client（覆盖全部重试），with 出栈即关闭；
+    旧实现每 request 新建一个永不关闭的连接池。异常路径同样要关。"""
+    monkeypatch.setattr(github.config, "GITHUB_MOCK", False)
+    made: list[httpx.Client] = []
+
+    def factory_ok(token=None):
+        c = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(204)))
+        made.append(c)
+        return c
+
+    monkeypatch.setattr(github, "_user_client", factory_ok)
+    github.star_repo("tok", "a/b")
+    assert len(made) == 1 and made[0].is_closed
+
+    made.clear()
+
+    def factory_err(token=None):
+        c = httpx.Client(transport=httpx.MockTransport(
+            lambda r: httpx.Response(500, json={"message": "boom"})))
+        made.append(c)
+        return c
+
+    monkeypatch.setattr(github, "_user_client", factory_err)
+    with pytest.raises(github.GitHubError):
+        github.star_repo("tok", "a/b")
+    assert made and all(c.is_closed for c in made)
+
+
+def test_revoke_oauth_token_never_raises(monkeypatch):
+    monkeypatch.setattr(github.config, "GITHUB_MOCK", False)
+    # revoke 走 httpx.post 直调（Basic Auth 换 token 撤销端点），断网也必须吞错
+    def boom(*a, **k):
+        raise github.httpx.HTTPError("net down")
+    monkeypatch.setattr(github.httpx, "post", boom)
+    github.revoke_oauth_token("tok")  # 不抛即通过
+
+
+def test_mock_mode_dispatches_write_ops_to_mock_module(monkeypatch):
+    monkeypatch.setattr(github.config, "GITHUB_MOCK", True)
+    seen = []
+    monkeypatch.setattr(github.mock, "mock_star_repo",
+                        lambda full_name: seen.append(("star", full_name)))
+    monkeypatch.setattr(github.mock, "mock_unstar_repo",
+                        lambda full_name: seen.append(("unstar", full_name)))
+    monkeypatch.setattr(github.mock, "mock_revoke_token",
+                        lambda token: seen.append(("revoke", token)))
+    github.star_repo("tok", "a/b")
+    github.unstar_repo("tok", "a/b")
+    github.revoke_oauth_token("tok")
+    assert seen == [("star", "a/b"), ("unstar", "a/b"), ("revoke", "tok")]

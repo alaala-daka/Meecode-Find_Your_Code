@@ -16,6 +16,8 @@ CREATE TABLE IF NOT EXISTS users (
     avatar_url    TEXT    NOT NULL DEFAULT '',
     bio           TEXT    NOT NULL DEFAULT '',
     session_epoch INTEGER NOT NULL DEFAULT 0,
+    gh_token_enc     TEXT    NOT NULL DEFAULT '',   -- GitHub token 密文(seal_token),空=未授权点星
+    gh_star_authed_at INTEGER NOT NULL DEFAULT 0,
     created_at    INTEGER NOT NULL DEFAULT (unixepoch())
 );
 
@@ -63,6 +65,20 @@ CREATE TABLE IF NOT EXISTS interactions (
 
 CREATE INDEX IF NOT EXISTS idx_interactions_lookup
     ON interactions (user_id, kind, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS star_syncs (
+    user_id    INTEGER NOT NULL REFERENCES users(id),
+    repo_id    INTEGER NOT NULL REFERENCES repos(id),
+    desired    TEXT    NOT NULL CHECK (desired IN ('starred','unstarred')),
+    applied    TEXT    NOT NULL CHECK (applied IN ('pending','done')),
+    origin     TEXT    NOT NULL CHECK (origin IN ('meecode','external')),
+    attempts   INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT    NOT NULL DEFAULT '',
+    updated_at INTEGER NOT NULL,
+    UNIQUE (user_id, repo_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_star_syncs_pending ON star_syncs (applied, updated_at);
 
 CREATE TABLE IF NOT EXISTS comments (
     id          INTEGER PRIMARY KEY,
@@ -123,6 +139,10 @@ def init_db(conn: sqlite3.Connection) -> None:
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(users)")}
     if "session_epoch" not in cols:
         conn.execute("ALTER TABLE users ADD COLUMN session_epoch INTEGER NOT NULL DEFAULT 0")
+    if "gh_token_enc" not in cols:
+        conn.execute("ALTER TABLE users ADD COLUMN gh_token_enc TEXT NOT NULL DEFAULT ''")
+    if "gh_star_authed_at" not in cols:
+        conn.execute("ALTER TABLE users ADD COLUMN gh_star_authed_at INTEGER NOT NULL DEFAULT 0")
     ccols = {r["name"] for r in conn.execute("PRAGMA table_info(comments)")}
     if "moderation_reason" not in ccols:
         conn.execute("ALTER TABLE comments ADD COLUMN moderation_reason TEXT NOT NULL DEFAULT ''")

@@ -14,6 +14,10 @@ describe('LoginModal', () => {
     expect(screen.getByText('用 GitHub 登录')).toBeInTheDocument()
     expect(screen.getByText('登录后即可收藏、点赞与推广仓库')).toBeInTheDocument()
   })
+  it('open 时明示 public_repo 权限用途', () => {
+    render(<LoginModal open onClose={() => {}} />)
+    expect(screen.getByText('登录将获得 GitHub public_repo 权限，仅用于为你点星/取消星')).toBeInTheDocument()
+  })
   it('closed 时不渲染', () => {
     render(<LoginModal open={false} onClose={() => {}} />)
     expect(screen.queryByText('用 GitHub 登录')).not.toBeInTheDocument()

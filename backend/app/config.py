@@ -26,6 +26,9 @@ GITHUB_CLIENT_SECRET: str = os.getenv("GITHUB_CLIENT_SECRET", "")
 GITHUB_MOCK: bool = os.getenv("GITHUB_MOCK", "").lower() in ("1", "true", "yes")
 GITHUB_API: str = "https://api.github.com"
 
+# 点星 token 加密密钥（base64 32 字节）。空 = dev 从 SESSION_SECRET 派生（启动见 security 模块）。
+TOKEN_ENC_KEY: str = os.getenv("TOKEN_ENC_KEY", "")
+
 # ---------- 会话 ----------
 _DEV_SESSION_SECRET = "dev-only-insecure-secret"
 SESSION_SECRET: str = os.getenv("SESSION_SECRET") or _DEV_SESSION_SECRET
@@ -102,6 +105,10 @@ FILE_CACHE_SIZE: int = 1024              # 文件内容缓存条目上限
 COMMENT_MAX_LEN: int = int(os.getenv("COMMENT_MAX_LEN", "2000"))   # 评论内容上限(字符)
 MODERATE_BATCH: int = int(os.getenv("MODERATE_BATCH", "50"))                 # 重试 job 单轮上限
 MODERATE_GRACE_SECONDS: int = int(os.getenv("MODERATE_GRACE_SECONDS", "120"))  # 为 BackgroundTasks 在途留的宽限
+
+# ---------- 收藏同步 GitHub 星 ----------
+STAR_SYNC_MAX_ATTEMPTS: int = int(os.getenv("STAR_SYNC_MAX_ATTEMPTS", "10"))
+# 重试节奏 = runbook cron 档位（建议 */5 * * * *），见 deploy-runbook.md（STAR_SYNC_CRON）
 
 # ---------- 采集 ----------
 CRAWL_DAILY_QUOTA: int = 30             # 每日入库上限(防冲淡投稿)

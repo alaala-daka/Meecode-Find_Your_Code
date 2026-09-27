@@ -47,6 +47,19 @@ export default function RepoPage() {
   const [actionError, setActionError] = useState<string | null>(null)
   const [loginOpen, setLoginOpen] = useState(false)
   const fileReqRef = useRef(0) // 文件请求令牌：丢弃过期响应，防切仓库/快速点文件时旧响应覆盖
+  const [syncHint, setSyncHint] = useState<string | null>(null)
+  const [needStarAuth, setNeedStarAuth] = useState(false)
+  const hintTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  function showSyncHint(text: string, needAuth = false) {
+    setSyncHint(text)
+    setNeedStarAuth(needAuth)
+    if (hintTimer.current) clearTimeout(hintTimer.current)
+    // need_auth 带动作链接不自动消失；其余 5s 收起（spec §4.6 实施细化）
+    hintTimer.current = needAuth ? null : setTimeout(() => setSyncHint(null), 5000)
+  }
+
+  useEffect(() => () => { if (hintTimer.current) clearTimeout(hintTimer.current) }, [])
 
   useEffect(() => {
     let alive = true
@@ -130,8 +143,15 @@ export default function RepoPage() {
     setActionError(null)
     setFaved(next)
     try {
-      await api.interact(repoId, 'favorite', next)
+      const res = await api.interact(repoId, 'favorite', next)
       setDetail((d) => (d && d.favorites_count != null ? { ...d, favorites_count: d.favorites_count + (next ? 1 : -1) } : d))
+      if (res.sync === 'need_auth') {
+        showSyncHint(next ? '已收藏 · 授权后自动在 GitHub 点星' : '已取消收藏 · 授权后自动同步 GitHub 星', true)
+      } else if (res.sync === 'pending') {
+        showSyncHint(next ? '已收藏，GitHub 点星稍后自动重试' : '已取消收藏，GitHub 取消星稍后自动重试')
+      } else if (res.sync === 'kept') {
+        showSyncHint('已取消收藏，GitHub 上的星未改动')
+      }
     } catch {
       setFaved(!next) // 回滚乐观更新
       setActionError('操作失败，请重试')
@@ -194,6 +214,23 @@ export default function RepoPage() {
                 </p>
               )}
               {actionError && <p className="action-error" role="alert">{actionError}</p>}
+              {syncHint && (
+                <p className="sync-hint" role="status">
+                  {syncHint}
+                  {needStarAuth && (
+                    <>
+                      {' · '}
+                      <a
+                        href={api.loginUrl()}
+                        title="将获得 public_repo 权限，仅用于在 GitHub 上为你点星/取消星"
+                        aria-label="授权 GitHub 点星：将获得 public_repo 权限，仅用于在 GitHub 上为你点星/取消星"
+                      >
+                        授权 GitHub 点星
+                      </a>
+                    </>
+                  )}
+                </p>
+              )}
             </section>
 
             <Tabs items={TAB_ITEMS} active={tab} onChange={switchTab} panelId="repo-tab-panel" />

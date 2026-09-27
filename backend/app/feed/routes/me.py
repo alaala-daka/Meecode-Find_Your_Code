@@ -1,7 +1,8 @@
 """登录、个人数据、互动显式 on/off。
 
 登录仅 GitHub OAuth：觅码账号即 GitHub 账号，无独立注册。
-OAuth scope 只要 read:user —— 不申请 repo（不读私有代码，见 spec 账号边界）。
+OAuth scope 为 read:user + public_repo —— public_repo 仅为用户点星/取消星
+（spec 2026-09-26 决策 1），不读私有代码（见 spec 账号边界）。
 """
 from __future__ import annotations
 
@@ -10,14 +11,14 @@ import sqlite3
 import time
 import urllib.parse
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import RedirectResponse
 
-from ... import config
-from .. import auth, github
+from ... import config, security
+from .. import auth, github, star_sync
 from ..cards import to_card, _card_select
 from ..deps import get_conn
-from ..schemas import BioIn, InteractionIn, RepoCardOut, UserOut
+from ..schemas import BioIn, InteractionIn, InteractionOut, RepoCardOut, UserOut
 
 router = APIRouter()
 
@@ -30,7 +31,7 @@ def oauth_entry() -> RedirectResponse:
     state = secrets.token_urlsafe(32)
     params = urllib.parse.urlencode({
         "client_id": config.GITHUB_CLIENT_ID,
-        "scope": "read:user",  # 只读身份，不要 repo 权限
+        "scope": "read:user public_repo",  # public_repo：仅为用户点星/取消星（spec 2026-09-26 决策 1）
         "state": state,
     })
     resp = RedirectResponse(f"https://github.com/login/oauth/authorize?{params}")
@@ -45,11 +46,12 @@ def oauth_entry() -> RedirectResponse:
 @router.get("/auth/callback")
 def oauth_callback(
     request: Request,
+    background: BackgroundTasks,
     code: str = Query(...),
     state: str = Query(...),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> RedirectResponse:
-    """用 code 换一次性 token 读身份，随即丢弃 token（不入库）。"""
+    """用 code 换 token 读身份，token 密封落库供点星同步（spec 2026-09-26 决策 1）。"""
     saved_state = request.cookies.get(OAUTH_STATE_COOKIE, "")
     if not state or not saved_state or not secrets.compare_digest(state, saved_state):
         raise HTTPException(status_code=400, detail="OAuth state 不匹配，请重新登录")
@@ -61,6 +63,12 @@ def oauth_callback(
         raise HTTPException(status_code=502, detail=f"GitHub 登录失败：{exc}") from exc
 
     user_id = auth.upsert_user(conn, gh_user)
+    conn.execute(
+        "UPDATE users SET gh_token_enc = ?, gh_star_authed_at = ? WHERE id = ?",
+        (security.seal_token(token, str(user_id)), int(time.time()), user_id),
+    )
+    conn.commit()
+    background.add_task(star_sync.backfill_after_auth, user_id)
     resp = RedirectResponse(config.FRONTEND_ORIGIN)
     resp.delete_cookie(OAUTH_STATE_COOKIE)
     resp.set_cookie(
@@ -93,7 +101,8 @@ def get_me(
     if user is None:
         return None
     return UserOut(id=user["id"], login=user["login"],
-                   avatar_url=user["avatar_url"], bio=user["bio"])
+                   avatar_url=user["avatar_url"], bio=user["bio"],
+                   gh_star_authed=bool(user["gh_token_enc"]))
 
 
 @router.put("/me/bio", response_model=UserOut)
@@ -104,7 +113,8 @@ def update_bio(
     conn.execute("UPDATE users SET bio = ? WHERE id = ?", (body.bio.strip(), user["id"]))
     conn.commit()
     return UserOut(id=user["id"], login=user["login"],
-                   avatar_url=user["avatar_url"], bio=body.bio.strip())
+                   avatar_url=user["avatar_url"], bio=body.bio.strip(),
+                   gh_star_authed=bool(user["gh_token_enc"]))
 
 
 def _set_interaction_row(
@@ -124,22 +134,32 @@ def _set_interaction_row(
         )
 
 
-@router.post("/interactions")
+@router.post("/interactions", response_model=InteractionOut)
 def set_interaction(
     body: InteractionIn, request: Request, conn: sqlite3.Connection = Depends(get_conn)
-) -> dict:
-    """点赞/收藏显式切换(前端传目标状态)。visit 不走这里 —— 它由详情接口写入。"""
+) -> InteractionOut:
+    """点赞/收藏显式切换(前端传目标状态)。visit 不走这里 —— 它由详情接口写入。
+    favorite 内联同步 GitHub 星（本地先成功，GitHub 失败不影响本地，spec 决策 5）。"""
     user = auth.require_user(request, conn)
     if body.kind not in TOGGLEABLE:
         raise HTTPException(status_code=422, detail="kind 只能是 like 或 favorite")
-    exists = conn.execute(
-        "SELECT id FROM repos WHERE id = ? AND status != 'delisted'", (body.repo_id,)
+    repo = conn.execute(
+        "SELECT * FROM repos WHERE id = ? AND status != 'delisted'", (body.repo_id,)
     ).fetchone()
-    if exists is None:
+    if repo is None:
         raise HTTPException(status_code=404, detail="仓库不存在或已下架")
     _set_interaction_row(conn, user["id"], body.repo_id, body.kind, body.active)
     conn.commit()
-    return {"active": body.active}
+    if body.kind != "favorite":
+        return InteractionOut(active=body.active, sync="")
+    try:
+        sync = (star_sync.sync_favorite_on(conn, user, repo) if body.active
+                else star_sync.sync_favorite_off(conn, user, repo))
+    except Exception:
+        # 同步边界兜底（final review Important 3）：本地已提交不回滚（决策 5），
+        # 降级 pending 交 cron/授权补同步收敛，绝不因 GitHub/密钥面 500。
+        sync = "pending"
+    return InteractionOut(active=body.active, sync=sync)
 
 
 @router.get("/me/interaction-ids", response_model=list[int])
@@ -203,3 +223,38 @@ def my_history(
 ) -> list[RepoCardOut]:
     user = auth.require_user(request, conn)
     return _by_kind(conn, user["id"], "visit")
+
+
+@router.delete("/me/gh-star-auth")
+def disconnect_star_sync(
+    request: Request, conn: sqlite3.Connection = Depends(get_conn)
+) -> dict:
+    """断开点星同步：撤销 GitHub token + 清本地密文 + 删同步行（spec 决策 9）。
+
+    注意：断开只撤销授权并清本地，GitHub 上已为用户点过的星保留，需用户自行取消。
+    """
+    user = auth.require_user(request, conn)
+    token = ""
+    if user["gh_token_enc"]:
+        try:
+            token = security.open_token(user["gh_token_enc"], str(user["id"]))
+        except security.TokenKeyMismatchError:
+            # 密钥不匹配：密文凭原密钥仍可恢复（A1）——fail loud，不清列不删行。
+            # 静默清列会连带丢掉可恢复密文与待撤星意图，GitHub 侧 token 彻底孤儿化。
+            raise HTTPException(
+                status_code=502,
+                detail="加密密钥不匹配，无法撤销 GitHub 授权；请恢复 TOKEN_ENC_KEY 后重试")
+        except ValueError:
+            token = ""
+    if token:
+        try:
+            github.revoke_oauth_token(token)
+        except Exception:
+            # 撤销失败也照清本地（spec §4.2）：用户意图是断开，GitHub 侧残留 token
+            # 由其自行过期/用户在 GitHub 设置撤销；revoke 内只兜 httpx.HTTPError，
+            # InvalidURL 等非其子类在此兜住，本地清理无条件执行。
+            pass
+    star_sync._clear_star_auth(conn, user["id"])
+    conn.execute("DELETE FROM star_syncs WHERE user_id = ?", (user["id"],))
+    conn.commit()
+    return {"ok": True}

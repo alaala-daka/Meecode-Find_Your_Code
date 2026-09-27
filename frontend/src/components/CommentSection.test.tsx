@@ -6,7 +6,7 @@ import type { CurrentUser } from '../api/types'
 import CommentSection from './CommentSection'
 
 let mockUser: CurrentUser | null = {
-  id: 9, login: 'me', avatar_url: 'https://a/x', bio: '',
+  id: 9, login: 'me', avatar_url: 'https://a/x', bio: '', gh_star_authed: false,
 }
 vi.mock('../store/authStore', () => ({
   useAuthStore: (selector: (s: { user: CurrentUser | null }) => unknown) =>
@@ -36,7 +36,7 @@ const FIXTURE = {
 
 describe('CommentSection', () => {
   beforeEach(() => {
-    mockUser = { id: 9, login: 'me', avatar_url: 'https://a/x', bio: '' }
+    mockUser = { id: 9, login: 'me', avatar_url: 'https://a/x', bio: '', gh_star_authed: false }
   })
   afterEach(() => vi.restoreAllMocks())
 

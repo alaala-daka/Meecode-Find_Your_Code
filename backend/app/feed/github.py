@@ -23,7 +23,14 @@ _shared_client: httpx.Client | None = None
 
 
 class GitHubError(RuntimeError):
-    """GitHub 调用失败：调用方应跳过该仓库或降级展示，不中断整批。"""
+    """GitHub 调用失败：调用方应跳过该仓库或降级展示，不中断整批。
+
+    status 为 HTTP 状态码（0 = 网络错/重试耗尽），供调用方分类 401/404 等语义。
+    """
+
+    def __init__(self, message: str, status: int = 0) -> None:
+        super().__init__(message)
+        self.status = status
 
 
 def _client() -> httpx.Client:
@@ -74,7 +81,7 @@ def _get(path: str, params: dict | None = None, *,
             time.sleep(wait)
             continue
         if resp.status_code >= 400:
-            raise GitHubError(f"GitHub {resp.status_code}:{resp.text[:200]}")
+            raise GitHubError(f"GitHub {resp.status_code}:{resp.text[:200]}", status=resp.status_code)
         return resp.json()
     raise GitHubError(f"GitHub 重试 {retries} 次仍失败:{last}")
 
@@ -182,7 +189,7 @@ def list_user_repos(login: str) -> list[dict]:
 
 
 def exchange_oauth_code(code: str) -> str:
-    """用 code 换 access_token；用完即弃，绝不入库（见 Global Constraints）。"""
+    """用 code 换 access_token；密封保存于 users.gh_token_enc（spec 2026-09-26 决策 1），仅用于点星同步。"""
     if config.GITHUB_MOCK:
         return "mock-token"
     try:
@@ -224,3 +231,90 @@ def get_authenticated_user(token: str) -> dict:
     if resp.status_code >= 400:
         raise GitHubError(f"读取 GitHub 用户失败：{resp.status_code}")
     return resp.json()
+
+
+# ---------- 用户 token 写操作：点星/取消星/撤销授权（spec 2026-09-26） ----------
+def _user_client(token: str) -> httpx.Client:
+    """per-user token 客户端：进程级 _shared_client 挂的是平台 token，不能混用。
+
+    调用方须以 with 确定性关闭（_user_call 每次调用建一回，含全部重试）。"""
+    return httpx.Client(
+        headers={"Authorization": f"Bearer {token}",
+                 "Accept": "application/vnd.github+json",
+                 "User-Agent": "meecode"},
+        timeout=TIMEOUT,
+    )
+
+
+def _user_call(method: str, path: str, token: str, *, interactive: bool = True) -> int:
+    """以用户 token 调 GitHub，返回状态码；非 204 抛 GitHubError(status=...)。
+    限流/重试语义与 _get 一致：interactive 路径立即失败不等待。
+    客户端生命周期：一次调用一个 client（覆盖全部重试），with 出栈即关闭，
+    不再每次 request 新建一个永不关闭的连接池（A4）。"""
+    retries = INTERACTIVE_RETRIES if interactive else MAX_RETRIES
+    last = ""
+    with _user_client(token) as client:
+        for attempt in range(retries):
+            try:
+                resp = client.request(
+                    method, f"{config.GITHUB_API}{path}",
+                    headers={"Authorization": f"Bearer {token}"})
+            except httpx.HTTPError as exc:
+                last = f"网络错误:{exc}"
+                if interactive:
+                    break
+                time.sleep(DEFAULT_BACKOFF * (attempt + 1))
+                continue
+            if resp.status_code == 204:
+                return resp.status_code
+            if resp.status_code in (403, 429) and resp.headers.get("X-RateLimit-Remaining") == "0":
+                wait = _retry_after(resp.headers, DEFAULT_BACKOFF * (attempt + 1))
+                last = f"触发限流(剩余配额 0),需等待 {wait}s"
+                if interactive:
+                    break
+                time.sleep(wait)
+                continue
+            if resp.status_code >= 400:
+                raise GitHubError(f"GitHub {resp.status_code}:{resp.text[:200]}", status=resp.status_code)
+    raise GitHubError(f"GitHub {method} {path} 重试 {retries} 次仍失败:{last}")
+
+
+def is_starred(token: str, full_name: str, *, interactive: bool = True) -> bool:
+    """GET /user/starred/{owner}/{repo}：204=已 star，404=未 star（或仓库不存在）。"""
+    if config.GITHUB_MOCK:
+        return mock.mock_is_starred(full_name)
+    try:
+        _user_call("GET", f"/user/starred/{full_name}", token, interactive=interactive)
+        return True
+    except GitHubError as exc:
+        if exc.status == 404:
+            return False
+        raise
+
+
+def star_repo(token: str, full_name: str, *, interactive: bool = True) -> None:
+    if config.GITHUB_MOCK:
+        return mock.mock_star_repo(full_name)
+    _user_call("PUT", f"/user/starred/{full_name}", token, interactive=interactive)
+
+
+def unstar_repo(token: str, full_name: str, *, interactive: bool = True) -> None:
+    if config.GITHUB_MOCK:
+        return mock.mock_unstar_repo(full_name)
+    _user_call("DELETE", f"/user/starred/{full_name}", token, interactive=interactive)
+
+
+def revoke_oauth_token(token: str) -> None:
+    """撤销 OAuth token（断开点星授权）。失败一律吞掉：用户意图是断开，本地清理由调用方完成。"""
+    if config.GITHUB_MOCK:
+        return mock.mock_revoke_token(token)
+    try:
+        httpx.post(
+            f"{config.GITHUB_API}/applications/{config.GITHUB_CLIENT_ID}/token/revoke",
+            headers={"Accept": "application/vnd.github+json"},
+            auth=(config.GITHUB_CLIENT_ID, config.GITHUB_CLIENT_SECRET),
+            json={"access_token": token},
+            timeout=TIMEOUT,
+        )
+    except httpx.HTTPError:
+        pass

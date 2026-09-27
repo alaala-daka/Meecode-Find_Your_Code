@@ -3,7 +3,7 @@ import {
   CATEGORIES, FIXTURE_FILES, FIXTURE_REPOS, FIXTURE_TREE, FIXTURE_USER,
 } from './fixtures'
 import type {
-  AiDraftResult, ApiClient, Comment, CommentPage, CurrentUser, FeedPage, InteractKind,
+  AiDraftResult, ApiClient, Comment, CommentPage, CurrentUser, FeedPage, InteractKind, InteractResult,
   MyGithubRepo, RepoCardData, RepoDetail, RepoFile, RepoTreeItem, SearchResult, SubmitPayload, UserProfile,
 } from './types'
 
@@ -163,12 +163,14 @@ export function createMockClient(): ApiClient {
     async setBio(bio) {
       state.bio = bio
     },
-    async interact(repoId, kind: InteractKind, on) {
+    async interact(repoId, kind: InteractKind, on): Promise<InteractResult> {
       const set = kind === 'like' ? state.likes : state.favorites
       if (on) set.add(repoId); else set.delete(repoId)
       const card = state.repos.find((r) => r.id === repoId)
       if (card && kind === 'like') card.likes += on ? 1 : -1
       if (card && kind === 'favorite' && card.favorites_count !== undefined) card.favorites_count += on ? 1 : -1
+      // mock 无 token 世界（spec §4.6）：收藏开 = need_auth、收藏关 = kept；like 无同步语义
+      return { active: on, sync: kind === 'favorite' ? (on ? 'need_auth' : 'kept') : '' }
     },
     async comments(repoId): Promise<CommentPage> {
       const all = state.comments.filter((c) => c.repo_id === repoId && c.status !== 'deleted')
@@ -218,10 +220,14 @@ export function createMockClient(): ApiClient {
         login: FIXTURE_USER.login,
         avatar_url: FIXTURE_USER.avatar_url,
         bio: FIXTURE_USER.bio,
+        gh_star_authed: false,
       }
     },
     async logout() {
       // mock 无会话状态可清：登出为空操作
+    },
+    async ghStarDisconnect() {
+      // mock 无 token 可撤：空操作
     },
   }
 }

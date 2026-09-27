@@ -1,6 +1,8 @@
 """建表与 FTS5 同步的最小验证。"""
 import sqlite3
 
+import pytest
+
 from app.feed import db
 
 
@@ -110,3 +112,37 @@ def test_init_db_migrates_legacy_comments_without_moderation_reason():
     assert rows["被误杀"]["status"] == "pending" and rows["被误杀"]["screened"] == 0
     assert rows["正常可见"]["status"] == "visible"
     legacy.close()
+
+
+# ---------- 收藏同步 GitHub 星（spec 2026-09-26） ----------
+def test_star_sync_schema_and_user_columns(conn):
+    ucols = {r["name"] for r in conn.execute("PRAGMA table_info(users)")}
+    assert {"gh_token_enc", "gh_star_authed_at"} <= ucols
+    scols = {r["name"] for r in conn.execute("PRAGMA table_info(star_syncs)")}
+    assert scols == {"user_id", "repo_id", "desired", "applied", "origin",
+                     "attempts", "last_error", "updated_at"}
+
+
+def test_star_sync_unique_user_repo(conn):
+    conn.execute("INSERT INTO users (github_id, login) VALUES (1, 'a')")
+    conn.execute("INSERT INTO repos (github_id, full_name, owner_login, source, status)"
+                 " VALUES (1, 'a/b', 'a', 'crawled', 'published')")
+    conn.execute("INSERT INTO star_syncs (user_id, repo_id, desired, applied, origin, updated_at)"
+                 " VALUES (1, 1, 'starred', 'done', 'meecode', 1)")
+    conn.commit()
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute("INSERT INTO star_syncs (user_id, repo_id, desired, applied, origin, updated_at)"
+                     " VALUES (1, 1, 'unstarred', 'pending', 'meecode', 1)")
+
+
+def test_init_db_alters_legacy_users_table():
+    from app.feed import db as feed_db
+    c = sqlite3.connect(":memory:")
+    c.row_factory = sqlite3.Row
+    c.execute("CREATE TABLE users (id INTEGER PRIMARY KEY,"
+              " github_id INTEGER NOT NULL UNIQUE, login TEXT NOT NULL)")
+    c.commit()
+    feed_db.init_db(c)
+    cols = {r["name"] for r in c.execute("PRAGMA table_info(users)")}
+    assert {"gh_token_enc", "gh_star_authed_at", "session_epoch"} <= cols
+    c.close()

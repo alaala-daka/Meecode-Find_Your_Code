@@ -29,6 +29,8 @@ cp .env.example .env && chmod 600 .env
 vi .env   # 填入 LLM_API_KEY、TAVILY_API_KEY、GITHUB_TOKEN 等（从本地 backend/.env 迁移）
 ```
 
+`TOKEN_ENC_KEY`（`openssl rand -base64 32` 生成，写入 `backend/.env`；**不入 git**；漏配时 dev 从 SESSION_SECRET 派生并告警，生产建议必配）。
+
 ## 4. 部署专用 SSH 密钥（deploy）
 
 ```bash
@@ -134,6 +136,7 @@ rsync -az --delete -e "ssh -i <部署私钥>" frontend/dist/ deploy@<服务器IP
 0 3 * * * cd /opt/meecode/backend && .venv/bin/python -m app.feed.jobs.crawl >> /var/log/meecode-crawl.log 2>&1
 0 4 * * * cd /opt/meecode/backend && .venv/bin/python -m app.feed.jobs.report >> /var/log/meecode-report.log 2>&1
 */5 * * * * cd /opt/meecode/backend && .venv/bin/python -m app.feed.jobs.moderate >> /var/log/meecode-moderate.log 2>&1
+*/5 * * * * cd /opt/meecode/backend && .venv/bin/python -m app.feed.jobs.star_sync >> /var/log/meecode-star-sync.log 2>&1
 ```
 
 5. 冒烟：`curl -s "https://<domain>/api/feed" | head -c 200`（有 DB 内容后返回 cards）；`curl -s "https://<domain>/api/categories"` 返回 8 分类。

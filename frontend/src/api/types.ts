@@ -3,6 +3,13 @@ export type Source = 'submitted' | 'crawled'
 export type SortKey = 'default' | 'newest' | 'stars'
 export type InteractKind = 'like' | 'favorite'
 
+export type SyncState = 'need_auth' | 'synced' | 'pending' | 'kept' | 'unstarred' | 'skipped'
+
+export interface InteractResult {
+  active: boolean
+  sync: SyncState | ''   // favorite 时为 SyncState；like 无 GitHub 对应物恒空串
+}
+
 export interface RepoCardData {
   id: number
   full_name: string          // owner/repo
@@ -110,6 +117,7 @@ export interface CurrentUser {
   login: string
   avatar_url: string
   bio: string
+  gh_star_authed: boolean   // 是否已授权点星同步
 }
 
 export interface ApiClient {
@@ -128,7 +136,8 @@ export interface ApiClient {
   userFavorites(login: string): Promise<RepoCardData[]>
   userHistory(login: string): Promise<RepoCardData[]>
   setBio(bio: string): Promise<void>
-  interact(repoId: number, kind: InteractKind, on: boolean): Promise<void>
+  interact(repoId: number, kind: InteractKind, on: boolean): Promise<InteractResult>
+  ghStarDisconnect(): Promise<void>
   comments(repoId: number, limit?: number, offset?: number): Promise<CommentPage>
   postComment(repoId: number, content: string, parentId?: number | null): Promise<Comment>
   deleteComment(commentId: number): Promise<void>

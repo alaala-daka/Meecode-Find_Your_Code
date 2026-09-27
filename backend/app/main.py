@@ -12,7 +12,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
-from . import config, gh
+from . import config, gh, security
 from .agent import prompts
 from .agent.graph import run_elaborate, run_expand, run_repo_topic, run_rewrite
 from .agent.mock import mock_chat_events, mock_repo_context
@@ -36,6 +36,7 @@ from .schemas import (  # 解读域 schemas,原样
 async def lifespan(_app: FastAPI):
     """进程启动时建表(fail-fast):DB 异常在启动期暴露,而不是第一个请求 500。"""
     config.ensure_prod_secrets()
+    security.ensure_token_key()  # TOKEN_ENC_KEY 配错拒启；未配置打 dev 派生警告（spec §4.2）
     conn = db.connect()
     try:
         db.init_db(conn)

@@ -8,6 +8,10 @@ feedback/
 desktop.ini
 docs/demo-script.md
 
+# 开发流程文档（plan/spec 等），与实现无关，仅本地留存
+docs/superpowers/
+docs/Subsequent-Module-Development-Process.md
+
 # 设计稿/未使用的图片素材
 logo_redesign/
 新一轮构思.txt
