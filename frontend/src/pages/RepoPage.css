@@ -39,6 +39,8 @@
 .repo-meta-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 .repo-topics { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
 .action-error { color: var(--danger); font-size: 13px; margin-top: 10px; }
+.sync-hint { color: var(--ink-2); font-size: 13px; margin-top: 8px; }
+.sync-hint a { color: var(--brand); text-decoration: underline; }
 
 /* tab 与文件预览 */
 .repo-tab-body { margin-top: 16px; animation: fade-in 0.15s var(--ease); }

@@ -1,9 +1,10 @@
 // src/pages/ProfilePage.test.tsx
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { FIXTURE_USER } from '../api/fixtures'
+import type { CurrentUser } from '../api/types'
 import { useAuthStore } from '../store/authStore'
 import ProfilePage from './ProfilePage'
 
@@ -95,5 +96,21 @@ describe('ProfilePage', () => {
     await userEvent.keyboard('{Escape}')
     expect(screen.getByText('在写小而可读的系统软件。')).toBeInTheDocument()
     expect(screen.queryByDisplayValue('不保存的签名')).not.toBeInTheDocument()
+  })
+
+  it('未授权点星时无断开入口', async () => {
+    useAuthStore.setState({ user: FIXTURE_USER })  // UserProfile 形状，无 gh_star_authed
+    renderAt('/user/alice')
+    await screen.findAllByText('alice')
+    expect(screen.queryByRole('button', { name: /GitHub 点星已连接/ })).not.toBeInTheDocument()
+  })
+
+  it('已授权点星：本人视图显示断开入口，点击后消失', async () => {
+    useAuthStore.setState({ user: { ...FIXTURE_USER, id: 1, gh_star_authed: true } as CurrentUser })
+    renderAt('/user/alice')
+    await screen.findAllByText('alice')
+    await userEvent.click(screen.getByRole('button', { name: /GitHub 点星已连接/ }))
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: /GitHub 点星已连接/ })).not.toBeInTheDocument())
   })
 })

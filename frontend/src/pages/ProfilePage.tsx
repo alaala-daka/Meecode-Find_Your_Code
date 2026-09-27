@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { api } from '../api/client'
-import type { RepoCardData, UserProfile } from '../api/types'
+import type { CurrentUser, RepoCardData, UserProfile } from '../api/types'
 import Avatar from '../components/Avatar'
 import EmptyState from '../components/EmptyState'
 import ErrorBanner from '../components/ErrorBanner'
@@ -114,6 +114,19 @@ export default function ProfilePage() {
               <span>仓库 <b>{profile.repo_count}</b></span>
               <span>获赞星 <b>{profile.star_count}</b></span>
               <span>被收藏 <b>{profile.favorite_count}</b></span>
+              {isMe && me && 'gh_star_authed' in me && me.gh_star_authed && (
+                <button
+                  className="star-sync-off"
+                  onClick={() => {
+                    void api.ghStarDisconnect().then(() => {
+                      const disconnected: CurrentUser = { ...me, gh_star_authed: false }
+                      useAuthStore.setState({ user: disconnected })
+                    })
+                  }}
+                >
+                  GitHub 点星已连接 · 断开
+                </button>
+              )}
             </p>
           </div>
         </header>

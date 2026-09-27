@@ -154,4 +154,23 @@ describe('RepoPage', () => {
     vi.unstubAllGlobals()
     vi.unstubAllEnvs()
   })
+
+  it('收藏后无 token：出授权提示条与链接，且不自动消失', async () => {
+    useAuthStore.setState({ user: FIXTURE_USER })
+    renderAt('/repo/5')
+    await screen.findByText('dot-snap')
+    await userEvent.click(screen.getByRole('button', { name: '收藏' }))
+    expect(await screen.findByText(/授权后自动在 GitHub 点星/)).toBeInTheDocument()
+    const link = screen.getByRole('link', { name: /授权 GitHub 点星/ })
+    expect(link).toHaveAttribute('href', '/api/auth/github')
+    expect(link).toHaveAttribute('title', expect.stringContaining('public_repo'))
+  })
+
+  it('取消收藏：提示 GitHub 上的星未改动', async () => {
+    useAuthStore.setState({ user: FIXTURE_USER })
+    renderAt('/repo/3')
+    await screen.findByText('rust-kv')
+    await userEvent.click(screen.getByRole('button', { name: '收藏' }))
+    expect(await screen.findByText(/已取消收藏，GitHub 上的星未改动/)).toBeInTheDocument()
+  })
 })
