@@ -44,6 +44,20 @@ def _del_row(conn: sqlite3.Connection, user_id: int, repo_id: int) -> None:
     conn.commit()
 
 
+def _flip_desired_starred(conn: sqlite3.Connection, user_id: int, repo_id: int) -> None:
+    """收藏开启早期退出（无 token / 401）时翻转既有行 desired='starred'。
+
+    用户重收藏的意图先落库，applied/origin/attempts/last_error 不动、updated_at 刷新；
+    无行不建（授权补同步统一处理）。缺此翻转则重授权后 job 会按陈旧 desired='unstarred'
+    撤掉用户已重新收藏的星。
+    """
+    if conn.execute("SELECT 1 FROM star_syncs WHERE user_id = ? AND repo_id = ?",
+                    (user_id, repo_id)).fetchone():
+        conn.execute("UPDATE star_syncs SET desired = 'starred', updated_at = ?"
+                     " WHERE user_id = ? AND repo_id = ?", (_now(), user_id, repo_id))
+        conn.commit()
+
+
 def _mark_token_dead(conn: sqlite3.Connection, user_id: int) -> None:
     conn.execute("UPDATE users SET gh_token_enc = '', gh_star_authed_at = 0 WHERE id = ?", (user_id,))
     conn.execute("UPDATE star_syncs SET last_error = 'token revoked'"
@@ -108,11 +122,7 @@ def sync_favorite_on(conn: sqlite3.Connection, user: sqlite3.Row, repo: sqlite3.
                      interactive: bool = True) -> str:
     token = _load_token(conn, user)
     if token is None:
-        if conn.execute("SELECT 1 FROM star_syncs WHERE user_id = ? AND repo_id = ?",
-                        (user["id"], repo["id"])).fetchone():
-            conn.execute("UPDATE star_syncs SET desired = 'starred', updated_at = ?"
-                         " WHERE user_id = ? AND repo_id = ?", (_now(), user["id"], repo["id"]))
-            conn.commit()
+        _flip_desired_starred(conn, user["id"], repo["id"])
         return "need_auth"
     if repo["owner_login"] == user["login"]:
         _put_row(conn, user["id"], repo["id"], desired="starred", applied="done", origin="external")
@@ -128,6 +138,7 @@ def sync_favorite_on(conn: sqlite3.Connection, user: sqlite3.Row, repo: sqlite3.
     except github.GitHubError as exc:
         if exc.status == 401:
             _mark_token_dead(conn, user["id"])
+            _flip_desired_starred(conn, user["id"], repo["id"])
             return "need_auth"
         if not _favorite_still_wanted(conn, user["id"], repo["id"]):
             return _retract_star(conn, user, repo, token, interactive=interactive,
@@ -173,9 +184,9 @@ def sync_favorite_off(conn: sqlite3.Connection, user: sqlite3.Row, repo: sqlite3
         return "unstarred"
     except github.GitHubError as exc:
         if exc.status == 401:
-            _mark_token_dead(conn, user["id"])
             _put_row(conn, user["id"], repo["id"], desired="unstarred", applied="pending", origin="meecode",
                      error=str(exc), bump=True)
+            _mark_token_dead(conn, user["id"])  # 后置：'token revoked' 留痕是终态 last_error
             return "need_auth"
         if exc.status in (404, 422):
             _del_row(conn, user["id"], repo["id"])  # 星随仓库消失，视为完成

@@ -148,6 +148,22 @@ def test_on_401_clears_token_and_need_auth(conn, monkeypatch):
     assert u["gh_token_enc"] == ""
 
 
+def test_on_401_flips_pending_desired_to_starred(conn, monkeypatch):
+    """B6：401 早期退出也要翻 desired——否则重授权后 job 按陈旧 'unstarred'
+    撤掉用户已重新收藏的星。TokenKeyMismatchError 不同：异常上抛，行不动。"""
+    from app.feed import github
+    user = make_user(conn)
+    repo = make_repo(conn)
+    conn.execute("INSERT INTO star_syncs (user_id, repo_id, desired, applied, origin, attempts, last_error, updated_at)"
+                 " VALUES (1, 1, 'unstarred', 'pending', 'meecode', 1, 'boom', 1)")
+    conn.commit()
+    patch_github(monkeypatch, star=github.GitHubError("bad", status=401))
+    assert star_sync.sync_favorite_on(conn, user, repo) == "need_auth"
+    row = sync_row(conn)
+    assert row["desired"] == "starred"
+    assert (row["applied"], row["origin"], row["attempts"], row["last_error"]) == ("pending", "meecode", 1, "token revoked")
+
+
 def test_on_404_stops_retry(conn, monkeypatch):
     from app.feed import github
     user = make_user(conn)
@@ -246,6 +262,23 @@ def test_off_without_token_queues_unstar(conn, monkeypatch):
     row = sync_row(conn)
     assert (row["desired"], row["applied"]) == ("unstarred", "pending")
     assert calls["unstar"] == []
+
+
+def test_off_401_keeps_token_revoked_stamp(conn, monkeypatch):
+    """B2：取消 401 的终态 last_error 必须留痕 'token revoked'（§4.3 错误表）。
+    旧序 _mark_token_dead 在前、_put_row(error=str(exc)) 在后把留痕覆盖没了。"""
+    from app.feed import github
+    user = make_user(conn)
+    repo = make_repo(conn)
+    conn.execute("INSERT INTO star_syncs (user_id, repo_id, desired, applied, origin, updated_at)"
+                 " VALUES (1, 1, 'starred', 'done', 'meecode', 1)")
+    conn.commit()
+    patch_github(monkeypatch, unstar=github.GitHubError("bad credentials", status=401))
+    assert star_sync.sync_favorite_off(conn, user, repo) == "need_auth"
+    row = sync_row(conn)
+    assert row["last_error"] == "token revoked"
+    assert (row["desired"], row["applied"]) == ("unstarred", "pending")
+    assert conn.execute("SELECT gh_token_enc FROM users WHERE id=1").fetchone()["gh_token_enc"] == ""
 
 
 # ---------- 星泄漏回归（final review Critical 1） ----------
@@ -418,7 +451,9 @@ def test_job_404_stops_single_row(conn, monkeypatch):
 
 
 def test_job_failure_counts_failed_without_aborting_batch(conn, monkeypatch):
-    """重放失败计 failed 不中断整批（crawl.py 同款）：单行异常跳过，后续行照常收敛。"""
+    """重放失败计 failed 不中断整批（crawl.py 同款）：单行异常跳过，后续行照常收敛。
+    改写自旧版（B1）：旧实现异常路径不落 attempts/last_error，非 GitHubError 行会无限重试；
+    新语义 attempts+1、last_error 落库，与 §4.4「attempts+1、成败落库」一致。"""
     make_user(conn)
     make_repo(conn, rid=1, gid=5001, full_name="other/a")
     make_repo(conn, rid=2, gid=5002, full_name="other/b")
@@ -439,8 +474,46 @@ def test_job_failure_counts_failed_without_aborting_batch(conn, monkeypatch):
     stats = sync_job.sync_pending_once(conn)
     assert stats == {"picked": 2, "done": 1, "failed": 1, "skipped": 0}
     assert calls["star"] == ["other/a", "other/b"]
-    assert sync_row(conn, rid=1)["applied"] == "pending"
+    row = sync_row(conn, rid=1)
+    assert (row["applied"], row["attempts"], row["last_error"]) == ("pending", 2, "boom")
     assert sync_row(conn, rid=2)["applied"] == "done"
+
+
+def test_job_generic_error_exhausts_row_at_max_attempts(conn, monkeypatch):
+    """B1：非 GitHubError 异常也落 attempts，到 STAR_SYNC_MAX_ATTEMPTS 终态不再拾起——
+    旧实现漏 bump，持久抛错的行会无限重试（违 §4.4 attempts 上限终态化）。"""
+    make_user(conn)
+    make_repo(conn)
+    make_fav(conn)
+    _seed_sync_row(conn, attempts=config.STAR_SYNC_MAX_ATTEMPTS - 1)
+
+    def star(token, full_name, **kw):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(star_sync.github, "is_starred", lambda token, full_name, **kw: False)
+    monkeypatch.setattr(star_sync.github, "star_repo", star)
+    monkeypatch.setattr(star_sync.github, "unstar_repo", lambda token, full_name, **kw: None)
+    stats = sync_job.sync_pending_once(conn)
+    assert stats == {"picked": 1, "done": 0, "failed": 1, "skipped": 0}
+    row = sync_row(conn)
+    assert (row["attempts"], row["last_error"]) == (config.STAR_SYNC_MAX_ATTEMPTS, "boom")
+    assert sync_job.sync_pending_once(conn) == {"picked": 0, "done": 0, "failed": 0, "skipped": 0}
+
+
+def test_job_key_mismatch_skips_without_burning_attempts(conn, monkeypatch):
+    """B1 例外：换钥（TokenKeyMismatchError）与无 token 同款跳过不烧 attempts——
+    密文凭原密钥可恢复（wave-A A1），行须留待运维恢复 TOKEN_ENC_KEY 后收敛。"""
+    monkeypatch.setattr(config, "TOKEN_ENC_KEY", base64.b64encode(b"k" * 32).decode())
+    make_user(conn)
+    make_repo(conn)
+    make_fav(conn)
+    _seed_sync_row(conn)
+    monkeypatch.setattr(config, "TOKEN_ENC_KEY", base64.b64encode(b"j" * 32).decode())
+    stats = sync_job.sync_pending_once(conn)
+    assert stats == {"picked": 1, "done": 0, "failed": 0, "skipped": 1}
+    row = sync_row(conn)
+    assert row["attempts"] == 1
+    assert conn.execute("SELECT gh_token_enc FROM users WHERE id=1").fetchone()["gh_token_enc"] != ""
 
 
 # ---------- 密钥指纹/换钥保密文（final review A1） ----------
