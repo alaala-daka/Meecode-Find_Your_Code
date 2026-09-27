@@ -220,7 +220,11 @@ export default function RepoPage() {
                   {needStarAuth && (
                     <>
                       {' · '}
-                      <a href={api.loginUrl()} title="将获得 public_repo 权限，仅用于在 GitHub 上为你点星/取消星">
+                      <a
+                        href={api.loginUrl()}
+                        title="将获得 public_repo 权限，仅用于在 GitHub 上为你点星/取消星"
+                        aria-label="授权 GitHub 点星：将获得 public_repo 权限，仅用于在 GitHub 上为你点星/取消星"
+                      >
                         授权 GitHub 点星
                       </a>
                     </>

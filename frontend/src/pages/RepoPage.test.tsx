@@ -164,6 +164,7 @@ describe('RepoPage', () => {
     const link = screen.getByRole('link', { name: /授权 GitHub 点星/ })
     expect(link).toHaveAttribute('href', '/api/auth/github')
     expect(link).toHaveAttribute('title', expect.stringContaining('public_repo'))
+    expect(link).toHaveAttribute('aria-label', expect.stringContaining('将获得 public_repo 权限，仅用于在 GitHub 上为你点星/取消星'))
   })
 
   it('取消收藏：提示 GitHub 上的星未改动', async () => {

@@ -61,6 +61,7 @@ export default function LoginModal({ open, onClose }: Props) {
         </span>
         <p className="login-brand">觅码<span className="login-brand-sub">Meecode</span></p>
         <p className="login-tip" id="login-tip">登录后即可收藏、点赞与推广仓库</p>
+        <p className="login-scope">登录将获得 GitHub public_repo 权限，仅用于为你点星/取消星</p>
         <Button onClick={() => { login(); onClose() }}>用 GitHub 登录</Button>
         <button className="login-close" aria-label="关闭登录弹层" onClick={onClose}>✕</button>
       </div>
