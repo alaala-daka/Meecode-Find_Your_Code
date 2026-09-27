@@ -1,6 +1,8 @@
 """Pydantic 模型：LLM 结构化输出 + API 出入参。"""
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -141,7 +143,7 @@ class InteractionOut(BaseModel):
     """互动响应。sync：favorite 为 SyncState（need_auth/synced/pending/kept/unstarred/skipped）；
     like 无 GitHub 对应物恒空串（Global Constraints）。"""
     active: bool
-    sync: str = ""
+    sync: Literal["", "need_auth", "synced", "pending", "kept", "unstarred", "skipped"] = ""
 
 
 class CommentOut(BaseModel):

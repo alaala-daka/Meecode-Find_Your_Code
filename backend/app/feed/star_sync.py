@@ -21,12 +21,12 @@ def _now() -> int:
 
 def _put_row(conn: sqlite3.Connection, user_id: int, repo_id: int, *,
              desired: str, applied: str, origin: str,
-             error: str = "", bump: bool = False, final: bool = False) -> None:
+             error: str = "", increment_attempts: bool = False, exhausted: bool = False) -> None:
     row = conn.execute(
         "SELECT attempts FROM star_syncs WHERE user_id = ? AND repo_id = ?", (user_id, repo_id)
     ).fetchone()
-    attempts = ((row["attempts"] if row else 0) + 1) if bump else (row["attempts"] if row else 0)
-    if final:
+    attempts = ((row["attempts"] if row else 0) + 1) if increment_attempts else (row["attempts"] if row else 0)
+    if exhausted:
         attempts = config.STAR_SYNC_MAX_ATTEMPTS
     conn.execute(
         "INSERT INTO star_syncs (user_id, repo_id, desired, applied, origin, attempts, last_error, updated_at)"
@@ -58,8 +58,14 @@ def _flip_desired_starred(conn: sqlite3.Connection, user_id: int, repo_id: int) 
         conn.commit()
 
 
-def _mark_token_dead(conn: sqlite3.Connection, user_id: int) -> None:
+def _clear_star_auth(conn: sqlite3.Connection, user_id: int) -> None:
+    """清授权两列（gh_token_enc/gh_star_authed_at）：_mark_token_dead 与断开端点共用。"""
     conn.execute("UPDATE users SET gh_token_enc = '', gh_star_authed_at = 0 WHERE id = ?", (user_id,))
+    conn.commit()
+
+
+def _mark_token_dead(conn: sqlite3.Connection, user_id: int) -> None:
+    _clear_star_auth(conn, user_id)
     conn.execute("UPDATE star_syncs SET last_error = 'token revoked'"
                  " WHERE user_id = ? AND applied = 'pending'", (user_id,))
     conn.commit()
@@ -109,7 +115,7 @@ def _retract_star(conn: sqlite3.Connection, user: sqlite3.Row, repo: sqlite3.Row
             github.unstar_repo(token, repo["full_name"], interactive=interactive)
         except Exception as exc:
             _put_row(conn, user["id"], repo["id"], desired="unstarred", applied="pending",
-                     origin="meecode", error=f"撤销点星失败:{exc}", bump=True)
+                     origin="meecode", error=f"撤销点星失败:{exc}", increment_attempts=True)
             return "pending"
     row = conn.execute("SELECT desired FROM star_syncs WHERE user_id = ? AND repo_id = ?",
                        (user["id"], repo["id"])).fetchone()
@@ -144,7 +150,7 @@ def sync_favorite_on(conn: sqlite3.Connection, user: sqlite3.Row, repo: sqlite3.
             return _retract_star(conn, user, repo, token, interactive=interactive,
                                  undo=star_attempted or bool(prev and prev["origin"] == "meecode"))
         _put_row(conn, user["id"], repo["id"], desired="starred", applied="pending", origin="meecode",
-                 error=str(exc), bump=True, final=exc.status in (404, 422))
+                 error=str(exc), increment_attempts=True, exhausted=exc.status in (404, 422))
         return "pending"
     if not _favorite_still_wanted(conn, user["id"], repo["id"]):
         return _retract_star(conn, user, repo, token, interactive=interactive,
@@ -176,7 +182,7 @@ def sync_favorite_off(conn: sqlite3.Connection, user: sqlite3.Row, repo: sqlite3
     token = _load_token(conn, user)
     if token is None:
         _put_row(conn, user["id"], repo["id"], desired="unstarred", applied="pending", origin="meecode",
-                 error="token missing", bump=True)
+                 error="token missing", increment_attempts=True)
         return "need_auth"
     try:
         github.unstar_repo(token, repo["full_name"], interactive=interactive)
@@ -185,14 +191,14 @@ def sync_favorite_off(conn: sqlite3.Connection, user: sqlite3.Row, repo: sqlite3
     except github.GitHubError as exc:
         if exc.status == 401:
             _put_row(conn, user["id"], repo["id"], desired="unstarred", applied="pending", origin="meecode",
-                     error=str(exc), bump=True)
+                     error=str(exc), increment_attempts=True)
             _mark_token_dead(conn, user["id"])  # 后置：'token revoked' 留痕是终态 last_error
             return "need_auth"
         if exc.status in (404, 422):
             _del_row(conn, user["id"], repo["id"])  # 星随仓库消失，视为完成
             return "unstarred"
         _put_row(conn, user["id"], repo["id"], desired="unstarred", applied="pending", origin="meecode",
-                 error=str(exc), bump=True)
+                 error=str(exc), increment_attempts=True)
         return "pending"
 
 

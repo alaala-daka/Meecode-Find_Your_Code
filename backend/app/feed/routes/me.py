@@ -254,8 +254,7 @@ def disconnect_star_sync(
             # 由其自行过期/用户在 GitHub 设置撤销；revoke 内只兜 httpx.HTTPError，
             # InvalidURL 等非其子类在此兜住，本地清理无条件执行。
             pass
-    conn.execute("UPDATE users SET gh_token_enc = '', gh_star_authed_at = 0 WHERE id = ?",
-                 (user["id"],))
+    star_sync._clear_star_auth(conn, user["id"])
     conn.execute("DELETE FROM star_syncs WHERE user_id = ?", (user["id"],))
     conn.commit()
     return {"ok": True}

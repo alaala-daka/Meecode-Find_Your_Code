@@ -246,9 +246,8 @@ def _user_client(token: str) -> httpx.Client:
     )
 
 
-def _user_call(method: str, path: str, token: str, *,
-               ok: tuple[int, ...] = (204,), interactive: bool = True) -> int:
-    """以用户 token 调 GitHub，返回状态码；非 ok 状态抛 GitHubError(status=...)。
+def _user_call(method: str, path: str, token: str, *, interactive: bool = True) -> int:
+    """以用户 token 调 GitHub，返回状态码；非 204 抛 GitHubError(status=...)。
     限流/重试语义与 _get 一致：interactive 路径立即失败不等待。
     客户端生命周期：一次调用一个 client（覆盖全部重试），with 出栈即关闭，
     不再每次 request 新建一个永不关闭的连接池（A4）。"""
@@ -266,7 +265,7 @@ def _user_call(method: str, path: str, token: str, *,
                     break
                 time.sleep(DEFAULT_BACKOFF * (attempt + 1))
                 continue
-            if resp.status_code in ok:
+            if resp.status_code == 204:
                 return resp.status_code
             if resp.status_code in (403, 429) and resp.headers.get("X-RateLimit-Remaining") == "0":
                 wait = _retry_after(resp.headers, DEFAULT_BACKOFF * (attempt + 1))
