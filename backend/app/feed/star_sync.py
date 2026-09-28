@@ -12,7 +12,7 @@ import logging
 import sqlite3
 import time
 
-from .. import config, security
+from .. import security
 from . import db, github
 
 log = logging.getLogger(__name__)
@@ -23,13 +23,11 @@ def _now() -> int:
 
 
 def _put_row(conn: sqlite3.Connection, user_id: int, repo_id: int, *,
-             desired: str, applied: str, error: str = "", increment_attempts: bool = False, exhausted: bool = False) -> None:
+             desired: str, applied: str, error: str = "", increment_attempts: bool = False) -> None:
     row = conn.execute(
         "SELECT attempts FROM star_syncs WHERE user_id = ? AND repo_id = ?", (user_id, repo_id)
     ).fetchone()
     attempts = ((row["attempts"] if row else 0) + 1) if increment_attempts else (row["attempts"] if row else 0)
-    if exhausted:
-        attempts = config.STAR_SYNC_MAX_ATTEMPTS
     conn.execute(
         "INSERT INTO star_syncs (user_id, repo_id, desired, applied, attempts, last_error, updated_at)"
         " VALUES (?,?,?,?,?,?,?)"
