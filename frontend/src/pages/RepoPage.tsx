@@ -169,7 +169,7 @@ export default function RepoPage() {
         setToast('仓库消失了，未能同步到 GitHub')
       }
     } catch {
-      setFaved(!next) // 回滚乐观更新
+      if (adjustCount) setFaved(!next) // 回滚乐观更新（仅主切换；补救二次调用本地取消已落库，不回滚）
       setActionError('操作失败，请重试')
     } finally {
       setBusy(null)

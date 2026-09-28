@@ -259,4 +259,21 @@ describe('RepoPage', () => {
     expect(spy).toHaveBeenNthCalledWith(2, 3, 'favorite', false, false)
     spy.mockRestore()
   })
+
+  it('补救模式【仅取消本地收藏】第二次调用失败 → 星钮保持熄灭', async () => {
+    useAuthStore.setState({ user: { ...FIXTURE_USER, id: 1, gh_star_authed: true } as CurrentUser })
+    const { api } = await import('../api/client')
+    const spy = vi.spyOn(api, 'interact')
+      .mockResolvedValueOnce({ active: false, sync: 'need_auth' })
+      .mockRejectedValueOnce(new Error('boom'))
+    renderAt('/repo/3')
+    await screen.findByText('rust-kv')
+    await userEvent.click(screen.getByRole('button', { name: '收藏' }))   // 已授权撤星 → need_auth → 补救弹窗
+    await screen.findByRole('dialog')
+    await userEvent.click(screen.getByRole('button', { name: '仅取消本地收藏' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('操作失败')
+    expect(screen.getByRole('button', { name: '收藏' })).not.toHaveClass('is-on')  // 首次取消已落库，不翻回
+    expect(spy).toHaveBeenNthCalledWith(2, 3, 'favorite', false, false)
+    spy.mockRestore()
+  })
 })
