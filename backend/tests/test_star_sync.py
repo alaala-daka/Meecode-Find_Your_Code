@@ -618,6 +618,6 @@ def test_replay_row_dels_row_when_user_missing(conn, monkeypatch):
     conn.commit()
     calls = patch_github(monkeypatch)
     row = conn.execute("SELECT * FROM star_syncs").fetchone()
-    assert star_sync.replay_row(conn, row) == "kept"
+    assert star_sync.replay_row(conn, row) == "dropped"
     assert conn.execute("SELECT count(*) c FROM star_syncs").fetchone()["c"] == 0
     assert calls["unstar"] == []

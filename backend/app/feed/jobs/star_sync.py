@@ -49,8 +49,8 @@ def sync_pending_once(conn: sqlite3.Connection) -> dict:
             conn.commit()
             stats["failed"] += 1
             continue
-        if state in ("synced", "unstarred", "kept", "skipped"):
-            # kept 借计含孤儿行丢弃（dropped）：内部收敛义，仅入 done 桶，不进 API 语义
+        if state in ("synced", "unstarred", "skipped", "dropped"):
+            # dropped = 孤儿行丢弃（内部收敛义，仅入 done 桶，不进 API SyncState）
             stats["done"] += 1
         else:
             stats["failed"] += 1

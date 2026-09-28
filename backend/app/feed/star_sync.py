@@ -191,9 +191,9 @@ def replay_row(conn: sqlite3.Connection, row: sqlite3.Row) -> str:
     user = conn.execute("SELECT * FROM users WHERE id = ?", (row["user_id"],)).fetchone()
     repo = conn.execute("SELECT * FROM repos WHERE id = ?", (row["repo_id"],)).fetchone()
     if user is None or repo is None:
-        # 内部收敛义：孤儿行丢弃（dropped），借 kept 计入 job done 桶，不进 API 语义
+        # 内部收敛义 dropped：孤儿行丢弃，仅入 job done 桶，不是 API SyncState 取值
         _del_row(conn, row["user_id"], row["repo_id"])
-        return "kept"
+        return "dropped"
     if row["desired"] == "starred":
         return sync_favorite_on(conn, user, repo, interactive=False)
     return sync_favorite_off(conn, user, repo, interactive=False)

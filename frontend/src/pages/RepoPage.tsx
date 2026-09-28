@@ -188,22 +188,27 @@ export default function RepoPage() {
     await runFav(next, true)
   }
 
-  const onStarConfirmAuth = useCallback(async () => {
+  const closeStarModal = useCallback(() => {
     setStarModalOpen(false)
+    setPendingUnfav(false) // 生命周期闭合：弹窗关闭即复位，防未来复用时守卫恒真
+    setRemedyMode(false)
+  }, [])
+
+  const onStarConfirmAuth = useCallback(async () => {
+    closeStarModal()
     if (pendingUnfav) {
       try { await api.interact(repoId, 'favorite', false, true) } catch { /* 本地优先，忽略 */ }
       setFaved(false)
       if (!remedyMode) setDetail((d) => (d && d.favorites_count != null ? { ...d, favorites_count: d.favorites_count - 1 } : d)) // 跳转前回补计数（补救模式已扣过，勿双扣）
     }
     window.location.assign(api.loginUrl())
-  }, [pendingUnfav, remedyMode, repoId])
+  }, [pendingUnfav, remedyMode, repoId, closeStarModal])
 
   const onStarLocalOnly = useCallback(() => {
-    setStarModalOpen(false)
+    closeStarModal()
     if (pendingUnfav) void runFav(false, false, !remedyMode) // 补救模式已扣过计数，勿双扣
-  }, [pendingUnfav, remedyMode, runFav])
+  }, [pendingUnfav, remedyMode, runFav, closeStarModal])
 
-  const closeStarModal = useCallback(() => setStarModalOpen(false), [])
   const dismissToast = useCallback(() => setToast(null), [])
 
   if (loadError) {
