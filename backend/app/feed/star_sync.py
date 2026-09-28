@@ -1,10 +1,10 @@
 """收藏同步 GitHub 星：状态机（spec 2026-09-26）。
 
 本地 interactions 是第一真源，GitHub 星是投影：本模块把投影推向 desired 状态。
-不变量（Global Constraints + final review Critical 1 修订）：origin 溯源保持；
-origin='meecode' 取消一律收敛撤星（不得按 applied='pending' 跳过）；写回前后重查
-interactions 真源，撤销并发取消后的本次动作；401 清 token 返 need_auth；
-收藏方向 404/422 置 attempts=MAX 停止重试。
+不变量（Global Constraints + final review Critical 1 修订）：取消一律收敛撤星
+（不得按 applied='pending' 跳过）；写回前后重查 interactions 真源，撤销并发取消后的
+本次动作；401 清 token 返 need_auth；收藏方向 404/422 = skipped 终态（无行不建、
+已有行删行），无预查、无 owner 特判。
 """
 from __future__ import annotations
 
@@ -103,14 +103,10 @@ def _favorite_still_wanted(conn: sqlite3.Connection, user_id: int, repo_id: int)
 
 
 def _retract_star(conn: sqlite3.Connection, user: sqlite3.Row, repo: sqlite3.Row,
-                  token: str | None, *, undo: bool, interactive: bool) -> str:
-    """写回竞态守卫命中（用户并发取消）：撤销本次动作，不写回星意图行。
-
-    undo=True 表示星可能由本次调用点上（PUT 已发出，含结果未知的超时）或星可溯源
-    为本平台所点（origin='meecode'）→ best-effort 撤星；撤星失败留 desired='unstarred'
-    行交 job 收敛，绝不删行泄漏。外部星路径 undo=False，永不动它（决策 4）。
-    """
-    if undo and token:
+                  token: str | None, *, interactive: bool) -> str:
+    """写回竞态守卫命中（用户并发取消）：一律 best-effort 撤星（origin 退役，无豁免），
+    撤星失败留 desired='unstarred' 行交 job 收敛，绝不删行泄漏。"""
+    if token:
         try:
             github.unstar_repo(token, repo["full_name"], interactive=interactive)
         except Exception as exc:
@@ -126,46 +122,33 @@ def _retract_star(conn: sqlite3.Connection, user: sqlite3.Row, repo: sqlite3.Row
 
 def sync_favorite_on(conn: sqlite3.Connection, user: sqlite3.Row, repo: sqlite3.Row, *,
                      interactive: bool = True) -> str:
+    """收藏开启：幂等 PUT 点星（spec 2026-09-28，无预查、无 owner 特判）。
+    404/422 = skipped 终态（仓库消失/不可点星）：无行不建、已有行删行。"""
     token = _load_token(conn, user)
     if token is None:
         _flip_desired_starred(conn, user["id"], repo["id"])
         return "need_auth"
-    if repo["owner_login"] == user["login"]:
-        _put_row(conn, user["id"], repo["id"], desired="starred", applied="done", origin="external")
-        return "skipped"
-    prev = conn.execute("SELECT origin FROM star_syncs WHERE user_id = ? AND repo_id = ?",
-                        (user["id"], repo["id"])).fetchone()
-    star_attempted = False
     try:
-        already = github.is_starred(token, repo["full_name"], interactive=interactive)
-        if not already:
-            star_attempted = True
-            github.star_repo(token, repo["full_name"], interactive=interactive)
+        github.star_repo(token, repo["full_name"], interactive=interactive)
     except github.GitHubError as exc:
         if exc.status == 401:
             _mark_token_dead(conn, user["id"])
             _flip_desired_starred(conn, user["id"], repo["id"])
             return "need_auth"
+        if exc.status in (404, 422):
+            _del_row(conn, user["id"], repo["id"])
+            return "skipped"
         if not _favorite_still_wanted(conn, user["id"], repo["id"]):
-            return _retract_star(conn, user, repo, token, interactive=interactive,
-                                 undo=star_attempted or bool(prev and prev["origin"] == "meecode"))
-        _put_row(conn, user["id"], repo["id"], desired="starred", applied="pending", origin="meecode",
-                 error=str(exc), increment_attempts=True, exhausted=exc.status in (404, 422))
+            return _retract_star(conn, user, repo, token, interactive=interactive)
+        _put_row(conn, user["id"], repo["id"], desired="starred", applied="pending",
+                 origin="meecode", error=str(exc), increment_attempts=True)
         return "pending"
     if not _favorite_still_wanted(conn, user["id"], repo["id"]):
-        return _retract_star(conn, user, repo, token, interactive=interactive,
-                             undo=star_attempted or bool(prev and prev["origin"] == "meecode"))
-    if already:
-        # 溯源保持：星是觅码点的就仍是 meecode，防止取消收藏时漏撤
-        origin = "meecode" if (prev and prev["origin"] == "meecode") else "external"
-        _put_row(conn, user["id"], repo["id"], desired="starred", applied="done", origin=origin)
-    else:
-        _put_row(conn, user["id"], repo["id"], desired="starred", applied="done", origin="meecode")
-    # 写回后复查（A6）：取消正落在上面检查与 (starred, done) 写回之间的夹缝时，
-    # done 行不会再被 job 拾起（只捡 pending），必须就地撤销，孤儿行不得存活。
+        return _retract_star(conn, user, repo, token, interactive=interactive)
+    _put_row(conn, user["id"], repo["id"], desired="starred", applied="done", origin="meecode")
+    # 写回后复查（A6）：取消落在检查与写回夹缝时就地撤销，孤儿行不得存活。
     if not _favorite_still_wanted(conn, user["id"], repo["id"]):
-        return _retract_star(conn, user, repo, token, interactive=interactive,
-                             undo=star_attempted or bool(prev and prev["origin"] == "meecode"))
+        return _retract_star(conn, user, repo, token, interactive=interactive)
     return "synced"
 
 

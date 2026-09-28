@@ -367,7 +367,7 @@ def test_favorite_with_token_syncs_in_mock(conn, client, login):
     conn.execute("UPDATE users SET gh_token_enc=? WHERE id=?",
                  (security.seal_token("tok", str(login)), login))
     conn.commit()
-    rid = add_repo(conn, 1, owner="other")  # owner 不能是登录用户 demo：自己的仓库点不了星，状态机回 skipped
+    rid = add_repo(conn, 1, owner="other")  # 跨用户场景；own-repo 已无特判，走常规 PUT
     on = client.post("/api/interactions",
                      json={"repo_id": rid, "kind": "favorite", "active": True}).json()
     assert on == {"active": True, "sync": "synced"}
@@ -453,7 +453,6 @@ def test_token_plaintext_never_leaks_to_api_or_last_error(conn, client, login, m
     def boom(_token, _full_name, **_kw):
         raise github.GitHubError("upstream boom", status=500)
 
-    monkeypatch.setattr(github, "is_starred", lambda token, full_name, **kw: False)
     monkeypatch.setattr(github, "star_repo", boom)
     monkeypatch.setattr(github, "unstar_repo", boom)
 

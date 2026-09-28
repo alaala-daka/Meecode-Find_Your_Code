@@ -44,7 +44,7 @@ def make_fav(conn, *, uid=1, rid=1):
     conn.commit()
 
 
-def patch_github(monkeypatch, *, starred=False, star=None, unstar=None):
+def patch_github(monkeypatch, *, star=None, unstar=None):
     """star/unstar 传 GitHubError 实例即抛出，否则成功；返回调用记录。"""
     calls = {"star": [], "unstar": []}
 
@@ -55,7 +55,6 @@ def patch_github(monkeypatch, *, starred=False, star=None, unstar=None):
                 raise err
         return fn
 
-    monkeypatch.setattr(star_sync.github, "is_starred", lambda token, full_name, **kw: starred)
     monkeypatch.setattr(star_sync.github, "star_repo", _do(calls["star"], star))
     monkeypatch.setattr(star_sync.github, "unstar_repo", _do(calls["unstar"], unstar))
     return calls
@@ -77,52 +76,62 @@ def test_on_without_token_flips_pending_desired_to_starred(conn):
     assert star_sync.sync_favorite_on(conn, user, repo) == "need_auth"
     row = sync_row(conn)
     assert row["desired"] == "starred"
-    assert (row["applied"], row["origin"], row["attempts"], row["last_error"]) == ("pending", "meecode", 1, "boom")
+    assert (row["applied"], row["attempts"], row["last_error"]) == ("pending", 1, "boom")
 
 
-def test_on_own_repo_is_skipped(conn, monkeypatch):
+def test_on_own_repo_goes_regular_path(conn, monkeypatch):
+    """own-repo 无特判（自点星合规，实测）：常规 PUT，正常 synced。"""
     user = make_user(conn, login="alice")
     repo = make_repo(conn, owner="alice", full_name="alice/proj")
+    make_fav(conn)
     calls = patch_github(monkeypatch)
+    assert star_sync.sync_favorite_on(conn, user, repo) == "synced"
+    assert calls["star"] == ["alice/proj"]
+
+
+def test_on_preexisting_star_still_puts(conn, monkeypatch):
+    """幂等 PUT：已 star 也走 PUT（无预查），GitHub 无变化。"""
+    user = make_user(conn)
+    repo = make_repo(conn)
+    make_fav(conn)
+    calls = patch_github(monkeypatch)
+    assert star_sync.sync_favorite_on(conn, user, repo) == "synced"
+    assert calls["star"] == ["other/proj"]
+
+
+def test_on_put_404_is_skipped_terminal(conn, monkeypatch):
+    """仓库消失：skipped 终态，无行不建、不重试不报错。"""
+    from app.feed import github
+    user = make_user(conn)
+    repo = make_repo(conn)
+    make_fav(conn)
+    patch_github(monkeypatch, star=github.GitHubError("gone", status=404))
     assert star_sync.sync_favorite_on(conn, user, repo) == "skipped"
-    row = sync_row(conn)
-    assert (row["desired"], row["applied"], row["origin"]) == ("starred", "done", "external")
-    assert calls["star"] == []
+    assert sync_row(conn) is None
 
 
-def test_on_preexisting_star_is_external(conn, monkeypatch):
+def test_on_put_422_dels_existing_row(conn, monkeypatch):
+    """不可点星：已有行删行（星从未点上，无泄漏）。"""
+    from app.feed import github
     user = make_user(conn)
     repo = make_repo(conn)
     make_fav(conn)
-    calls = patch_github(monkeypatch, starred=True)
-    assert star_sync.sync_favorite_on(conn, user, repo) == "synced"
-    row = sync_row(conn)
-    assert (row["origin"], row["applied"]) == ("external", "done")
-    assert calls["star"] == []
-
-
-def test_on_keeps_meecode_origin_when_star_reappears(conn, monkeypatch):
-    """溯源保持：撤星失败后再收藏，星仍在 GitHub → origin 不得漂成 external（防星泄漏）。"""
-    user = make_user(conn)
-    repo = make_repo(conn)
-    make_fav(conn)
-    conn.execute("INSERT INTO star_syncs (user_id, repo_id, desired, applied, origin, updated_at)"
-                 " VALUES (1, 1, 'unstarred', 'pending', 'meecode', 1)")
+    conn.execute("INSERT INTO star_syncs (user_id, repo_id, desired, applied, origin, attempts, updated_at)"
+                 " VALUES (1, 1, 'starred', 'pending', 'meecode', 1, 1)")
     conn.commit()
-    patch_github(monkeypatch, starred=True)
-    assert star_sync.sync_favorite_on(conn, user, repo) == "synced"
-    row = sync_row(conn)
-    assert (row["origin"], row["desired"], row["applied"]) == ("meecode", "starred", "done")
+    patch_github(monkeypatch, star=github.GitHubError("nope", status=422))
+    assert star_sync.sync_favorite_on(conn, user, repo) == "skipped"
+    assert sync_row(conn) is None
 
 
-def test_on_star_success_is_meecode_done(conn, monkeypatch):
+def test_on_star_success_is_done(conn, monkeypatch):
     user = make_user(conn)
     repo = make_repo(conn)
     make_fav(conn)
-    calls = patch_github(monkeypatch, starred=False)
+    calls = patch_github(monkeypatch)
     assert star_sync.sync_favorite_on(conn, user, repo) == "synced"
     row = sync_row(conn)
-    assert (row["origin"], row["applied"], row["attempts"]) == ("meecode", "done", 0)
+    assert (row["desired"], row["applied"]) == ("starred", "done")
     assert calls["star"] == ["other/proj"]
 
 
@@ -161,18 +170,7 @@ def test_on_401_flips_pending_desired_to_starred(conn, monkeypatch):
     assert star_sync.sync_favorite_on(conn, user, repo) == "need_auth"
     row = sync_row(conn)
     assert row["desired"] == "starred"
-    assert (row["applied"], row["origin"], row["attempts"], row["last_error"]) == ("pending", "meecode", 1, "token revoked")
-
-
-def test_on_404_stops_retry(conn, monkeypatch):
-    from app.feed import github
-    user = make_user(conn)
-    repo = make_repo(conn)
-    make_fav(conn)
-    patch_github(monkeypatch, star=github.GitHubError("gone", status=404))
-    assert star_sync.sync_favorite_on(conn, user, repo) == "pending"
-    row = sync_row(conn)
-    assert row["attempts"] == config.STAR_SYNC_MAX_ATTEMPTS
+    assert (row["applied"], row["attempts"], row["last_error"]) == ("pending", 1, "token revoked")
 
 
 # ---------- 取消方向（spec 2026-09-28：一律撤星，gh_sync 表达仅本地） ----------
@@ -279,7 +277,7 @@ def test_cancel_after_token_loss_never_leaks_star(conn, monkeypatch):
     user = make_user(conn)
     repo = make_repo(conn)
     make_fav(conn)                                                       # 本地真源：收藏已生效
-    calls = patch_github(monkeypatch, starred=False)
+    calls = patch_github(monkeypatch)
     assert star_sync.sync_favorite_on(conn, user, repo) == "synced"      # 1) 收藏成功，星点上
     assert calls["star"] == ["other/proj"]
     conn.execute("UPDATE users SET gh_token_enc='' WHERE id=1")
@@ -313,25 +311,11 @@ def test_on_writeback_retracted_when_favorite_cancelled(conn, monkeypatch):
     conn.execute("INSERT INTO star_syncs (user_id, repo_id, desired, applied, origin, attempts, updated_at)"
                  " VALUES (1, 1, 'starred', 'pending', 'meecode', 1, 1)")
     conn.commit()
-    calls = patch_github(monkeypatch, starred=False)
+    calls = patch_github(monkeypatch)
     assert star_sync.sync_favorite_on(conn, user, repo) == "unstarred"
     assert calls["star"] == ["other/proj"]      # 点星已发出
     assert calls["unstar"] == ["other/proj"]    # star_repo 后的写回被撤销
     assert sync_row(conn) is None               # 无孤儿行
-
-
-def test_on_retract_unstars_when_star_is_ours(conn, monkeypatch):
-    """is_starred=True 且溯源 meecode（此前 PUT 超时实已点上）时，取消后不得把星留在 GitHub；
-    外部星（无 meecode 溯源）不在此列——见 test_off_external_keeps_star。"""
-    user = make_user(conn)
-    repo = make_repo(conn)
-    conn.execute("INSERT INTO star_syncs (user_id, repo_id, desired, applied, origin, attempts, updated_at)"
-                 " VALUES (1, 1, 'starred', 'pending', 'meecode', 1, 1)")
-    conn.commit()
-    calls = patch_github(monkeypatch, starred=True)
-    assert star_sync.sync_favorite_on(conn, user, repo) == "unstarred"
-    assert calls["unstar"] == ["other/proj"]
-    assert sync_row(conn) is None
 
 
 def test_backfill_only_touches_favorites_without_rows(conn, monkeypatch):
@@ -425,7 +409,7 @@ def test_job_401_clears_token_and_stops_batch(conn, monkeypatch):
 
 
 def test_job_404_stops_single_row(conn, monkeypatch):
-    """404 停单行：attempts 置 MAX 终态化，不无限打。"""
+    """404 停单行：skipped 终态删行，不无限打。"""
     from app.feed import github
     make_user(conn)
     make_repo(conn)
@@ -433,9 +417,8 @@ def test_job_404_stops_single_row(conn, monkeypatch):
     _seed_sync_row(conn)
     patch_github(monkeypatch, star=github.GitHubError("gone", status=404))
     stats = sync_job.sync_pending_once(conn)
-    assert stats == {"picked": 1, "done": 0, "failed": 1, "skipped": 0}
-    row = sync_row(conn)
-    assert (row["applied"], row["attempts"]) == ("pending", config.STAR_SYNC_MAX_ATTEMPTS)
+    assert stats == {"picked": 1, "done": 1, "failed": 0, "skipped": 0}
+    assert sync_row(conn) is None
 
 
 def test_job_failure_counts_failed_without_aborting_batch(conn, monkeypatch):
@@ -456,7 +439,6 @@ def test_job_failure_counts_failed_without_aborting_batch(conn, monkeypatch):
         if full_name == "other/a":
             raise RuntimeError("boom")
 
-    monkeypatch.setattr(star_sync.github, "is_starred", lambda token, full_name, **kw: False)
     monkeypatch.setattr(star_sync.github, "star_repo", star)
     monkeypatch.setattr(star_sync.github, "unstar_repo", lambda token, full_name, **kw: None)
     stats = sync_job.sync_pending_once(conn)
@@ -478,7 +460,6 @@ def test_job_generic_error_exhausts_row_at_max_attempts(conn, monkeypatch):
     def star(token, full_name, **kw):
         raise RuntimeError("boom")
 
-    monkeypatch.setattr(star_sync.github, "is_starred", lambda token, full_name, **kw: False)
     monkeypatch.setattr(star_sync.github, "star_repo", star)
     monkeypatch.setattr(star_sync.github, "unstar_repo", lambda token, full_name, **kw: None)
     stats = sync_job.sync_pending_once(conn)
@@ -539,7 +520,7 @@ def test_on_done_writeback_retracted_when_cancel_lands_midwrite(conn, monkeypatc
     user = make_user(conn)
     repo = make_repo(conn)
     make_fav(conn)
-    calls = patch_github(monkeypatch, starred=False)
+    calls = patch_github(monkeypatch)
     real = star_sync._favorite_still_wanted
     state = {"checks": 0}
 

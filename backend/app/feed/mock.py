@@ -65,11 +65,6 @@ def mock_user(login: str) -> dict:
             "avatar_url": f"https://avatars.githubusercontent.com/{login}"}
 
 
-def mock_is_starred(full_name: str) -> bool:
-    """点星世界模拟为「从未 star 过」：收藏 → 点星成功，确定性可测。"""
-    return False
-
-
 def mock_star_repo(full_name: str) -> None:
     return None
 
