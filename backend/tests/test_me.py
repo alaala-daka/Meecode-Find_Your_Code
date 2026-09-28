@@ -476,3 +476,24 @@ def test_token_plaintext_never_leaks_to_api_or_last_error(conn, client, login, m
     hit(client.get("/api/me"))
     hit(client.get("/api/me/favorites"))
     assert outputs and all(canary not in o for o in outputs)
+
+
+def test_off_gh_sync_false_returns_kept_and_skips_github(conn, client, login, monkeypatch):
+    from app.feed import star_sync
+    calls = {"n": 0}
+    monkeypatch.setattr(star_sync.github, "unstar_repo",
+                        lambda *a, **k: calls.__setitem__("n", calls["n"] + 1))
+    rid = add_repo(conn, 1)
+    resp = client.post("/api/interactions", json={"repo_id": rid, "kind": "favorite", "active": False,
+                                                  "gh_sync": False})
+    assert resp.json() == {"active": False, "sync": "kept"}
+    assert calls["n"] == 0
+    assert conn.execute("SELECT count(*) c FROM star_syncs").fetchone()["c"] == 0
+
+
+def test_off_gh_sync_true_default_queues(conn, client, login):
+    rid = add_repo(conn, 1)
+    body = client.post("/api/interactions",
+                       json={"repo_id": rid, "kind": "favorite", "active": False}).json()
+    assert body == {"active": False, "sync": "need_auth"}
+    assert conn.execute("SELECT count(*) c FROM star_syncs").fetchone()["c"] == 1

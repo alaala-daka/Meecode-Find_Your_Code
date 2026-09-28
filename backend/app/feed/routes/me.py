@@ -154,7 +154,7 @@ def set_interaction(
         return InteractionOut(active=body.active, sync="")
     try:
         sync = (star_sync.sync_favorite_on(conn, user, repo) if body.active
-                else star_sync.sync_favorite_off(conn, user, repo))
+                else star_sync.sync_favorite_off(conn, user, repo, gh_sync=body.gh_sync))
     except Exception:
         # 同步边界兜底（final review Important 3）：本地已提交不回滚（决策 5），
         # 降级 pending 交 cron/授权补同步收敛，绝不因 GitHub/密钥面 500。

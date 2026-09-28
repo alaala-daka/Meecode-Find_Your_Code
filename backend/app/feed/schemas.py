@@ -137,11 +137,13 @@ class InteractionIn(BaseModel):
     repo_id: int
     kind: str    # 仅 like / favorite;visit 由服务端在详情接口写入
     active: bool
+    gh_sync: bool = True   # 仅 favorite-off 有效：False=只删本地，不动 GitHub（弹窗第二选项）
 
 
 class InteractionOut(BaseModel):
-    """互动响应。sync：favorite 为 SyncState（need_auth/synced/pending/kept/unstarred/skipped）；
-    like 无 GitHub 对应物恒空串（Global Constraints）。"""
+    """互动响应。sync：favorite 为 SyncState——need_auth=待授权 / synced=已点星 /
+    pending=待重试 / kept=仅取消本地（星保留）/ unstarred=已撤星 /
+    skipped=仓库消失等不可点星终态（前端 Toast 提醒）；like 恒空串。"""
     active: bool
     sync: Literal["", "need_auth", "synced", "pending", "kept", "unstarred", "skipped"] = ""
 
