@@ -1,4 +1,4 @@
-"""收藏同步 GitHub 星：状态机（spec 2026-09-26）。
+"""收藏同步 GitHub 星：状态机（spec 2026-09-28）。
 
 本地 interactions 是第一真源，GitHub 星是投影：本模块把投影推向 desired 状态。
 不变量（Global Constraints + final review Critical 1 修订）：取消一律收敛撤星
@@ -188,6 +188,7 @@ def replay_row(conn: sqlite3.Connection, row: sqlite3.Row) -> str:
     user = conn.execute("SELECT * FROM users WHERE id = ?", (row["user_id"],)).fetchone()
     repo = conn.execute("SELECT * FROM repos WHERE id = ?", (row["repo_id"],)).fetchone()
     if user is None or repo is None:
+        # 内部收敛义：孤儿行丢弃（dropped），借 kept 计入 job done 桶，不进 API 语义
         _del_row(conn, row["user_id"], row["repo_id"])
         return "kept"
     if row["desired"] == "starred":
