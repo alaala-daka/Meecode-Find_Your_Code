@@ -193,9 +193,10 @@ export default function RepoPage() {
     if (pendingUnfav) {
       try { await api.interact(repoId, 'favorite', false, true) } catch { /* 本地优先，忽略 */ }
       setFaved(false)
+      if (!remedyMode) setDetail((d) => (d && d.favorites_count != null ? { ...d, favorites_count: d.favorites_count - 1 } : d)) // 跳转前回补计数（补救模式已扣过，勿双扣）
     }
     window.location.assign(api.loginUrl())
-  }, [pendingUnfav, repoId])
+  }, [pendingUnfav, remedyMode, repoId])
 
   const onStarLocalOnly = useCallback(() => {
     setStarModalOpen(false)

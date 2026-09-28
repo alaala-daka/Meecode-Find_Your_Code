@@ -276,4 +276,20 @@ describe('RepoPage', () => {
     expect(spy).toHaveBeenNthCalledWith(2, 3, 'favorite', false, false)
     spy.mockRestore()
   })
+
+  it('非补救【授权并同步取消】→ 跳转前 favorites_count 乐观减一', async () => {
+    useAuthStore.setState({ user: FIXTURE_USER })
+    const assign = vi.fn()
+    vi.stubGlobal('location', { assign })
+    renderAt('/repo/3')
+    await screen.findByText('rust-kv')
+    const before = Number(screen.getByRole('button', { name: '收藏' }).textContent)
+    await userEvent.click(screen.getByRole('button', { name: '收藏' }))   // 未授权取消 → 弹窗，本地未动
+    await screen.findByRole('dialog')
+    await userEvent.click(screen.getByRole('button', { name: '授权并同步取消' }))
+    await waitFor(() => expect(assign).toHaveBeenCalled())
+    expect(screen.getByRole('button', { name: '收藏' })).not.toHaveClass('is-on')
+    expect(Number(screen.getByRole('button', { name: '收藏' }).textContent)).toBe(before - 1)  // 卸载前自洽
+    vi.unstubAllGlobals()
+  })
 })
