@@ -112,7 +112,8 @@ def test_interaction_on_and_off_explicit(conn, client, login):
         "SELECT count(*) c FROM interactions WHERE kind='favorite'").fetchone()["c"] == 1
     off = InteractionIn(repo_id=rid, kind="favorite", active=False).model_dump()
     r3 = client.post("/api/interactions", json=off).json()
-    assert r3["active"] is False and r3["sync"] == "kept"
+    assert r3["active"] is False and r3["sync"] == "need_auth"
+    assert conn.execute("SELECT count(*) c FROM star_syncs").fetchone()["c"] == 1
     assert conn.execute(
         "SELECT count(*) c FROM interactions WHERE kind='favorite'").fetchone()["c"] == 0
 

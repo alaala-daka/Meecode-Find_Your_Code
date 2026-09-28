@@ -170,19 +170,20 @@ def sync_favorite_on(conn: sqlite3.Connection, user: sqlite3.Row, repo: sqlite3.
 
 
 def sync_favorite_off(conn: sqlite3.Connection, user: sqlite3.Row, repo: sqlite3.Row, *,
-                      interactive: bool = True) -> str:
-    row = conn.execute("SELECT * FROM star_syncs WHERE user_id = ? AND repo_id = ?",
-                       (user["id"], repo["id"])).fetchone()
-    if row is None or row["origin"] == "external":
+                      gh_sync: bool = True, interactive: bool = True) -> str:
+    """取消收藏：一律收敛撤星（spec 2026-09-28，推翻原决策 4——不护手动星）。
+
+    gh_sync=False = 用户选择仅本地：删同步行（含挂起待撤），零 GitHub 调用。
+    401 不落队列、不动既有行：同意行（决策 8）不得被 401 吞掉。
+    无 token 且 gh_sync=True = 已同意：落 unstarred/pending 等授权后撤。
+    """
+    if not gh_sync:
         _del_row(conn, user["id"], repo["id"])
         return "kept"
-    # final review Critical 1：不得按 applied='pending' 跳过撤星——pending ≠ 星从未点上。
-    # 无 token 翻转 desired、PUT 超时实已点上、job 在途竞态都会让星滞留 GitHub。
-    # origin='meecode' 一律收敛撤星：从未点上的星调 unstar 得 404，下方 404/422 视为完成。
     token = _load_token(conn, user)
     if token is None:
-        _put_row(conn, user["id"], repo["id"], desired="unstarred", applied="pending", origin="meecode",
-                 error="token missing", increment_attempts=True)
+        _put_row(conn, user["id"], repo["id"], desired="unstarred", applied="pending",
+                 origin="meecode", error="token missing", increment_attempts=True)
         return "need_auth"
     try:
         github.unstar_repo(token, repo["full_name"], interactive=interactive)
@@ -190,15 +191,13 @@ def sync_favorite_off(conn: sqlite3.Connection, user: sqlite3.Row, repo: sqlite3
         return "unstarred"
     except github.GitHubError as exc:
         if exc.status == 401:
-            _put_row(conn, user["id"], repo["id"], desired="unstarred", applied="pending", origin="meecode",
-                     error=str(exc), increment_attempts=True)
-            _mark_token_dead(conn, user["id"])  # 后置：'token revoked' 留痕是终态 last_error
+            _mark_token_dead(conn, user["id"])
             return "need_auth"
         if exc.status in (404, 422):
-            _del_row(conn, user["id"], repo["id"])  # 星随仓库消失，视为完成
+            _del_row(conn, user["id"], repo["id"])  # 星本就不存在 = 目标态达成
             return "unstarred"
-        _put_row(conn, user["id"], repo["id"], desired="unstarred", applied="pending", origin="meecode",
-                 error=str(exc), increment_attempts=True)
+        _put_row(conn, user["id"], repo["id"], desired="unstarred", applied="pending",
+                 origin="meecode", error=str(exc), increment_attempts=True)
         return "pending"
 
 
