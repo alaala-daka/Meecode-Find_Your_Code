@@ -61,6 +61,7 @@ export default function RepoPage() {
   const [starModalOpen, setStarModalOpen] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
   const [pendingUnfav, setPendingUnfav] = useState(false) // 弹窗针对的是取消动作
+  const [remedyMode, setRemedyMode] = useState(false) // 弹窗来自 need_auth 补救（本地已乐观扣减）
 
   const showSyncHint = useCallback((text: string, needAuth = false) => {
     setSyncHint(text)
@@ -147,15 +148,17 @@ export default function RepoPage() {
     }
   }
 
-  const runFav = useCallback(async (next: boolean, ghSync: boolean) => {
+  const runFav = useCallback(async (next: boolean, ghSync: boolean, adjustCount = true) => {
     setBusy('fav')
     setActionError(null)
     setFaved(next)
     try {
       const res = await api.interact(repoId, 'favorite', next, ghSync)
-      setDetail((d) => (d && d.favorites_count != null ? { ...d, favorites_count: d.favorites_count + (next ? 1 : -1) } : d))
+      if (adjustCount) {
+        setDetail((d) => (d && d.favorites_count != null ? { ...d, favorites_count: d.favorites_count + (next ? 1 : -1) } : d))
+      }
       if (res.sync === 'need_auth' && !next) {
-        setPendingUnfav(true); setStarModalOpen(true)   // 401 补救模式
+        setPendingUnfav(true); setRemedyMode(true); setStarModalOpen(true)   // 401 补救模式
       } else if (res.sync === 'need_auth') {
         showSyncHint('已收藏 · 授权后自动在 GitHub 点星', true)
       } else if (res.sync === 'pending') {
@@ -178,6 +181,7 @@ export default function RepoPage() {
     const next = !faved
     if (!next && user && !isStarAuthed(user)) {
       setPendingUnfav(true)
+      setRemedyMode(false)
       setStarModalOpen(true)   // 本地不动，星按钮保持点亮
       return
     }
@@ -195,8 +199,8 @@ export default function RepoPage() {
 
   const onStarLocalOnly = useCallback(() => {
     setStarModalOpen(false)
-    if (pendingUnfav) void runFav(false, false)
-  }, [pendingUnfav, runFav])
+    if (pendingUnfav) void runFav(false, false, !remedyMode) // 补救模式已扣过计数，勿双扣
+  }, [pendingUnfav, remedyMode, runFav])
 
   const closeStarModal = useCallback(() => setStarModalOpen(false), [])
   const dismissToast = useCallback(() => setToast(null), [])

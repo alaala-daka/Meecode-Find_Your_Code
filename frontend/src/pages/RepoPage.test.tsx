@@ -240,4 +240,23 @@ describe('RepoPage', () => {
     expect(await screen.findByRole('status')).toHaveTextContent('仓库消失了')
     spy.mockRestore()
   })
+
+  it('补救模式【仅取消本地收藏】→ favorites_count 只扣一次', async () => {
+    useAuthStore.setState({ user: { ...FIXTURE_USER, id: 1, gh_star_authed: true } as CurrentUser })
+    const { api } = await import('../api/client')
+    const spy = vi.spyOn(api, 'interact')
+      .mockResolvedValueOnce({ active: false, sync: 'need_auth' })
+      .mockResolvedValueOnce({ active: false, sync: 'kept' })
+    renderAt('/repo/3')
+    await screen.findByText('rust-kv')
+    const favBtn = screen.getByRole('button', { name: '收藏' })
+    const before = Number(favBtn.textContent)
+    await userEvent.click(favBtn)                 // 已授权撤星 → need_auth → 补救弹窗（已乐观扣过一次）
+    await screen.findByRole('dialog')
+    await userEvent.click(screen.getByRole('button', { name: '仅取消本地收藏' }))
+    expect(await screen.findByText(/已取消收藏，GitHub 星保留/)).toBeInTheDocument()
+    expect(Number(screen.getByRole('button', { name: '收藏' }).textContent)).toBe(before - 1)  // 不得双扣
+    expect(spy).toHaveBeenNthCalledWith(2, 3, 'favorite', false, false)
+    spy.mockRestore()
+  })
 })
