@@ -537,3 +537,29 @@ def test_on_done_writeback_retracted_when_cancel_lands_midwrite(conn, monkeypatc
     assert calls["star"] == ["other/proj"]      # 点星已发出
     assert calls["unstar"] == ["other/proj"]    # 写回被复查撤销
     assert sync_row(conn) is None               # 无孤儿 (starred, done) 行
+
+
+# ---------- 授权回调当场重放（spec 2026-09-28，replay_row）----------
+def test_backfill_replays_pending_unstar(conn, monkeypatch):
+    """【授权并同步取消】落的待撤行在授权回调当场撤星。"""
+    user = make_user(conn)
+    repo = make_repo(conn)
+    conn.execute("INSERT INTO star_syncs (user_id, repo_id, desired, applied, attempts, updated_at)"
+                 " VALUES (1, 1, 'unstarred', 'pending', 1, 1)")
+    conn.commit()
+    calls = patch_github(monkeypatch)
+    star_sync.backfill_user(conn, 1)
+    assert calls["unstar"] == ["other/proj"]
+    assert sync_row(conn) is None
+
+
+def test_replay_row_dels_row_when_user_missing(conn, monkeypatch):
+    conn.execute("PRAGMA foreign_keys=OFF")  # 直接种孤儿行（user_id=9 不存在），FK 需暂关
+    conn.execute("INSERT INTO star_syncs (user_id, repo_id, desired, applied, updated_at)"
+                 " VALUES (9, 1, 'unstarred', 'pending', 1)")
+    conn.commit()
+    calls = patch_github(monkeypatch)
+    row = conn.execute("SELECT * FROM star_syncs").fetchone()
+    assert star_sync.replay_row(conn, row) == "kept"
+    assert conn.execute("SELECT count(*) c FROM star_syncs").fetchone()["c"] == 0
+    assert calls["unstar"] == []

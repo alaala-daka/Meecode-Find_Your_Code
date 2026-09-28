@@ -183,11 +183,26 @@ def sync_favorite_off(conn: sqlite3.Connection, user: sqlite3.Row, repo: sqlite3
         return "pending"
 
 
+def replay_row(conn: sqlite3.Connection, row: sqlite3.Row) -> str:
+    """单行重放（重试 job 与授权回调共用）：按 desired 收敛。"""
+    user = conn.execute("SELECT * FROM users WHERE id = ?", (row["user_id"],)).fetchone()
+    repo = conn.execute("SELECT * FROM repos WHERE id = ?", (row["repo_id"],)).fetchone()
+    if user is None or repo is None:
+        _del_row(conn, row["user_id"], row["repo_id"])
+        return "kept"
+    if row["desired"] == "starred":
+        return sync_favorite_on(conn, user, repo, interactive=False)
+    return sync_favorite_off(conn, user, repo, interactive=False)
+
+
 def backfill_user(conn: sqlite3.Connection, user_id: int) -> None:
-    """对「已收藏但无同步记录」的仓库跑收藏方向同步（授权成功后的补同步）。已有行不动。"""
+    """授权成功后：①补收藏（无同步记录的收藏跑 on）②重放全部 pending 行（当场收敛，含待撤）。"""
     user = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
     if user is None or not user["gh_token_enc"]:
         return
+    pendings = conn.execute(
+        "SELECT * FROM star_syncs WHERE user_id = ? AND applied = 'pending'", (user_id,)
+    ).fetchall()
     favs = conn.execute(
         "SELECT r.* FROM interactions i JOIN repos r ON r.id = i.repo_id"
         " WHERE i.user_id = ? AND i.kind = 'favorite' AND r.status != 'delisted'",
@@ -198,6 +213,8 @@ def backfill_user(conn: sqlite3.Connection, user_id: int) -> None:
                               (user_id, repo["id"])).fetchone()
         if exists is None:
             sync_favorite_on(conn, user, repo, interactive=False)
+    for row in pendings:
+        replay_row(conn, row)
     conn.commit()
 
 
