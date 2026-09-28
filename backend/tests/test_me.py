@@ -317,8 +317,8 @@ def test_disconnect_star_auth_clears_everything(conn, client, login, monkeypatch
     conn.execute("UPDATE users SET gh_token_enc=? WHERE id=?",
                  (security.seal_token("tok", str(login)), login))  # 真实密封密文：open_token 成功才轮到 revoke
     add_repo(conn, 1)
-    conn.execute("INSERT INTO star_syncs (user_id, repo_id, desired, applied, origin, updated_at)"
-                 " VALUES (?, 1, 'starred', 'done', 'meecode', 1)", (login,))
+    conn.execute("INSERT INTO star_syncs (user_id, repo_id, desired, applied, updated_at)"
+                 " VALUES (?, 1, 'starred', 'done', 1)", (login,))
     conn.commit()
     assert client.delete("/api/me/gh-star-auth").json() == {"ok": True}
     assert revoked == ["tok"]                       # revoke 被调用
@@ -340,8 +340,8 @@ def test_disconnect_survives_revoke_exception(conn, client, login, monkeypatch):
     conn.execute("UPDATE users SET gh_token_enc=? WHERE id=?",
                  (security.seal_token("tok", str(login)), login))
     add_repo(conn, 1)
-    conn.execute("INSERT INTO star_syncs (user_id, repo_id, desired, applied, origin, updated_at)"
-                 " VALUES (?, 1, 'starred', 'done', 'meecode', 1)", (login,))
+    conn.execute("INSERT INTO star_syncs (user_id, repo_id, desired, applied, updated_at)"
+                 " VALUES (?, 1, 'starred', 'done', 1)", (login,))
     conn.commit()
     assert client.delete("/api/me/gh-star-auth").json() == {"ok": True}
     row = conn.execute("SELECT * FROM users WHERE id=?", (login,)).fetchone()
@@ -372,7 +372,7 @@ def test_favorite_with_token_syncs_in_mock(conn, client, login):
                      json={"repo_id": rid, "kind": "favorite", "active": True}).json()
     assert on == {"active": True, "sync": "synced"}
     row = conn.execute("SELECT * FROM star_syncs").fetchone()
-    assert (row["desired"], row["applied"], row["origin"]) == ("starred", "done", "meecode")
+    assert (row["desired"], row["applied"]) == ("starred", "done")
     off = client.post("/api/interactions",
                       json={"repo_id": rid, "kind": "favorite", "active": False}).json()
     assert off == {"active": False, "sync": "unstarred"}
@@ -409,8 +409,8 @@ def test_disconnect_key_mismatch_502_keeps_ciphertext_and_rows(conn, client, log
     conn.execute("UPDATE users SET gh_token_enc=?, gh_star_authed_at=? WHERE id=?",
                  (security.seal_token("tok", str(login)), NOW, login))
     add_repo(conn, 1)
-    conn.execute("INSERT INTO star_syncs (user_id, repo_id, desired, applied, origin, updated_at)"
-                 " VALUES (?, 1, 'starred', 'done', 'meecode', 1)", (login,))
+    conn.execute("INSERT INTO star_syncs (user_id, repo_id, desired, applied, updated_at)"
+                 " VALUES (?, 1, 'starred', 'done', 1)", (login,))
     conn.commit()
     monkeypatch.setattr(config, "TOKEN_ENC_KEY", base64.b64encode(b"j" * 32).decode())
     resp = client.delete("/api/me/gh-star-auth")

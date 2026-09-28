@@ -20,8 +20,7 @@ def _now() -> int:
 
 
 def _put_row(conn: sqlite3.Connection, user_id: int, repo_id: int, *,
-             desired: str, applied: str, origin: str,
-             error: str = "", increment_attempts: bool = False, exhausted: bool = False) -> None:
+             desired: str, applied: str, error: str = "", increment_attempts: bool = False, exhausted: bool = False) -> None:
     row = conn.execute(
         "SELECT attempts FROM star_syncs WHERE user_id = ? AND repo_id = ?", (user_id, repo_id)
     ).fetchone()
@@ -29,12 +28,12 @@ def _put_row(conn: sqlite3.Connection, user_id: int, repo_id: int, *,
     if exhausted:
         attempts = config.STAR_SYNC_MAX_ATTEMPTS
     conn.execute(
-        "INSERT INTO star_syncs (user_id, repo_id, desired, applied, origin, attempts, last_error, updated_at)"
-        " VALUES (?,?,?,?,?,?,?,?)"
+        "INSERT INTO star_syncs (user_id, repo_id, desired, applied, attempts, last_error, updated_at)"
+        " VALUES (?,?,?,?,?,?,?)"
         " ON CONFLICT(user_id, repo_id) DO UPDATE SET"
-        "  desired = excluded.desired, applied = excluded.applied, origin = excluded.origin,"
+        "  desired = excluded.desired, applied = excluded.applied,"
         "  attempts = excluded.attempts, last_error = excluded.last_error, updated_at = excluded.updated_at",
-        (user_id, repo_id, desired, applied, origin, attempts, error, _now()),
+        (user_id, repo_id, desired, applied, attempts, error, _now()),
     )
     conn.commit()
 
@@ -47,7 +46,7 @@ def _del_row(conn: sqlite3.Connection, user_id: int, repo_id: int) -> None:
 def _flip_desired_starred(conn: sqlite3.Connection, user_id: int, repo_id: int) -> None:
     """收藏开启早期退出（无 token / 401）时翻转既有行 desired='starred'。
 
-    用户重收藏的意图先落库，applied/origin/attempts/last_error 不动、updated_at 刷新；
+    用户重收藏的意图先落库，applied/attempts/last_error 不动、updated_at 刷新；
     无行不建（授权补同步统一处理）。缺此翻转则重授权后 job 会按陈旧 desired='unstarred'
     撤掉用户已重新收藏的星。
     """
@@ -111,7 +110,7 @@ def _retract_star(conn: sqlite3.Connection, user: sqlite3.Row, repo: sqlite3.Row
             github.unstar_repo(token, repo["full_name"], interactive=interactive)
         except Exception as exc:
             _put_row(conn, user["id"], repo["id"], desired="unstarred", applied="pending",
-                     origin="meecode", error=f"撤销点星失败:{exc}", increment_attempts=True)
+                     error=f"撤销点星失败:{exc}", increment_attempts=True)
             return "pending"
     row = conn.execute("SELECT desired FROM star_syncs WHERE user_id = ? AND repo_id = ?",
                        (user["id"], repo["id"])).fetchone()
@@ -141,11 +140,11 @@ def sync_favorite_on(conn: sqlite3.Connection, user: sqlite3.Row, repo: sqlite3.
         if not _favorite_still_wanted(conn, user["id"], repo["id"]):
             return _retract_star(conn, user, repo, token, interactive=interactive)
         _put_row(conn, user["id"], repo["id"], desired="starred", applied="pending",
-                 origin="meecode", error=str(exc), increment_attempts=True)
+                 error=str(exc), increment_attempts=True)
         return "pending"
     if not _favorite_still_wanted(conn, user["id"], repo["id"]):
         return _retract_star(conn, user, repo, token, interactive=interactive)
-    _put_row(conn, user["id"], repo["id"], desired="starred", applied="done", origin="meecode")
+    _put_row(conn, user["id"], repo["id"], desired="starred", applied="done")
     # 写回后复查（A6）：取消落在检查与写回夹缝时就地撤销，孤儿行不得存活。
     if not _favorite_still_wanted(conn, user["id"], repo["id"]):
         return _retract_star(conn, user, repo, token, interactive=interactive)
@@ -166,7 +165,7 @@ def sync_favorite_off(conn: sqlite3.Connection, user: sqlite3.Row, repo: sqlite3
     token = _load_token(conn, user)
     if token is None:
         _put_row(conn, user["id"], repo["id"], desired="unstarred", applied="pending",
-                 origin="meecode", error="token missing", increment_attempts=True)
+                 error="token missing", increment_attempts=True)
         return "need_auth"
     try:
         github.unstar_repo(token, repo["full_name"], interactive=interactive)
@@ -180,7 +179,7 @@ def sync_favorite_off(conn: sqlite3.Connection, user: sqlite3.Row, repo: sqlite3
             _del_row(conn, user["id"], repo["id"])  # 星本就不存在 = 目标态达成
             return "unstarred"
         _put_row(conn, user["id"], repo["id"], desired="unstarred", applied="pending",
-                 origin="meecode", error=str(exc), increment_attempts=True)
+                 error=str(exc), increment_attempts=True)
         return "pending"
 
 

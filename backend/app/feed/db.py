@@ -71,7 +71,6 @@ CREATE TABLE IF NOT EXISTS star_syncs (
     repo_id    INTEGER NOT NULL REFERENCES repos(id),
     desired    TEXT    NOT NULL CHECK (desired IN ('starred','unstarred')),
     applied    TEXT    NOT NULL CHECK (applied IN ('pending','done')),
-    origin     TEXT    NOT NULL CHECK (origin IN ('meecode','external')),
     attempts   INTEGER NOT NULL DEFAULT 0,
     last_error TEXT    NOT NULL DEFAULT '',
     updated_at INTEGER NOT NULL,
@@ -149,4 +148,23 @@ def init_db(conn: sqlite3.Connection) -> None:
         # 一次性重审：旧 prompt 误杀的存量 hidden 行转回 pending，由 cron/预审用新口径重判
         # （作者手动隐藏的行也会重审——测试期样本，重判合规恢复可见，需再藏作者重操作）
         conn.execute("UPDATE comments SET status = 'pending', screened = 0 WHERE status = 'hidden'")
+    scols = {r["name"] for r in conn.execute("PRAGMA table_info(star_syncs)")}
+    if "origin" in scols:
+        conn.executescript("""
+            CREATE TABLE star_syncs_new (
+                user_id    INTEGER NOT NULL REFERENCES users(id),
+                repo_id    INTEGER NOT NULL REFERENCES repos(id),
+                desired    TEXT    NOT NULL CHECK (desired IN ('starred','unstarred')),
+                applied    TEXT    NOT NULL CHECK (applied IN ('pending','done')),
+                attempts   INTEGER NOT NULL DEFAULT 0,
+                last_error TEXT    NOT NULL DEFAULT '',
+                updated_at INTEGER NOT NULL,
+                UNIQUE (user_id, repo_id)
+            );
+            INSERT INTO star_syncs_new (user_id, repo_id, desired, applied, attempts, last_error, updated_at)
+                SELECT user_id, repo_id, desired, applied, attempts, last_error, updated_at FROM star_syncs;
+            DROP TABLE star_syncs;
+            ALTER TABLE star_syncs_new RENAME TO star_syncs;
+            CREATE INDEX IF NOT EXISTS idx_star_syncs_pending ON star_syncs (applied, updated_at);
+        """)
     conn.commit()
