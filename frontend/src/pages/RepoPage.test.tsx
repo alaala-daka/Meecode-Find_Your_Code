@@ -4,12 +4,14 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes, useSearchParams } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { FIXTURE_USER } from '../api/fixtures'
+import type { CurrentUser } from '../api/types'
 import { useAuthStore } from '../store/authStore'
 import RepoPage from './RepoPage'
 
 function ParamProbe() {
   const [p] = useSearchParams()
-  return <output data-testid="params">{p.toString()}</output>
+  // 用 span：output 有隐式 role="status"，会与 Toast/提示条的 status 查询相撞
+  return <span data-testid="params">{p.toString()}</span>
 }
 
 function renderAt(url: string) {
@@ -23,7 +25,14 @@ function renderAt(url: string) {
 }
 
 describe('RepoPage', () => {
-  beforeEach(() => useAuthStore.setState({ user: null }))
+  beforeEach(async () => {
+    useAuthStore.setState({ user: null })
+    // mock client 是模块单例，收藏态跨用例串味：归位 fixture 预置（repo3 已收藏、repo5 未收藏）
+    const { api } = await import('../api/client')
+    const [r3, r5] = await Promise.all([api.repo(3), api.repo(5)])
+    if (!r3.favorited) await api.interact(3, 'favorite', true, false)
+    if (r5.favorited) await api.interact(5, 'favorite', false, false)
+  })
 
   it('信息头：仓库名、卖点、元信息与去 GitHub', async () => {
     renderAt('/repo/1')
@@ -167,17 +176,6 @@ describe('RepoPage', () => {
     expect(link).toHaveAttribute('aria-label', expect.stringContaining('将获得 public_repo 权限，仅用于在 GitHub 上为你点星/取消星'))
   })
 
-  it('取消收藏：提示 GitHub 上的星未改动', async () => {
-    useAuthStore.setState({ user: FIXTURE_USER })
-    const { api } = await import('../api/client')
-    const spy = vi.spyOn(api, 'interact').mockResolvedValueOnce({ active: false, sync: 'kept' })
-    renderAt('/repo/3')
-    await screen.findByText('rust-kv')
-    await userEvent.click(screen.getByRole('button', { name: '收藏' }))
-    expect(await screen.findByText(/已取消收藏，GitHub 上的星未改动/)).toBeInTheDocument()
-    spy.mockRestore()
-  })
-
   it('收藏 pending：提示稍后自动重试文案', async () => {
     useAuthStore.setState({ user: FIXTURE_USER })
     const { api } = await import('../api/client')
@@ -186,6 +184,60 @@ describe('RepoPage', () => {
     await screen.findByText('csv-crunch')
     await userEvent.click(screen.getByRole('button', { name: '收藏' }))
     expect(await screen.findByText(/稍后自动重试/)).toBeInTheDocument()
+    spy.mockRestore()
+  })
+
+  it('未授权点取消 → 弹窗出现且本地收藏未动', async () => {
+    useAuthStore.setState({ user: FIXTURE_USER })
+    renderAt('/repo/3')                      // fixture repo3 预置已收藏
+    await screen.findByText('rust-kv')
+    await userEvent.click(screen.getByRole('button', { name: '收藏' }))
+    expect(await screen.findByRole('dialog')).toHaveTextContent('取消收藏将同步取消 GitHub 星')
+    expect(screen.getByRole('button', { name: '收藏' })).toHaveClass('is-on')  // 本地未动
+  })
+
+  it('弹窗【仅取消本地收藏】→ ghSync:false，提示星保留', async () => {
+    useAuthStore.setState({ user: FIXTURE_USER })
+    renderAt('/repo/3')
+    await screen.findByText('rust-kv')
+    await userEvent.click(screen.getByRole('button', { name: '收藏' }))
+    await userEvent.click(await screen.findByRole('button', { name: '仅取消本地收藏' }))
+    expect(await screen.findByText(/已取消收藏，GitHub 星保留/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '收藏' })).not.toHaveClass('is-on')
+  })
+
+  it('弹窗关闭 → 收藏原样不动', async () => {
+    useAuthStore.setState({ user: FIXTURE_USER })
+    renderAt('/repo/3')
+    await screen.findByText('rust-kv')
+    await userEvent.click(screen.getByRole('button', { name: '收藏' }))
+    await userEvent.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(screen.getByRole('button', { name: '收藏' })).toHaveClass('is-on')
+  })
+
+  it('已授权取消收藏 → 直接撤星，unstarred 静默', async () => {
+    const { api } = await import('../api/client')
+    const spy = vi.spyOn(api, 'interact').mockResolvedValue({ active: false, sync: 'unstarred' })
+    useAuthStore.setState({ user: { ...FIXTURE_USER, id: 1, gh_star_authed: true } as CurrentUser })
+    renderAt('/repo/3')
+    await screen.findByText('rust-kv')
+    await userEvent.click(screen.getByRole('button', { name: '收藏' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: '收藏' })).not.toHaveClass('is-on'))
+    expect(spy).toHaveBeenCalledWith(3, 'favorite', false, true)
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    spy.mockRestore()
+  })
+
+  it('收藏方向 skipped → Toast 仓库消失', async () => {
+    const { api } = await import('../api/client')
+    const spy = vi.spyOn(api, 'interact').mockResolvedValue({ active: true, sync: 'skipped' })
+    useAuthStore.setState({ user: FIXTURE_USER })
+    renderAt('/repo/5')
+    await screen.findByText('dot-snap')
+    await userEvent.click(screen.getByRole('button', { name: '收藏' }))
+    expect(await screen.findByRole('status')).toHaveTextContent('仓库消失了')
     spy.mockRestore()
   })
 })
