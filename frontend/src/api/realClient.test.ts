@@ -50,6 +50,14 @@ describe('realClient', () => {
       expect.objectContaining({ method: 'POST', body: JSON.stringify({ repo_id: 5, kind: 'like', active: true, gh_sync: true }) }))
   })
 
+  it('interact ghSync:false 显式下发 gh_sync:false（仅取消本地）', async () => {
+    const f = stubFetch({ active: false })
+    vi.stubGlobal('fetch', f)
+    await createRealClient().interact(5, 'favorite', false, false)
+    expect(f).toHaveBeenCalledWith('/api/interactions',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({ repo_id: 5, kind: 'favorite', active: false, gh_sync: false }) }))
+  })
+
   it('me 未登录透传 JSON null', async () => {
     const f = stubFetch(null)
     vi.stubGlobal('fetch', f)

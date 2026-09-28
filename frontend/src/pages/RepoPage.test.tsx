@@ -187,6 +187,17 @@ describe('RepoPage', () => {
     spy.mockRestore()
   })
 
+  it('撤星 pending：提示撤星稍后自动重试文案', async () => {
+    const { api } = await import('../api/client')
+    const spy = vi.spyOn(api, 'interact').mockResolvedValueOnce({ active: false, sync: 'pending' })
+    useAuthStore.setState({ user: { ...FIXTURE_USER, id: 1, gh_star_authed: true } as CurrentUser })
+    renderAt('/repo/3')                      // fixture repo3 预置已收藏
+    await screen.findByText('rust-kv')
+    await userEvent.click(screen.getByRole('button', { name: '收藏' }))
+    expect(await screen.findByText(/GitHub 撤星稍后自动重试/)).toBeInTheDocument()
+    spy.mockRestore()
+  })
+
   it('未授权点取消 → 弹窗出现且本地收藏未动', async () => {
     useAuthStore.setState({ user: FIXTURE_USER })
     renderAt('/repo/3')                      // fixture repo3 预置已收藏

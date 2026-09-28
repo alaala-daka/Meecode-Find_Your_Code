@@ -218,9 +218,24 @@ def test_off_unstar_404_is_done(conn, monkeypatch):
     conn.execute("INSERT INTO star_syncs (user_id, repo_id, desired, applied, updated_at)"
                  " VALUES (1, 1, 'starred', 'done', 1)")
     conn.commit()
-    patch_github(monkeypatch, unstar=github.GitHubError("gone", status=404))
+    calls = patch_github(monkeypatch, unstar=github.GitHubError("gone", status=404))
     assert star_sync.sync_favorite_off(conn, user, repo) == "unstarred"
     assert sync_row(conn) is None
+    assert calls["unstar"] == ["other/proj"]  # 一律撤星：404 也须先发出撤销
+
+
+def test_off_unstar_422_is_done(conn, monkeypatch):
+    """取消方向 422（不可撤销）与 404 同义：目标态达成，行删、unstar 已发出。"""
+    from app.feed import github
+    user = make_user(conn)
+    repo = make_repo(conn)
+    conn.execute("INSERT INTO star_syncs (user_id, repo_id, desired, applied, updated_at)"
+                 " VALUES (1, 1, 'starred', 'done', 1)")
+    conn.commit()
+    calls = patch_github(monkeypatch, unstar=github.GitHubError("nope", status=422))
+    assert star_sync.sync_favorite_off(conn, user, repo) == "unstarred"
+    assert sync_row(conn) is None
+    assert calls["unstar"] == ["other/proj"]
 
 
 def test_off_unstar_failure_queues_pending(conn, monkeypatch):
