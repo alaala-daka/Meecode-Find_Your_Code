@@ -334,6 +334,49 @@ def test_backfill_only_touches_favorites_without_rows(conn, monkeypatch):
     assert sync_row(conn, rid=2)["applied"] == "done"
 
 
+def test_backfill_pending_loop_survives_single_row_exception(conn, monkeypatch):
+    """单行异常不中断整轮：首尾行照常收敛，中断行留待 cron 重试。"""
+    make_user(conn)
+    for rid in (1, 2, 3):
+        make_repo(conn, rid=rid, gid=5000 + rid, full_name=f"other/{rid}")
+        conn.execute("INSERT INTO star_syncs (user_id, repo_id, desired, applied, attempts, updated_at)"
+                     " VALUES (1, ?, 'unstarred', 'pending', 1, 1)", (rid,))
+    conn.commit()
+    calls = patch_github(monkeypatch)
+    real_replay = star_sync.replay_row
+
+    def flaky(conn, row):
+        if row["repo_id"] == 2:
+            raise RuntimeError("boom")
+        return real_replay(conn, row)
+
+    monkeypatch.setattr(star_sync, "replay_row", flaky)
+    star_sync.backfill_user(conn, 1)  # 不得抛出
+    assert calls["unstar"] == ["other/1", "other/3"]
+    assert sync_row(conn, rid=2) is not None
+
+
+def test_backfill_fav_loop_survives_single_row_exception(conn, monkeypatch):
+    """补收藏循环同样单行容错，后续收藏照常补同步。"""
+    make_user(conn)
+    for rid in (1, 2, 3):
+        make_repo(conn, rid=rid, gid=5000 + rid, full_name=f"other/{rid}")
+        conn.execute("INSERT INTO interactions (user_id, repo_id, kind, updated_at)"
+                     " VALUES (1, ?, 'favorite', 1)", (rid,))
+    conn.commit()
+    calls = patch_github(monkeypatch)
+    real_on = star_sync.sync_favorite_on
+
+    def flaky(conn, user, repo, *, interactive=True):
+        if repo["id"] == 2:
+            raise RuntimeError("boom")
+        return real_on(conn, user, repo, interactive=interactive)
+
+    monkeypatch.setattr(star_sync, "sync_favorite_on", flaky)
+    star_sync.backfill_user(conn, 1)  # 不得抛出
+    assert calls["star"] == ["other/1", "other/3"]
+
+
 # ---------- 重试 job（spec 2026-09-26 §4.4） ----------
 def _seed_sync_row(conn, *, rid=1, desired="starred", applied="pending", attempts=1):
     conn.execute("INSERT INTO star_syncs (user_id, repo_id, desired, applied, attempts, updated_at)"

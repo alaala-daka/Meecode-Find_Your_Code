@@ -150,7 +150,10 @@ def init_db(conn: sqlite3.Connection) -> None:
         conn.execute("UPDATE comments SET status = 'pending', screened = 0 WHERE status = 'hidden'")
     scols = {r["name"] for r in conn.execute("PRAGMA table_info(star_syncs)")}
     if "origin" in scols:
+        # DROP IF EXISTS：上次迁移中途失败残留的半成品表须先清，否则二次 init 在
+        # CREATE 处报 table already exists 卡死启动（fail-loud 变 fail-stuck）。
         conn.executescript("""
+            DROP TABLE IF EXISTS star_syncs_new;
             CREATE TABLE star_syncs_new (
                 user_id    INTEGER NOT NULL REFERENCES users(id),
                 repo_id    INTEGER NOT NULL REFERENCES repos(id),

@@ -8,11 +8,14 @@
 """
 from __future__ import annotations
 
+import logging
 import sqlite3
 import time
 
 from .. import config, security
 from . import db, github
+
+log = logging.getLogger(__name__)
 
 
 def _now() -> int:
@@ -197,25 +200,55 @@ def replay_row(conn: sqlite3.Connection, row: sqlite3.Row) -> str:
 
 
 def backfill_user(conn: sqlite3.Connection, user_id: int) -> None:
-    """授权成功后：①补收藏（无同步记录的收藏跑 on）②重放全部 pending 行（当场收敛，含待撤）。"""
+    """授权成功后：①补收藏（无同步记录的收藏跑 on）②重放全部 pending 行（当场收敛，含待撤）。
+
+    单行异常不中断整轮（job/crawl 同款）；LIMIT 200 分批拾取防海量积压一次性拉全表。
+    pending 批次以开轮时的 MAX(rowid) 为界：favs 循环新落的 pending 行不回头重放
+    （快照语义，防同一轮双烧 attempts），交 cron 重试收敛。
+    """
     user = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
     if user is None or not user["gh_token_enc"]:
         return
-    pendings = conn.execute(
-        "SELECT * FROM star_syncs WHERE user_id = ? AND applied = 'pending'", (user_id,)
-    ).fetchall()
-    favs = conn.execute(
-        "SELECT r.* FROM interactions i JOIN repos r ON r.id = i.repo_id"
-        " WHERE i.user_id = ? AND i.kind = 'favorite' AND r.status != 'delisted'",
+    max_rid = conn.execute(
+        "SELECT COALESCE(MAX(rowid), 0) m FROM star_syncs WHERE user_id = ? AND applied = 'pending'",
         (user_id,),
-    ).fetchall()
-    for repo in favs:
-        exists = conn.execute("SELECT 1 FROM star_syncs WHERE user_id = ? AND repo_id = ?",
-                              (user_id, repo["id"])).fetchone()
-        if exists is None:
-            sync_favorite_on(conn, user, repo, interactive=False)
-    for row in pendings:
-        replay_row(conn, row)
+    ).fetchone()["m"]
+    cursor = 0
+    while True:
+        repos = conn.execute(
+            "SELECT r.* FROM interactions i JOIN repos r ON r.id = i.repo_id"
+            " WHERE i.user_id = ? AND i.kind = 'favorite' AND r.status != 'delisted' AND r.id > ?"
+            " ORDER BY r.id LIMIT 200",
+            (user_id, cursor),
+        ).fetchall()
+        if not repos:
+            break
+        for repo in repos:
+            cursor = repo["id"]
+            try:
+                exists = conn.execute("SELECT 1 FROM star_syncs WHERE user_id = ? AND repo_id = ?",
+                                      (user_id, repo["id"])).fetchone()
+                if exists is None:
+                    sync_favorite_on(conn, user, repo, interactive=False)
+            except Exception as exc:  # 单行失败不中断整轮
+                log.warning("[star-sync] backfill 补收藏异常 user=%s repo=%s: %s",
+                            user_id, repo["id"], exc)
+    cursor = 0
+    while True:
+        rows = conn.execute(
+            "SELECT rowid AS rid, * FROM star_syncs WHERE user_id = ? AND applied = 'pending'"
+            " AND rowid > ? AND rowid <= ? ORDER BY rid LIMIT 200",
+            (user_id, cursor, max_rid),
+        ).fetchall()
+        if not rows:
+            break
+        for row in rows:
+            cursor = row["rid"]
+            try:
+                replay_row(conn, row)
+            except Exception as exc:  # 单行失败不中断整轮（job 同款）
+                log.warning("[star-sync] backfill 重放异常 user=%s repo=%s: %s",
+                            user_id, row["repo_id"], exc)
     conn.commit()
 
 

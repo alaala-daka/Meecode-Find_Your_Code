@@ -173,3 +173,31 @@ def test_star_sync_origin_column_migration_rebuilds_table():
     feed_db.init_db(c)  # 幂等
     assert c.execute("SELECT count(*) c FROM star_syncs").fetchone()["c"] == 1
     c.close()
+
+
+def test_star_sync_migration_recovers_from_leftover_star_syncs_new():
+    """迁移中途失败残留 star_syncs_new → 二次 init 自愈重建，数据无损。"""
+    from app.feed import db as feed_db
+    c = sqlite3.connect(":memory:")
+    c.row_factory = sqlite3.Row
+    c.executescript("""
+        CREATE TABLE star_syncs (
+            user_id INTEGER NOT NULL, repo_id INTEGER NOT NULL,
+            desired TEXT NOT NULL CHECK (desired IN ('starred','unstarred')),
+            applied TEXT NOT NULL CHECK (applied IN ('pending','done')),
+            origin TEXT NOT NULL CHECK (origin IN ('meecode','external')),
+            attempts INTEGER NOT NULL DEFAULT 0,
+            last_error TEXT NOT NULL DEFAULT '', updated_at INTEGER NOT NULL,
+            UNIQUE (user_id, repo_id));
+        INSERT INTO star_syncs (user_id, repo_id, desired, applied, origin, attempts, last_error, updated_at)
+            VALUES (1, 1, 'unstarred', 'pending', 'meecode', 1, 'boom', 1);
+        CREATE TABLE star_syncs_new (user_id INTEGER NOT NULL, junk TEXT NOT NULL DEFAULT '');
+    """)
+    feed_db.init_db(c)  # 残留半成品表不得报 table already exists
+    cols = {r["name"] for r in c.execute("PRAGMA table_info(star_syncs)")}
+    assert "origin" not in cols
+    row = c.execute("SELECT * FROM star_syncs").fetchone()
+    assert (row["desired"], row["applied"], row["last_error"]) == ("unstarred", "pending", "boom")
+    assert not c.execute("SELECT 1 FROM sqlite_master WHERE name='star_syncs_new'").fetchone()
+    feed_db.init_db(c)  # 幂等
+    c.close()
