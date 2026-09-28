@@ -169,10 +169,13 @@ describe('RepoPage', () => {
 
   it('取消收藏：提示 GitHub 上的星未改动', async () => {
     useAuthStore.setState({ user: FIXTURE_USER })
+    const { api } = await import('../api/client')
+    const spy = vi.spyOn(api, 'interact').mockResolvedValueOnce({ active: false, sync: 'kept' })
     renderAt('/repo/3')
     await screen.findByText('rust-kv')
     await userEvent.click(screen.getByRole('button', { name: '收藏' }))
     expect(await screen.findByText(/已取消收藏，GitHub 上的星未改动/)).toBeInTheDocument()
+    spy.mockRestore()
   })
 
   it('收藏 pending：提示稍后自动重试文案', async () => {

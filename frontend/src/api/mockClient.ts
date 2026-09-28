@@ -163,14 +163,15 @@ export function createMockClient(): ApiClient {
     async setBio(bio) {
       state.bio = bio
     },
-    async interact(repoId, kind: InteractKind, on): Promise<InteractResult> {
+    async interact(repoId, kind: InteractKind, on, ghSync = true): Promise<InteractResult> {
       const set = kind === 'like' ? state.likes : state.favorites
       if (on) set.add(repoId); else set.delete(repoId)
       const card = state.repos.find((r) => r.id === repoId)
       if (card && kind === 'like') card.likes += on ? 1 : -1
       if (card && kind === 'favorite' && card.favorites_count !== undefined) card.favorites_count += on ? 1 : -1
-      // mock 无 token 世界（spec §4.6）：收藏开 = need_auth、收藏关 = kept；like 无同步语义
-      return { active: on, sync: kind === 'favorite' ? (on ? 'need_auth' : 'kept') : '' }
+      // mock 无 token 世界（spec §4.4）：favorite on/off(ghSync) = need_auth；off(仅本地) = kept
+      const sync = kind === 'favorite' ? (on ? 'need_auth' : (ghSync ? 'need_auth' : 'kept')) : ''
+      return { active: on, sync }
     },
     async comments(repoId): Promise<CommentPage> {
       const all = state.comments.filter((c) => c.repo_id === repoId && c.status !== 'deleted')

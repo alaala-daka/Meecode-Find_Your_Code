@@ -47,7 +47,7 @@ describe('realClient', () => {
     vi.stubGlobal('fetch', f)
     await createRealClient().interact(5, 'like', true)
     expect(f).toHaveBeenCalledWith('/api/interactions',
-      expect.objectContaining({ method: 'POST', body: JSON.stringify({ repo_id: 5, kind: 'like', active: true }) }))
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({ repo_id: 5, kind: 'like', active: true, gh_sync: true }) }))
   })
 
   it('me 未登录透传 JSON null', async () => {

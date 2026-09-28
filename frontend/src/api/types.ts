@@ -4,6 +4,7 @@ export type SortKey = 'default' | 'newest' | 'stars'
 export type InteractKind = 'like' | 'favorite'
 
 export type SyncState = 'need_auth' | 'synced' | 'pending' | 'kept' | 'unstarred' | 'skipped'
+// kept=用户选择仅取消本地（星保留）；skipped=仓库消失等不可点星终态（Toast 提醒）
 
 export interface InteractResult {
   active: boolean
@@ -136,7 +137,7 @@ export interface ApiClient {
   userFavorites(login: string): Promise<RepoCardData[]>
   userHistory(login: string): Promise<RepoCardData[]>
   setBio(bio: string): Promise<void>
-  interact(repoId: number, kind: InteractKind, on: boolean): Promise<InteractResult>
+  interact(repoId: number, kind: InteractKind, on: boolean, ghSync?: boolean): Promise<InteractResult>
   ghStarDisconnect(): Promise<void>
   comments(repoId: number, limit?: number, offset?: number): Promise<CommentPage>
   postComment(repoId: number, content: string, parentId?: number | null): Promise<Comment>

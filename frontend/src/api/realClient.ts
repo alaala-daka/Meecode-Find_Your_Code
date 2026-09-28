@@ -76,8 +76,10 @@ export function createRealClient(): ApiClient {
     async setBio(bio) {
       await http('/api/me/bio', jsonInit('PUT', { bio }))
     },
-    async interact(repoId, kind: InteractKind, on): Promise<InteractResult> {
-      return http<InteractResult>('/api/interactions', jsonInit('POST', { repo_id: repoId, kind, active: on }))
+    async interact(repoId, kind: InteractKind, on, ghSync = true): Promise<InteractResult> {
+      return http<InteractResult>('/api/interactions', jsonInit('POST', {
+        repo_id: repoId, kind, active: on, gh_sync: ghSync,
+      }))
     },
     async ghStarDisconnect() {
       await http('/api/me/gh-star-auth', { method: 'DELETE' })
