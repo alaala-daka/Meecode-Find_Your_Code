@@ -116,10 +116,10 @@ describe('mockClient', () => {
     expect(found === undefined || found.status === 'hidden').toBe(true)
   })
 
-  it('favorite interact 返回 sync 语义：on=need_auth / off=kept（mock 无 token 世界）', async () => {
+  it('favorite interact 返回 sync 语义：on=need_auth / off 仅本地=kept（mock 无 token 世界）', async () => {
     const api = createMockClient()
     expect(await api.interact(1, 'favorite', true)).toEqual({ active: true, sync: 'need_auth' })
-    expect(await api.interact(1, 'favorite', false)).toEqual({ active: false, sync: 'kept' })
+    expect(await api.interact(1, 'favorite', false, false)).toEqual({ active: false, sync: 'kept' })
   })
 
   it('like 的 sync 恒空串；me 自带 gh_star_authed=false', async () => {
@@ -130,5 +130,12 @@ describe('mockClient', () => {
 
   it('ghStarDisconnect 空实现可调用', async () => {
     await createMockClient().ghStarDisconnect() // 不抛即通过
+  })
+
+  it('favorite off：ghSync=false → kept（仅本地），ghSync=true → need_auth（mock 无 token）', async () => {
+    const api = createMockClient()
+    expect(await api.interact(1, 'favorite', false, false)).toEqual({ active: false, sync: 'kept' })
+    expect(await api.interact(1, 'favorite', false, true)).toEqual({ active: false, sync: 'need_auth' })
+    expect(await api.interact(1, 'favorite', false)).toEqual({ active: false, sync: 'need_auth' })
   })
 })

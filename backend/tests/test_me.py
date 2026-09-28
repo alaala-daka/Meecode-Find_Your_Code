@@ -112,7 +112,8 @@ def test_interaction_on_and_off_explicit(conn, client, login):
         "SELECT count(*) c FROM interactions WHERE kind='favorite'").fetchone()["c"] == 1
     off = InteractionIn(repo_id=rid, kind="favorite", active=False).model_dump()
     r3 = client.post("/api/interactions", json=off).json()
-    assert r3["active"] is False and r3["sync"] == "kept"
+    assert r3["active"] is False and r3["sync"] == "need_auth"
+    assert conn.execute("SELECT count(*) c FROM star_syncs").fetchone()["c"] == 1
     assert conn.execute(
         "SELECT count(*) c FROM interactions WHERE kind='favorite'").fetchone()["c"] == 0
 
@@ -316,8 +317,8 @@ def test_disconnect_star_auth_clears_everything(conn, client, login, monkeypatch
     conn.execute("UPDATE users SET gh_token_enc=? WHERE id=?",
                  (security.seal_token("tok", str(login)), login))  # 真实密封密文：open_token 成功才轮到 revoke
     add_repo(conn, 1)
-    conn.execute("INSERT INTO star_syncs (user_id, repo_id, desired, applied, origin, updated_at)"
-                 " VALUES (?, 1, 'starred', 'done', 'meecode', 1)", (login,))
+    conn.execute("INSERT INTO star_syncs (user_id, repo_id, desired, applied, updated_at)"
+                 " VALUES (?, 1, 'starred', 'done', 1)", (login,))
     conn.commit()
     assert client.delete("/api/me/gh-star-auth").json() == {"ok": True}
     assert revoked == ["tok"]                       # revoke 被调用
@@ -339,8 +340,8 @@ def test_disconnect_survives_revoke_exception(conn, client, login, monkeypatch):
     conn.execute("UPDATE users SET gh_token_enc=? WHERE id=?",
                  (security.seal_token("tok", str(login)), login))
     add_repo(conn, 1)
-    conn.execute("INSERT INTO star_syncs (user_id, repo_id, desired, applied, origin, updated_at)"
-                 " VALUES (?, 1, 'starred', 'done', 'meecode', 1)", (login,))
+    conn.execute("INSERT INTO star_syncs (user_id, repo_id, desired, applied, updated_at)"
+                 " VALUES (?, 1, 'starred', 'done', 1)", (login,))
     conn.commit()
     assert client.delete("/api/me/gh-star-auth").json() == {"ok": True}
     row = conn.execute("SELECT * FROM users WHERE id=?", (login,)).fetchone()
@@ -366,12 +367,12 @@ def test_favorite_with_token_syncs_in_mock(conn, client, login):
     conn.execute("UPDATE users SET gh_token_enc=? WHERE id=?",
                  (security.seal_token("tok", str(login)), login))
     conn.commit()
-    rid = add_repo(conn, 1, owner="other")  # owner 不能是登录用户 demo：自己的仓库点不了星，状态机回 skipped
+    rid = add_repo(conn, 1, owner="other")  # 跨用户场景；own-repo 已无特判，走常规 PUT
     on = client.post("/api/interactions",
                      json={"repo_id": rid, "kind": "favorite", "active": True}).json()
     assert on == {"active": True, "sync": "synced"}
     row = conn.execute("SELECT * FROM star_syncs").fetchone()
-    assert (row["desired"], row["applied"], row["origin"]) == ("starred", "done", "meecode")
+    assert (row["desired"], row["applied"]) == ("starred", "done")
     off = client.post("/api/interactions",
                       json={"repo_id": rid, "kind": "favorite", "active": False}).json()
     assert off == {"active": False, "sync": "unstarred"}
@@ -408,8 +409,8 @@ def test_disconnect_key_mismatch_502_keeps_ciphertext_and_rows(conn, client, log
     conn.execute("UPDATE users SET gh_token_enc=?, gh_star_authed_at=? WHERE id=?",
                  (security.seal_token("tok", str(login)), NOW, login))
     add_repo(conn, 1)
-    conn.execute("INSERT INTO star_syncs (user_id, repo_id, desired, applied, origin, updated_at)"
-                 " VALUES (?, 1, 'starred', 'done', 'meecode', 1)", (login,))
+    conn.execute("INSERT INTO star_syncs (user_id, repo_id, desired, applied, updated_at)"
+                 " VALUES (?, 1, 'starred', 'done', 1)", (login,))
     conn.commit()
     monkeypatch.setattr(config, "TOKEN_ENC_KEY", base64.b64encode(b"j" * 32).decode())
     resp = client.delete("/api/me/gh-star-auth")
@@ -452,7 +453,6 @@ def test_token_plaintext_never_leaks_to_api_or_last_error(conn, client, login, m
     def boom(_token, _full_name, **_kw):
         raise github.GitHubError("upstream boom", status=500)
 
-    monkeypatch.setattr(github, "is_starred", lambda token, full_name, **kw: False)
     monkeypatch.setattr(github, "star_repo", boom)
     monkeypatch.setattr(github, "unstar_repo", boom)
 
@@ -476,3 +476,24 @@ def test_token_plaintext_never_leaks_to_api_or_last_error(conn, client, login, m
     hit(client.get("/api/me"))
     hit(client.get("/api/me/favorites"))
     assert outputs and all(canary not in o for o in outputs)
+
+
+def test_off_gh_sync_false_returns_kept_and_skips_github(conn, client, login, monkeypatch):
+    from app.feed import star_sync
+    calls = {"n": 0}
+    monkeypatch.setattr(star_sync.github, "unstar_repo",
+                        lambda *a, **k: calls.__setitem__("n", calls["n"] + 1))
+    rid = add_repo(conn, 1)
+    resp = client.post("/api/interactions", json={"repo_id": rid, "kind": "favorite", "active": False,
+                                                  "gh_sync": False})
+    assert resp.json() == {"active": False, "sync": "kept"}
+    assert calls["n"] == 0
+    assert conn.execute("SELECT count(*) c FROM star_syncs").fetchone()["c"] == 0
+
+
+def test_off_gh_sync_true_default_queues(conn, client, login):
+    rid = add_repo(conn, 1)
+    body = client.post("/api/interactions",
+                       json={"repo_id": rid, "kind": "favorite", "active": False}).json()
+    assert body == {"active": False, "sync": "need_auth"}
+    assert conn.execute("SELECT count(*) c FROM star_syncs").fetchone()["c"] == 1

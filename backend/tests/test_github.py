@@ -189,16 +189,6 @@ def _user_transport(handler):
     return lambda token=None: httpx.Client(transport=httpx.MockTransport(handler))
 
 
-def test_is_starred_true_false_by_status(monkeypatch):
-    monkeypatch.setattr(github.config, "GITHUB_MOCK", False)
-    monkeypatch.setattr(github, "_user_client",
-                        _user_transport(lambda r: httpx.Response(204)))
-    assert github.is_starred("tok", "a/b") is True
-    monkeypatch.setattr(github, "_user_client",
-                        _user_transport(lambda r: httpx.Response(404, json={"message": "Not Found"})))
-    assert github.is_starred("tok", "a/b") is False
-
-
 def test_star_and_unstar_call_verb_and_path(monkeypatch):
     monkeypatch.setattr(github.config, "GITHUB_MOCK", False)
     seen = []

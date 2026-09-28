@@ -2,6 +2,7 @@ node_modules/
 dist/
 .claude/
 .superpowers/
+.mimocode/
 
 # 本地笔记/密钥，不进仓库
 feedback/
@@ -17,8 +18,10 @@ logo_redesign/
 新一轮构思.txt
 新一轮完善.txt
 
-# 本地数据库
+# 本地数据库（含 SQLite WAL 侧车）
 *.db
+*.db-wal
+*.db-shm
 
 # backend (Python)
 __pycache__/

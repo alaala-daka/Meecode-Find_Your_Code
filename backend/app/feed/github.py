@@ -279,19 +279,6 @@ def _user_call(method: str, path: str, token: str, *, interactive: bool = True) 
     raise GitHubError(f"GitHub {method} {path} 重试 {retries} 次仍失败:{last}")
 
 
-def is_starred(token: str, full_name: str, *, interactive: bool = True) -> bool:
-    """GET /user/starred/{owner}/{repo}：204=已 star，404=未 star（或仓库不存在）。"""
-    if config.GITHUB_MOCK:
-        return mock.mock_is_starred(full_name)
-    try:
-        _user_call("GET", f"/user/starred/{full_name}", token, interactive=interactive)
-        return True
-    except GitHubError as exc:
-        if exc.status == 404:
-            return False
-        raise
-
-
 def star_repo(token: str, full_name: str, *, interactive: bool = True) -> None:
     if config.GITHUB_MOCK:
         return mock.mock_star_repo(full_name)

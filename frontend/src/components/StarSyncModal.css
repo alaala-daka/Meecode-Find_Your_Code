@@ -1,0 +1,19 @@
+.star-modal-mask {
+  position: fixed; inset: 0; z-index: 80;
+  background: rgba(0, 0, 0, .38); display: flex; align-items: center; justify-content: center;
+}
+.star-modal {
+  position: relative; width: min(360px, calc(100vw - 48px));
+  background: var(--surface); border: 1px solid var(--line); border-radius: 14px;
+  padding: 24px 22px 20px; text-align: center;
+}
+.star-modal-title { font-size: 16px; font-weight: 600; color: var(--ink); margin: 0 0 8px; }
+.star-modal-tip { font-size: 13px; color: var(--ink-2); margin: 0 0 16px; line-height: 1.6; }
+.star-modal-local {
+  display: block; margin: 10px auto 0; background: none; border: none;
+  font-size: 13px; color: var(--ink-2); text-decoration: underline; cursor: pointer;
+}
+.star-modal-close {
+  position: absolute; top: 10px; right: 12px; background: none; border: none;
+  font-size: 14px; color: var(--ink-3); cursor: pointer;
+}

@@ -1,8 +1,8 @@
 // src/pages/RepoPage.tsx —— 规范 §7.3
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { api } from '../api/client'
-import type { RepoDetail, RepoFile, RepoTreeItem } from '../api/types'
+import type { CurrentUser, RepoDetail, RepoFile, RepoTreeItem, UserProfile } from '../api/types'
 import Capsule from '../components/Capsule'
 import CodeView from '../components/CodeView'
 import CommentSection from '../components/CommentSection'
@@ -12,7 +12,9 @@ import IconAction from '../components/IconAction'
 import LoginModal from '../components/LoginModal'
 import ReadmeSection from '../components/ReadmeSection'
 import RepoRail from '../components/RepoRail'
+import StarSyncModal from '../components/StarSyncModal'
 import Tabs from '../components/Tabs'
+import Toast from '../components/Toast'
 import TopBar from '../components/TopBar'
 import { useAuthStore } from '../store/authStore'
 import { capsuleBg, capsuleText, languageColor } from '../theme/languageColors'
@@ -26,6 +28,12 @@ const TAB_ITEMS = [
   { key: 'files', label: '文件预览' },
   { key: 'explain', label: '仓库解读' },
 ]
+
+// 分流判据：仅 CurrentUser 带 gh_star_authed（'gh_star_authed' in user 收窄）；
+// 缺字段（mock/fixtures 的 UserProfile）视为未授权
+function isStarAuthed(u: UserProfile | CurrentUser | null): boolean {
+  return u != null && 'gh_star_authed' in u && u.gh_star_authed
+}
 
 export default function RepoPage() {
   const { id } = useParams()
@@ -50,14 +58,18 @@ export default function RepoPage() {
   const [syncHint, setSyncHint] = useState<string | null>(null)
   const [needStarAuth, setNeedStarAuth] = useState(false)
   const hintTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [starModalOpen, setStarModalOpen] = useState(false)
+  const [toast, setToast] = useState<string | null>(null)
+  const [pendingUnfav, setPendingUnfav] = useState(false) // 弹窗针对的是取消动作
+  const [remedyMode, setRemedyMode] = useState(false) // 弹窗来自 need_auth 补救（本地已乐观扣减）
 
-  function showSyncHint(text: string, needAuth = false) {
+  const showSyncHint = useCallback((text: string, needAuth = false) => {
     setSyncHint(text)
     setNeedStarAuth(needAuth)
     if (hintTimer.current) clearTimeout(hintTimer.current)
     // need_auth 带动作链接不自动消失；其余 5s 收起（spec §4.6 实施细化）
     hintTimer.current = needAuth ? null : setTimeout(() => setSyncHint(null), 5000)
-  }
+  }, [])
 
   useEffect(() => () => { if (hintTimer.current) clearTimeout(hintTimer.current) }, [])
 
@@ -136,29 +148,68 @@ export default function RepoPage() {
     }
   }
 
-  async function toggleFav() {
-    if (busy) return
-    const next = !faved
+  const runFav = useCallback(async (next: boolean, ghSync: boolean, adjustCount = true) => {
     setBusy('fav')
     setActionError(null)
     setFaved(next)
     try {
-      const res = await api.interact(repoId, 'favorite', next)
-      setDetail((d) => (d && d.favorites_count != null ? { ...d, favorites_count: d.favorites_count + (next ? 1 : -1) } : d))
-      if (res.sync === 'need_auth') {
-        showSyncHint(next ? '已收藏 · 授权后自动在 GitHub 点星' : '已取消收藏 · 授权后自动同步 GitHub 星', true)
+      const res = await api.interact(repoId, 'favorite', next, ghSync)
+      if (adjustCount) {
+        setDetail((d) => (d && d.favorites_count != null ? { ...d, favorites_count: d.favorites_count + (next ? 1 : -1) } : d))
+      }
+      if (res.sync === 'need_auth' && !next) {
+        setPendingUnfav(true); setRemedyMode(true); setStarModalOpen(true)   // 401 补救模式
+      } else if (res.sync === 'need_auth') {
+        showSyncHint('已收藏 · 授权后自动在 GitHub 点星', true)
       } else if (res.sync === 'pending') {
-        showSyncHint(next ? '已收藏，GitHub 点星稍后自动重试' : '已取消收藏，GitHub 取消星稍后自动重试')
+        showSyncHint(next ? '已收藏，GitHub 点星稍后自动重试' : '已取消收藏，GitHub 撤星稍后自动重试')
       } else if (res.sync === 'kept') {
-        showSyncHint('已取消收藏，GitHub 上的星未改动')
+        showSyncHint('已取消收藏，GitHub 星保留')
+      } else if (res.sync === 'skipped') {
+        setToast('仓库消失了，未能同步到 GitHub')
       }
     } catch {
-      setFaved(!next) // 回滚乐观更新
+      if (adjustCount) setFaved(!next) // 回滚乐观更新（仅主切换；补救二次调用本地取消已落库，不回滚）
       setActionError('操作失败，请重试')
     } finally {
       setBusy(null)
     }
+  }, [repoId, showSyncHint])
+
+  async function toggleFav() {
+    if (busy) return
+    const next = !faved
+    if (!next && user && !isStarAuthed(user)) {
+      setPendingUnfav(true)
+      setRemedyMode(false)
+      setStarModalOpen(true)   // 本地不动，星按钮保持点亮
+      return
+    }
+    await runFav(next, true)
   }
+
+  const closeStarModal = useCallback(() => {
+    setStarModalOpen(false)
+    setPendingUnfav(false) // 生命周期闭合：弹窗关闭即复位，防未来复用时守卫恒真
+    setRemedyMode(false)
+  }, [])
+
+  const onStarConfirmAuth = useCallback(async () => {
+    closeStarModal()
+    if (pendingUnfav) {
+      try { await api.interact(repoId, 'favorite', false, true) } catch { /* 本地优先，忽略 */ }
+      setFaved(false)
+      if (!remedyMode) setDetail((d) => (d && d.favorites_count != null ? { ...d, favorites_count: d.favorites_count - 1 } : d)) // 跳转前回补计数（补救模式已扣过，勿双扣）
+    }
+    window.location.assign(api.loginUrl())
+  }, [pendingUnfav, remedyMode, repoId, closeStarModal])
+
+  const onStarLocalOnly = useCallback(() => {
+    closeStarModal()
+    if (pendingUnfav) void runFav(false, false, !remedyMode) // 补救模式已扣过计数，勿双扣
+  }, [pendingUnfav, remedyMode, runFav, closeStarModal])
+
+  const dismissToast = useCallback(() => setToast(null), [])
 
   if (loadError) {
     return (
@@ -267,6 +318,13 @@ export default function RepoPage() {
           <RepoRail repo={detail} />
         </div>
 
+        <StarSyncModal
+          open={starModalOpen}
+          onConfirmAuth={onStarConfirmAuth}
+          onLocalOnly={onStarLocalOnly}
+          onClose={closeStarModal}
+        />
+        <Toast message={toast} onDismiss={dismissToast} />
         <LoginModal open={loginOpen} onClose={() => setLoginOpen(false)} />
       </main>
     </>

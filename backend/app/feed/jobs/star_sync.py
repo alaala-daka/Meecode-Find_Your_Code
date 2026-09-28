@@ -35,9 +35,7 @@ def sync_pending_once(conn: sqlite3.Connection) -> dict:
             continue
         stats["picked"] += 1
         try:
-            state = (star_sync.sync_favorite_on(conn, user, repo, interactive=False)
-                     if row["desired"] == "starred"
-                     else star_sync.sync_favorite_off(conn, user, repo, interactive=False))
+            state = star_sync.replay_row(conn, row)
         except security.TokenKeyMismatchError:
             # 换钥：密文凭原密钥仍可恢复（A1）——与无 token 同款跳过不烧 attempts，
             # 等运维恢复 TOKEN_ENC_KEY 后收敛（wave-A 行为依赖此点）。
@@ -51,7 +49,8 @@ def sync_pending_once(conn: sqlite3.Connection) -> dict:
             conn.commit()
             stats["failed"] += 1
             continue
-        if state in ("synced", "unstarred", "kept", "skipped"):
+        if state in ("synced", "unstarred", "skipped", "dropped"):
+            # dropped = 孤儿行丢弃（内部收敛义，仅入 done 桶，不进 API SyncState）
             stats["done"] += 1
         else:
             stats["failed"] += 1
