@@ -201,3 +201,14 @@ def test_star_sync_migration_recovers_from_leftover_star_syncs_new():
     assert not c.execute("SELECT 1 FROM sqlite_master WHERE name='star_syncs_new'").fetchone()
     feed_db.init_db(c)  # 幂等
     c.close()
+
+
+def test_users_ban_columns_and_audit_logs_exist(conn):
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(users)")}
+    assert {"ban_comment_until", "ban_submit_until", "ban_note", "admin_note", "last_active_at"} <= cols
+    conn.execute(
+        "INSERT INTO audit_logs (ts, admin_login, action, target_type, target_id, detail)"
+        " VALUES ('2026-10-05T00:00:00','boss','user.ban','user','7','{\"a\":1}')"
+    )
+    row = conn.execute("SELECT COUNT(*) AS n FROM audit_logs").fetchone()
+    assert row["n"] == 1

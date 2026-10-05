@@ -170,4 +170,24 @@ def init_db(conn: sqlite3.Connection) -> None:
             ALTER TABLE star_syncs_new RENAME TO star_syncs;
             CREATE INDEX IF NOT EXISTS idx_star_syncs_pending ON star_syncs (applied, updated_at);
         """)
+    for col, decl in (
+        ("ban_comment_until", "INTEGER"),
+        ("ban_submit_until", "INTEGER"),
+        ("ban_note", "TEXT NOT NULL DEFAULT ''"),
+        ("admin_note", "TEXT NOT NULL DEFAULT ''"),
+        ("last_active_at", "INTEGER"),
+    ):
+        if col not in cols:
+            conn.execute(f"ALTER TABLE users ADD COLUMN {col} {decl}")
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS audit_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts TEXT NOT NULL,
+        admin_login TEXT NOT NULL,
+        action TEXT NOT NULL,
+        target_type TEXT NOT NULL,
+        target_id TEXT,
+        detail TEXT)"""
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_logs(ts)")
     conn.commit()
