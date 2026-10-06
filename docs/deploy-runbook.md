@@ -178,3 +178,29 @@ for i in $(seq 1 25); do curl -s -o /dev/null -w '%{http_code}\n' -X POST https:
 > 前置条件：限流键取 nginx `$proxy_add_x_forwarded_for` 追加的 XFF 末段，仅在「后端仅监听 127.0.0.1、流量必经 nginx」时可信；若绕过 nginx 直连 8100，IP 限形同虚设。
 
 5. 回滚：删除 nginx 中 6 个 `add_header` 行 + `nginx -t && systemctl reload nginx`；限流置 `RATE_LIMIT_ENABLED=false` 并重启后端。
+
+## 14. 管理台部署（2026-10-05）
+
+管理台是独立静态 SPA（`frontend-admin/`），挂 `/admin/` 路径，产物放 `/var/www/meecode-admin/`；API 走既有 `/api/` 反代（同后端 8100），**无新增 proxy**。CSP 复用全局头（`script-src 'self'` 已满足打包产物），不放宽。
+
+1. 本机构建并同步产物（dist 文件名带 hash，整目录覆盖即可）：
+
+```bash
+cd frontend-admin
+npm ci
+npm run build
+rsync -az --delete -e "ssh -i <部署私钥>" dist/ deploy@<服务器IP>:/var/www/meecode-admin/
+```
+
+首次部署先在服务器 `mkdir -p /var/www/meecode-admin`（deploy 用户）。
+
+2. nginx：模板已含 `location /admin/`，按 §13 方式替换配置后 `nginx -t && systemctl reload nginx`。若生产 nginx 对 alias+try_files 报路径错乱，按模板内注释改用 `root /var/www;` 形态（产物放 `/var/www/admin/`）。
+3. 管理台鉴权是 GitHub 登录白名单 `ADMIN_LOGINS`（逗号分隔 GitHub login，大小写不敏感）。在 `/etc/systemd/system/meecode-backend.service` 的 `[Service]` 段追加一行（仓库模板 `deploy/meecode-backend.service` 不含此行，勿用模板覆盖线上 unit）：
+
+```ini
+Environment=ADMIN_LOGINS=<login1>,<login2>
+```
+
+然后 `systemctl daemon-reload && systemctl restart meecode-backend`。漏配时白名单为空，登录用户访问管理接口一律 403。
+4. `ADMIN_DEV_ORIGIN`（默认 `http://localhost:5174`）**仅本地开发需要**：本地 `frontend-admin` dev server 与后端不同源，靠它进 CORS 白名单；生产同源（`https://<你的域名>/admin/`）无需配置。
+5. 冒烟：`curl -sI https://<你的域名>/admin/` 应 200 且带 CSP 头；浏览器登录白名单账号进仪表盘，非白名单账号接口 403。
