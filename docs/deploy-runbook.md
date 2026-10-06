@@ -181,7 +181,7 @@ for i in $(seq 1 25); do curl -s -o /dev/null -w '%{http_code}\n' -X POST https:
 
 ## 14. 管理台部署（2026-10-05）
 
-管理台是独立静态 SPA（`frontend-admin/`），挂 `/admin/` 路径，产物放 `/var/www/meecode-admin/`；API 走既有 `/api/` 反代（同后端 8100），**无新增 proxy**。CSP 复用全局头（`script-src 'self'` 已满足打包产物），不放宽。
+管理台是独立静态 SPA（`frontend-admin/`），挂 `/admin/` 路径，产物放 `/var/www/admin/`（nginx 用 root 形态 `root /var/www;`，`/admin/` 映射 `/var/www/admin/`）；API 走既有 `/api/` 反代（同后端 8100），**无新增 proxy**。CSP 复用全局头（`script-src 'self'` 已满足打包产物），不放宽。
 
 1. 本机构建并同步产物（dist 文件名带 hash，整目录覆盖即可）：
 
@@ -189,12 +189,12 @@ for i in $(seq 1 25); do curl -s -o /dev/null -w '%{http_code}\n' -X POST https:
 cd frontend-admin
 npm ci
 npm run build
-rsync -az --delete -e "ssh -i <部署私钥>" dist/ deploy@<服务器IP>:/var/www/meecode-admin/
+rsync -az --delete -e "ssh -i <部署私钥>" dist/ deploy@<服务器IP>:/var/www/admin/
 ```
 
-首次部署先在服务器 `mkdir -p /var/www/meecode-admin`（deploy 用户）。
+首次部署先在服务器 `mkdir -p /var/www/admin`（deploy 用户）。
 
-2. nginx：模板已含 `location /admin/`，按 §13 方式替换配置后 `nginx -t && systemctl reload nginx`。若生产 nginx 对 alias+try_files 报路径错乱，按模板内注释改用 `root /var/www;` 形态（产物放 `/var/www/admin/`）。
+2. nginx：模板已含 `location /admin/`（root 形态为主），按 §13 方式替换配置后 `nginx -t && systemctl reload nginx`。alias 形态（产物放 `/var/www/meecode-admin/`）仅作模板内注释备选，仅当 root 形态不可用时启用，且须重跑本节冒烟。
 3. 管理台鉴权是 GitHub 登录白名单 `ADMIN_LOGINS`（逗号分隔 GitHub login，大小写不敏感）。在 `/etc/systemd/system/meecode-backend.service` 的 `[Service]` 段追加一行（仓库模板 `deploy/meecode-backend.service` 不含此行，勿用模板覆盖线上 unit）：
 
 ```ini
@@ -203,4 +203,8 @@ Environment=ADMIN_LOGINS=<login1>,<login2>
 
 然后 `systemctl daemon-reload && systemctl restart meecode-backend`。漏配时白名单为空，登录用户访问管理接口一律 403。
 4. `ADMIN_DEV_ORIGIN`（默认 `http://localhost:5174`）**仅本地开发需要**：本地 `frontend-admin` dev server 与后端不同源，靠它进 CORS 白名单；生产同源（`https://<你的域名>/admin/`）无需配置。
-5. 冒烟：`curl -sI https://<你的域名>/admin/` 应 200 且带 CSP 头；浏览器登录白名单账号进仪表盘，非白名单账号接口 403。
+5. 冒烟：
+   - `curl -sI https://<你的域名>/admin/` 应 200 且带 CSP 头；
+   - 深链接刷新 200：`curl -sI https://<你的域名>/admin/users` 应回 200 且 `Content-Type: text/html`（SPA fallback 生效）；
+   - 资产可达：`curl -sI https://<你的域名>/admin/assets/<任一构建产物>.js`（取 dist/assets/ 任一文件名）应 200；
+   - 浏览器登录白名单账号进仪表盘，非白名单账号接口 403。
