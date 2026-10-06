@@ -37,8 +37,12 @@ SESSION_MAX_AGE: int = 30 * 24 * 3600
 EXPLAIN_SESSION_TTL: int = int(os.getenv("EXPLAIN_SESSION_TTL", "7200"))   # 解读域会话滑动过期秒数
 EXPLAIN_SESSION_MAX: int = int(os.getenv("EXPLAIN_SESSION_MAX", "512"))     # 进程内会话数上限(满额拒新)
 FRONTEND_ORIGIN: str = os.getenv("FRONTEND_ORIGIN", "http://localhost:5173")
+ADMIN_LOGINS: tuple[str, ...] = tuple(
+    s.strip().lower() for s in os.getenv("ADMIN_LOGINS", "").split(",") if s.strip()
+)
+ADMIN_DEV_ORIGIN: str = os.getenv("ADMIN_DEV_ORIGIN", "http://localhost:5174")
 # CORS 白名单:FRONTEND_ORIGIN 之外加 127.0.0.1 变体(开发机同源不同 host)
-CORS_ORIGINS: tuple[str, ...] = (FRONTEND_ORIGIN, "http://127.0.0.1:5173")
+CORS_ORIGINS: tuple[str, ...] = (FRONTEND_ORIGIN, "http://127.0.0.1:5173", ADMIN_DEV_ORIGIN)
 
 # ---------- 安全（限流 + Origin 校验，spec 2026-09-21） ----------
 RATE_LIMIT_ENABLED: bool = os.getenv("RATE_LIMIT_ENABLED", "true").lower() in ("1", "true", "yes")
