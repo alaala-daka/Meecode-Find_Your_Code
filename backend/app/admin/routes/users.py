@@ -1,17 +1,20 @@
 # backend/app/admin/routes/users.py
-"""管理台用户：列表/详情/备注（封禁在 Task 6）。状态由 ban 时间戳派生（spec §3）。"""
+"""管理台用户：列表/详情/备注/封禁/解封。状态由 ban 时间戳派生（spec §3）。"""
 from __future__ import annotations
 
 import sqlite3
 import time
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from ...feed import deps
+from ..deps import require_admin
 
 router = APIRouter()
+
+BAN_FOREVER = 253402300799
 
 
 def _status_sql(alias: str = "u") -> str:
@@ -77,14 +80,15 @@ class NoteIn(BaseModel):
 
 
 @router.patch("/users/{user_id}")
-def patch_user(user_id: int, body: NoteIn,
+def patch_user(user_id: int, body: NoteIn, request: Request,
                conn: Annotated[sqlite3.Connection, Depends(deps.get_conn)]) -> dict:
     cur = conn.execute("UPDATE users SET admin_note=? WHERE id=?", (body.admin_note, user_id))
     conn.commit()
     if cur.rowcount == 0:
         raise HTTPException(404, "用户不存在")
     from ..audit import record_audit  # Task 4 已存在
-    ...  # 审计埋点统一放 Task 7 收口；本任务先返回
+    record_audit(conn, admin_login=require_admin(request, conn)["login"], action="user.note",
+                 target_type="user", target_id=user_id, detail={"admin_note": body.admin_note})
     return {"ok": True}
 
 
@@ -98,3 +102,51 @@ def get_user(user_id: int, conn: Annotated[sqlite3.Connection, Depends(deps.get_
         "SELECT repo_id, kind, updated_at AS created_at FROM interactions WHERE user_id=?"
         " ORDER BY updated_at DESC, id DESC LIMIT 10", (user_id,)).fetchall()]
     return out
+
+
+class BanIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    mute_comment: bool = False
+    mute_submit: bool = False
+    until: int = Field(ge=0)   # Unix epoch 秒；永久=BAN_FOREVER
+    note: str = Field(max_length=500, default="")
+
+
+@router.post("/users/{user_id}/ban")
+def ban_user(user_id: int, body: BanIn, request: Request,
+             conn: Annotated[sqlite3.Connection, Depends(deps.get_conn)]) -> dict:
+    from ...admin.audit import record_audit
+    from ...feed import auth as feed_auth
+
+    cur = conn.execute(
+        "UPDATE users SET ban_comment_until=?, ban_submit_until=?, ban_note=? WHERE id=?",
+        (body.until if body.mute_comment else None,
+         body.until if body.mute_submit else None,
+         body.note, user_id))
+    conn.commit()
+    if cur.rowcount == 0:
+        raise HTTPException(404, "用户不存在")
+    feed_auth.revoke_all(conn, user_id)  # 封禁即时全端下线
+    admin = require_admin(request, conn)
+    record_audit(conn, admin_login=admin["login"], action="user.ban", target_type="user",
+                 target_id=user_id, detail=body.model_dump())
+    return {"ok": True}
+
+
+@router.post("/users/{user_id}/unban")
+def unban_user(user_id: int, request: Request,
+               conn: Annotated[sqlite3.Connection, Depends(deps.get_conn)]) -> dict:
+    from ...admin.audit import record_audit
+    from ...feed import auth as feed_auth
+
+    cur = conn.execute(
+        "UPDATE users SET ban_comment_until=NULL, ban_submit_until=NULL, ban_note='' WHERE id=?",
+        (user_id,))
+    conn.commit()
+    if cur.rowcount == 0:
+        raise HTTPException(404, "用户不存在")
+    feed_auth.revoke_all(conn, user_id)
+    admin = require_admin(request, conn)
+    record_audit(conn, admin_login=admin["login"], action="user.unban", target_type="user",
+                 target_id=user_id)
+    return {"ok": True}

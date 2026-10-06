@@ -5,6 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import config
+from app.admin.routes.users import BAN_FOREVER
 from app.feed import auth, deps
 from app.main import app
 
@@ -78,3 +79,35 @@ def test_recent_interactions_ordered_by_last_activity(conn, client, admin):
     rows = client.get(f"/api/admin/users/{uid}").json()["recent_interactions"]
     assert [r["repo_id"] for r in rows] == [1, 2]
     assert rows[0]["created_at"] == NOW + 100
+
+
+def test_ban_single_dimension_and_combo(conn, client, admin):
+    uid = _mk_user(conn, 10, "alice")
+    r = client.post(f"/api/admin/users/{uid}/ban",
+                    json={"mute_comment": True, "mute_submit": False,
+                          "until": NOW + 3600, "note": "刷屏"})
+    assert r.status_code == 200
+    row = conn.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
+    assert row["ban_comment_until"] == NOW + 3600
+    assert row["ban_submit_until"] is None
+    assert row["ban_note"] == "刷屏"
+
+    r = client.post(f"/api/admin/users/{uid}/ban",
+                    json={"mute_comment": True, "mute_submit": True,
+                          "until": NOW + 7200, "note": "组合"})
+    row = conn.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
+    assert row["ban_comment_until"] == NOW + 7200 and row["ban_submit_until"] == NOW + 7200
+
+
+def test_ban_revokes_sessions_and_unban_clears(conn, client, admin):
+    uid = _mk_user(conn, 10, "alice")
+    before = conn.execute("SELECT session_epoch FROM users WHERE id=?", (uid,)).fetchone()["session_epoch"]
+    client.post(f"/api/admin/users/{uid}/ban",
+                json={"mute_comment": True, "mute_submit": True, "until": BAN_FOREVER})
+    after = conn.execute("SELECT session_epoch FROM users WHERE id=?", (uid,)).fetchone()["session_epoch"]
+    assert after == before + 1  # 全端下线
+
+    client.post(f"/api/admin/users/{uid}/unban")
+    row = conn.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
+    assert row["ban_comment_until"] is None and row["ban_submit_until"] is None
+    assert row["ban_note"] == ""
