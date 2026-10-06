@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Refine } from "@refinedev/core";
 import { MemoryRouter, Route, Routes } from "react-router";
@@ -23,13 +23,16 @@ const detail = {
 
 type Call = { url: string; method: string; body: unknown };
 
-const setupFetch = () => {
+const setupFetch = (fail?: { urlSuffix: string; status: number; detail: string; method?: string }) => {
   const calls: Call[] = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
     const method = (init?.method ?? "GET").toUpperCase();
     const body = init?.body ? JSON.parse(String(init.body)) : undefined;
     calls.push({ url, method, body });
+    if (fail && method === (fail.method ?? "POST") && url.endsWith(fail.urlSuffix)) {
+      return new Response(JSON.stringify({ detail: fail.detail }), { status: fail.status });
+    }
     return new Response(JSON.stringify({ ok: true, ...detail }), { status: 200 });
   });
   return calls;
@@ -148,6 +151,25 @@ describe("UserShow · 封禁面板", () => {
     expect(unban.url).toBe("/api/admin/users/1/unban");
     expect(unban.method).toBe("POST");
     expect(unban.body).toBeUndefined();
+  });
+
+  it("封禁 403 → 错误浮现在确认弹窗内部且弹窗保持打开", async () => {
+    setupFetch({
+      urlSuffix: "/users/1/ban",
+      status: 403,
+      detail: "无权封禁该用户",
+    });
+    renderShow();
+    await screen.findByText("alice");
+
+    await userEvent.click(screen.getByRole("button", { name: "封禁" }));
+    const dialog = await screen.findByRole("dialog", { name: "确认封禁" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "确认" }));
+
+    const errorNode = await within(dialog).findByRole("alert");
+    expect(errorNode).toHaveTextContent("封禁失败：无权封禁该用户");
+    expect(dialog).toContainElement(errorNode);
+    expect(within(dialog).getByRole("button", { name: "确认" })).toBeInTheDocument();
   });
 });
 

@@ -73,7 +73,7 @@ export function UserShow() {
         note: banNote,
       });
     } catch (e) {
-      setActionError("封禁失败，请稍后重试");
+      setActionError(`封禁失败：${(e as Error).message}`);
       throw e;
     }
     setActionError(null);
@@ -84,7 +84,7 @@ export function UserShow() {
     try {
       await unbanUser(id!);
     } catch (e) {
-      setActionError("解封失败，请稍后重试");
+      setActionError(`解封失败：${(e as Error).message}`);
       throw e;
     }
     setActionError(null);
@@ -95,7 +95,7 @@ export function UserShow() {
     try {
       await updateAdminNote(id!, adminNote);
     } catch (e) {
-      setActionError("备注保存失败，请稍后重试");
+      setActionError(`备注保存失败：${(e as Error).message}`);
       throw e;
     }
     setActionError(null);
@@ -287,6 +287,7 @@ export function UserShow() {
           muteSubmit ? "是" : "否"
         } · 时长：${durationLabel} · 备注：${banNote || "无"}`}
         danger
+        error={actionError}
         onConfirm={handleBan}
       />
       <ConfirmDialog
@@ -295,6 +296,7 @@ export function UserShow() {
         title="确认解封"
         description={`将解除 ${user.login} 的全部封禁并清除封禁备注。`}
         danger
+        error={actionError}
         onConfirm={handleUnban}
       />
       <ConfirmDialog
@@ -302,6 +304,7 @@ export function UserShow() {
         onOpenChange={setNoteOpen}
         title="保存管理备注"
         description={`将 ${user.login} 的管理备注保存为：${adminNote || "（空）"}`}
+        error={actionError}
         onConfirm={handleSaveNote}
       />
     </section>

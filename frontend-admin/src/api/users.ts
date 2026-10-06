@@ -42,7 +42,14 @@ const API_URL = "/api/admin";
 const request = async (path: string, init: RequestInit = {}): Promise<void> => {
   const res = await fetch(`${API_URL}${path}`, { credentials: "include", ...init });
   if (!res.ok) {
-    throw Object.assign(new Error(`请求失败（HTTP ${res.status}）`), {
+    let detail: string | undefined;
+    try {
+      const body = (await res.json()) as { detail?: unknown };
+      if (typeof body?.detail === "string") detail = body.detail;
+    } catch {
+      /* 无 JSON 错误体时回落状态码 */
+    }
+    throw Object.assign(new Error(detail ?? `请求失败（HTTP ${res.status}）`), {
       status: res.status,
       statusCode: res.status,
     });
