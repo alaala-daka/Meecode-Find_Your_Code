@@ -33,6 +33,29 @@ def conn():
     c.close()
 
 
+@pytest.fixture()
+def client(conn, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from app.feed import deps
+    from app.main import app
+
+    monkeypatch.setattr(config, "GITHUB_MOCK", True)
+    monkeypatch.setattr(config, "ADMIN_LOGINS", ("boss",))
+    app.dependency_overrides[deps.get_conn] = lambda: conn
+    yield TestClient(app)
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture()
+def admin(conn, client):
+    from app.feed import auth
+
+    uid = auth.upsert_user(conn, {"id": 1, "login": "boss", "avatar_url": "https://a/b"})
+    client.cookies.set(config.SESSION_COOKIE, auth.sign(uid), domain="testserver.local")
+    return uid
+
+
 @pytest.fixture(autouse=True)
 def _rate_limit_off(monkeypatch):
     """安全基线：限流默认关闭，存量用例不受分桶影响；test_security 内 autouse 自行开回。"""

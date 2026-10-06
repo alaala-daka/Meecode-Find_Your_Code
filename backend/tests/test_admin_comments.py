@@ -2,30 +2,9 @@
 import json
 import time
 
-import pytest
-from fastapi.testclient import TestClient
-
-from app import config
-from app.feed import auth, deps
-from app.main import app
+from app.feed import auth
 
 NOW = int(time.time())
-
-
-@pytest.fixture()
-def client(conn, monkeypatch):
-    monkeypatch.setattr(config, "GITHUB_MOCK", True)
-    monkeypatch.setattr(config, "ADMIN_LOGINS", ("boss",))
-    app.dependency_overrides[deps.get_conn] = lambda: conn
-    yield TestClient(app)
-    app.dependency_overrides.clear()
-
-
-@pytest.fixture()
-def admin(conn, client):
-    uid = auth.upsert_user(conn, {"id": 1, "login": "boss", "avatar_url": "https://a/b"})
-    client.cookies.set(config.SESSION_COOKIE, auth.sign(uid), domain="testserver.local")
-    return uid
 
 
 def _mk_comment(conn, status="visible", reason=None, gid=50):
