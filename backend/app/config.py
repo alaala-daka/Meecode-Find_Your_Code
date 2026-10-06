@@ -64,6 +64,7 @@ _RATE_LIMIT_DEFAULTS: dict[str, int] = {
     "browse": 240,   # feed/search/详情：匿名写库放大面
     "auth": 10,      # OAuth 跳转与回调
     "delist": 5,     # 下架：高危写操作，与 submit 同档
+    "admin": 300,    # 管理台批量操作独立宽松桶（F5）
     "default": 120,  # 兜底
 }
 
