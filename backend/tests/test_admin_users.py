@@ -62,3 +62,19 @@ def test_user_detail_includes_recent_interactions_and_patch_note(conn, client, a
     r = client.patch(f"/api/admin/users/{uid}", json={"admin_note": "观察对象"})
     assert r.status_code == 200
     assert client.get(f"/api/admin/users/{uid}").json()["admin_note"] == "观察对象"
+
+
+def test_recent_interactions_ordered_by_last_activity(conn, client, admin):
+    uid = _mk_user(conn, 10, "alice")
+    conn.execute("INSERT INTO repos (github_id, full_name, owner_login, source, status)"
+                 " VALUES (1, 'o/r1', 'other', 'submitted', 'published')")
+    conn.execute("INSERT INTO repos (github_id, full_name, owner_login, source, status)"
+                 " VALUES (2, 'o/r2', 'other', 'submitted', 'published')")
+    conn.execute("INSERT INTO interactions (user_id, repo_id, kind, updated_at)"
+                 " VALUES (?, 1, 'visit', ?)", (uid, NOW + 100))
+    conn.execute("INSERT INTO interactions (user_id, repo_id, kind, updated_at)"
+                 " VALUES (?, 2, 'visit', ?)", (uid, NOW))
+    conn.commit()
+    rows = client.get(f"/api/admin/users/{uid}").json()["recent_interactions"]
+    assert [r["repo_id"] for r in rows] == [1, 2]
+    assert rows[0]["created_at"] == NOW + 100

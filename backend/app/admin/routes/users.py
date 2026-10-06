@@ -96,5 +96,5 @@ def get_user(user_id: int, conn: Annotated[sqlite3.Connection, Depends(deps.get_
     out = _row_out(r, _counts(conn, user_id))
     out["recent_interactions"] = [dict(x) for x in conn.execute(
         "SELECT repo_id, kind, updated_at AS created_at FROM interactions WHERE user_id=?"
-        " ORDER BY id DESC LIMIT 10", (user_id,)).fetchall()]
+        " ORDER BY updated_at DESC, id DESC LIMIT 10", (user_id,)).fetchall()]
     return out
