@@ -6,12 +6,14 @@ import { BrowserRouter, Route, Routes } from "react-router";
 import { AppLayout } from "@/components/AppLayout";
 import { Button } from "@/components/ui/button";
 import { LoginDeniedPage } from "@/pages/LoginDeniedPage";
+import { UserList } from "@/pages/users/UserList";
+import { UserShow } from "@/pages/users/UserShow";
 import { authProvider, OAUTH_ENTRY } from "@/providers/authProvider";
 import { dataProvider } from "@/providers/dataProvider";
 
 const resources = [
   { name: "dashboard", list: "/", meta: { label: "仪表盘" } },
-  { name: "users", list: "/users", meta: { label: "用户管理" } },
+  { name: "users", list: "/users", show: "/users/show/:id", meta: { label: "用户管理" } },
   { name: "repos", list: "/repos", meta: { label: "仓库管理" } },
   { name: "comments", list: "/comments", meta: { label: "评论管理" } },
 ];
@@ -80,7 +82,8 @@ export default function App() {
           <Routes>
             <Route element={<AppLayout />}>
               <Route index element={<PendingPage title="仪表盘" />} />
-              <Route path="/users" element={<PendingPage title="用户管理" />} />
+              <Route path="/users" element={<UserList />} />
+              <Route path="/users/show/:id" element={<UserShow />} />
               <Route path="/repos" element={<PendingPage title="仓库管理" />} />
               <Route path="/comments" element={<PendingPage title="评论管理" />} />
               <Route path="*" element={<PendingPage title="页面不存在" />} />

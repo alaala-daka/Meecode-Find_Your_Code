@@ -1,3 +1,5 @@
+// @vitest-environment node
+// 本文件读取真实文件系统（jsdom 环境下 new URL(rel, import.meta.url) 会解析到文档基址，故固定 node）
 import { existsSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
