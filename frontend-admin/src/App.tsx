@@ -5,6 +5,7 @@ import { BrowserRouter, Route, Routes } from "react-router";
 
 import { AppLayout } from "@/components/AppLayout";
 import { Button } from "@/components/ui/button";
+import { CommentList } from "@/pages/comments/CommentList";
 import { LoginDeniedPage } from "@/pages/LoginDeniedPage";
 import { RepoList } from "@/pages/repos/RepoList";
 import { UserList } from "@/pages/users/UserList";
@@ -86,7 +87,7 @@ export default function App() {
               <Route path="/users" element={<UserList />} />
               <Route path="/users/show/:id" element={<UserShow />} />
               <Route path="/repos" element={<RepoList />} />
-              <Route path="/comments" element={<PendingPage title="评论管理" />} />
+              <Route path="/comments" element={<CommentList />} />
               <Route path="*" element={<PendingPage title="页面不存在" />} />
             </Route>
           </Routes>
