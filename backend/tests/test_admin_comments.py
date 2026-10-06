@@ -58,6 +58,7 @@ def test_comment_hide_restore_bulk_and_stats(conn, client, admin):
     assert client.post(f"/api/admin/comments/{c1}/restore").status_code == 200
     r = client.post("/api/admin/comments/bulk", json={"ids": [c1, c2], "action": "hide"})
     assert r.status_code == 200
+    assert r.json() == {"ok": True, "affected": 2, "not_found": [], "skipped": []}
     stats = client.get("/api/admin/comments/stats").json()
     assert stats["hidden"] == 2 and stats["visible"] == 0
 
@@ -81,6 +82,64 @@ def test_comment_bulk_validation_audits_and_404s(conn, client, admin):
         ("comment.bulk_hide", "comment", None), ("comment.restore", "comment", str(c1)),
         ("comment.hide", "comment", str(c1)), ("comment.delete", "comment", str(c1))]
     assert json.loads(rows[0]["detail"]) == {"ids": [c1]}
+
+
+def test_comment_bulk_affected_not_found_skipped_partition(conn, client, admin):
+    vis = _mk_comment(conn, "visible", gid=62)
+    hid = _mk_comment(conn, "hidden", gid=63)
+    de = _mk_comment(conn, "deleted", gid=64)
+    ghost = 9999
+    r = client.post("/api/admin/comments/bulk",
+                    json={"ids": [vis, hid, de, ghost, vis], "action": "hide"})  # 重复 vis
+    assert r.status_code == 200
+    body = r.json()
+    assert body["affected"] == 1                      # 重复 id 不膨胀；hidden/deleted 不算命中
+    assert body["not_found"] == [ghost]
+    assert body["skipped"] == [hid, de]               # 命中但不可迁移：hidden + deleted
+    rows = {row["id"]: row["status"] for row in conn.execute(
+        "SELECT id, status FROM comments WHERE id IN (?,?,?)", (vis, hid, de))}
+    assert rows == {vis: "hidden", hid: "hidden", de: "deleted"}  # skipped 行不被改动
+    log = conn.execute("SELECT * FROM audit_logs").fetchone()
+    assert log["action"] == "comment.bulk_hide"
+    assert json.loads(log["detail"]) == {"ids": [vis]}  # 只记真正迁移的 id
+
+
+def test_comment_bulk_all_skipped_still_single_audit_entry(conn, client, admin):
+    hid = _mk_comment(conn, "hidden", gid=65)
+    r = client.post("/api/admin/comments/bulk", json={"ids": [hid], "action": "hide"})
+    assert r.json() == {"ok": True, "affected": 0, "not_found": [], "skipped": [hid]}
+    rows = conn.execute("SELECT * FROM audit_logs").fetchall()
+    assert len(rows) == 1 and json.loads(rows[0]["detail"]) == {"ids": []}  # 批量单条审计
+
+
+def test_comment_restore_hidden_to_visible(conn, client, admin):
+    cid = _mk_comment(conn, "hidden", gid=66)
+    r = client.post(f"/api/admin/comments/{cid}/restore")
+    assert r.status_code == 200 and r.json()["status"] == "visible"
+    assert conn.execute("SELECT status FROM comments WHERE id=?", (cid,)).fetchone()["status"] == "visible"
+
+
+def test_comment_state_machine_guards(conn, client, admin):
+    cid = _mk_comment(conn, "visible", gid=67)
+    assert client.post(f"/api/admin/comments/{cid}/hide").status_code == 200
+    assert client.post(f"/api/admin/comments/{cid}/hide").status_code == 409   # hidden -> hide
+    assert client.post(f"/api/admin/comments/{cid}/restore").status_code == 200
+    assert client.post(f"/api/admin/comments/{cid}/restore").status_code == 409  # visible -> restore
+    assert client.delete(f"/api/admin/comments/{cid}").status_code == 200
+    assert client.delete(f"/api/admin/comments/{cid}").status_code == 409      # deleted -> delete
+    assert conn.execute("SELECT status FROM comments WHERE id=?", (cid,)).fetchone()["status"] == "deleted"
+
+
+def test_comment_deleted_is_terminal_409s(conn, client, admin):
+    cid = _mk_comment(conn, "deleted", gid=68)
+    assert client.post(f"/api/admin/comments/{cid}/hide").status_code == 409    # 不可覆盖软删
+    assert client.post(f"/api/admin/comments/{cid}/restore").status_code == 409  # 不可复活
+    assert client.delete(f"/api/admin/comments/{cid}").status_code == 409
+    row = conn.execute("SELECT status, content FROM comments WHERE id=?", (cid,)).fetchone()
+    assert row["status"] == "deleted" and row["content"] == "内容"  # 软删保留原文
+    assert conn.execute("SELECT COUNT(*) AS n FROM audit_logs").fetchone()["n"] == 0  # 409 不写审计
+    assert client.post(f"/api/admin/comments/{cid}/restore").json()["detail"] == "非法状态转移: deleted -> restore"
+    assert client.delete(f"/api/admin/comments/{cid}").json()["detail"] == "非法状态转移: deleted -> delete"
 
 
 def test_comment_list_shape_and_repo_filter(conn, client, admin):

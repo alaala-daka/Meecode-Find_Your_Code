@@ -14,6 +14,13 @@ from ..deps import require_admin
 
 router = APIRouter()
 
+# 合法转移表：action -> (允许的源状态集合, 目标状态)。软删为终态，防复活/防覆盖。
+_TRANSITIONS = {
+    "hide": ({"visible", "pending"}, "hidden"),
+    "restore": ({"hidden"}, "visible"),
+    "delete": ({"visible", "pending", "hidden"}, "deleted"),
+}
+
 _STATUSES = ("pending", "visible", "hidden", "deleted")
 
 
@@ -69,35 +76,54 @@ def stats(conn: Annotated[sqlite3.Connection, Depends(deps.get_conn)]) -> dict:
 @router.post("/comments/bulk")
 def bulk_hide(body: BulkIn, request: Request,
               conn: Annotated[sqlite3.Connection, Depends(deps.get_conn)]) -> dict:
-    conn.executemany("UPDATE comments SET status='hidden' WHERE id=?",
-                     [(i,) for i in body.ids])
+    unique_ids = list(dict.fromkeys(body.ids))
+    allowed, _ = _TRANSITIONS["hide"]
+    affected, not_found, skipped = [], [], []
+    for cid in unique_ids:
+        row = conn.execute("SELECT status FROM comments WHERE id=?", (cid,)).fetchone()
+        if row is None:
+            not_found.append(cid)
+        elif row["status"] in allowed:
+            conn.execute("UPDATE comments SET status='hidden' WHERE id=?", (cid,))
+            affected.append(cid)
+        else:
+            skipped.append(cid)
     conn.commit()
     record_audit(conn, admin_login=require_admin(request, conn)["login"],
                  action="comment.bulk_hide", target_type="comment", target_id=None,
-                 detail={"ids": body.ids})
-    return {"ok": True, "affected": len(body.ids)}
+                 detail={"ids": affected})
+    return {"ok": True, "affected": len(affected), "not_found": not_found, "skipped": skipped}
 
 
 @router.post("/comments/{comment_id}/{action}")
 def moderate(comment_id: int, action: Literal["hide", "restore"], request: Request,
              conn: Annotated[sqlite3.Connection, Depends(deps.get_conn)]) -> dict:
-    target = {"hide": "hidden", "restore": "visible"}[action]
-    cur = conn.execute("UPDATE comments SET status=? WHERE id=?", (target, comment_id))
-    conn.commit()
-    if cur.rowcount == 0:
+    allowed, target = _TRANSITIONS[action]
+    row = conn.execute("SELECT status FROM comments WHERE id=?", (comment_id,)).fetchone()
+    if row is None:
         raise HTTPException(404, "评论不存在")
+    if row["status"] not in allowed:
+        raise HTTPException(409, f"非法状态转移: {row['status']} -> {action}")
+    conn.execute("UPDATE comments SET status=? WHERE id=?", (target, comment_id))
+    conn.commit()
     record_audit(conn, admin_login=require_admin(request, conn)["login"],
-                 action=f"comment.{action}", target_type="comment", target_id=comment_id)
+                 action=f"comment.{action}", target_type="comment", target_id=comment_id,
+                 detail={"from": row["status"], "to": target})
     return {"ok": True, "status": target}
 
 
 @router.delete("/comments/{comment_id}")
 def soft_delete(comment_id: int, request: Request,
                 conn: Annotated[sqlite3.Connection, Depends(deps.get_conn)]) -> dict:
-    cur = conn.execute("UPDATE comments SET status='deleted' WHERE id=?", (comment_id,))
-    conn.commit()
-    if cur.rowcount == 0:
+    allowed, target = _TRANSITIONS["delete"]
+    row = conn.execute("SELECT status FROM comments WHERE id=?", (comment_id,)).fetchone()
+    if row is None:
         raise HTTPException(404, "评论不存在")
+    if row["status"] not in allowed:
+        raise HTTPException(409, f"非法状态转移: {row['status']} -> delete")
+    conn.execute("UPDATE comments SET status=? WHERE id=?", (target, comment_id))
+    conn.commit()
     record_audit(conn, admin_login=require_admin(request, conn)["login"],
-                 action="comment.delete", target_type="comment", target_id=comment_id)
-    return {"ok": True, "status": "deleted"}
+                 action="comment.delete", target_type="comment", target_id=comment_id,
+                 detail={"from": row["status"], "to": target})
+    return {"ok": True, "status": target}
