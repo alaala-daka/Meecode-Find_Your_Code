@@ -1,20 +1,93 @@
+import * as React from "react";
+import { Refine, useIsAuthenticated } from "@refinedev/core";
+import routerProvider from "@refinedev/react-router";
+import { BrowserRouter, Route, Routes } from "react-router";
+
+import { AppLayout } from "@/components/AppLayout";
+import { Button } from "@/components/ui/button";
+import { LoginDeniedPage } from "@/pages/LoginDeniedPage";
+import { authProvider, OAUTH_ENTRY } from "@/providers/authProvider";
+import { dataProvider } from "@/providers/dataProvider";
+
+const resources = [
+  { name: "dashboard", list: "/", meta: { label: "仪表盘" } },
+  { name: "users", list: "/users", meta: { label: "用户管理" } },
+  { name: "repos", list: "/repos", meta: { label: "仓库管理" } },
+  { name: "comments", list: "/comments", meta: { label: "评论管理" } },
+];
+
+function AuthGate({ children }: { children: React.ReactNode }) {
+  const { data, error, isFetching, isError, refetch } = useIsAuthenticated();
+
+  React.useEffect(() => {
+    if (data && !data.authenticated) {
+      window.location.assign(data.redirectTo ?? OAUTH_ENTRY);
+    }
+  }, [data]);
+
+  if (isError) {
+    if ((error as Error | undefined)?.name === "Forbidden") {
+      return <LoginDeniedPage />;
+    }
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-paper">
+        <section className="rounded-lg border border-line bg-surface p-6 text-center">
+          <p className="text-sm text-ink-2">身份校验失败，请稍后重试。</p>
+          <Button
+            type="button"
+            variant="outline"
+            className="mt-4 border-line text-ink-2"
+            onClick={() => refetch()}
+          >
+            重试
+          </Button>
+        </section>
+      </main>
+    );
+  }
+
+  if (isFetching || !data?.authenticated) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-paper">
+        <span className="font-mono text-sm text-ink-3">正在验证管理员身份…</span>
+      </main>
+    );
+  }
+
+  return <>{children}</>;
+}
+
+function PendingPage({ title }: { title: string }) {
+  return (
+    <section className="rounded-lg border border-line bg-surface p-6">
+      <h2 className="font-mono text-lg text-ink">{title}</h2>
+      <p className="mt-2 text-sm text-ink-3">建设中（后续任务交付）。</p>
+    </section>
+  );
+}
+
 export default function App() {
   return (
-    <main className="min-h-screen bg-paper text-ink">
-      <section className="mx-auto max-w-[1280px] px-6 py-10">
-        <h1 className="font-mono text-2xl">Meecode 管理台</h1>
-        <p className="mt-2 text-ink-2">脚手架就绪 · 纸面墨线令牌已接入</p>
-        <div className="mt-6 rounded-lg border border-line bg-surface p-4 transition-[color,box-shadow] duration-[180ms] hover:shadow-hover">
-          <span className="text-ink-3">token probe</span>
-          <div className="mt-2 flex gap-2">
-            <span className="rounded-sm bg-brand px-2 py-1 text-surface">brand</span>
-            <span className="rounded-sm bg-tint px-2 py-1 text-ink-2">tint</span>
-            <span className="rounded-sm border border-line-strong px-2 py-1 text-ink-3">
-              line-strong
-            </span>
-          </div>
-        </div>
-      </section>
-    </main>
-  )
+    <BrowserRouter basename="/admin">
+      <Refine
+        routerProvider={routerProvider}
+        dataProvider={dataProvider}
+        authProvider={authProvider}
+        resources={resources}
+        options={{ disableTelemetry: true }}
+      >
+        <AuthGate>
+          <Routes>
+            <Route element={<AppLayout />}>
+              <Route index element={<PendingPage title="仪表盘" />} />
+              <Route path="/users" element={<PendingPage title="用户管理" />} />
+              <Route path="/repos" element={<PendingPage title="仓库管理" />} />
+              <Route path="/comments" element={<PendingPage title="评论管理" />} />
+              <Route path="*" element={<PendingPage title="页面不存在" />} />
+            </Route>
+          </Routes>
+        </AuthGate>
+      </Refine>
+    </BrowserRouter>
+  );
 }
