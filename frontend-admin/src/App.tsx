@@ -6,6 +6,7 @@ import { BrowserRouter, Route, Routes } from "react-router";
 import { AppLayout } from "@/components/AppLayout";
 import { Button } from "@/components/ui/button";
 import { LoginDeniedPage } from "@/pages/LoginDeniedPage";
+import { RepoList } from "@/pages/repos/RepoList";
 import { UserList } from "@/pages/users/UserList";
 import { UserShow } from "@/pages/users/UserShow";
 import { authProvider, OAUTH_ENTRY } from "@/providers/authProvider";
@@ -84,7 +85,7 @@ export default function App() {
               <Route index element={<PendingPage title="仪表盘" />} />
               <Route path="/users" element={<UserList />} />
               <Route path="/users/show/:id" element={<UserShow />} />
-              <Route path="/repos" element={<PendingPage title="仓库管理" />} />
+              <Route path="/repos" element={<RepoList />} />
               <Route path="/comments" element={<PendingPage title="评论管理" />} />
               <Route path="*" element={<PendingPage title="页面不存在" />} />
             </Route>
