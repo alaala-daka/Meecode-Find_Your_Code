@@ -16,8 +16,14 @@ describe("authProvider.check", () => {
 
 describe("authProvider.check · 200", () => {
   it("已认证", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("", { status: 200 }));
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response("", { status: 200 }));
     await expect(authProvider.check!()).resolves.toEqual({ authenticated: true });
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "/api/admin/me",
+      expect.objectContaining({ credentials: "include" }),
+    );
   });
 });
 
@@ -34,10 +40,14 @@ describe("authProvider.check · 403 错误形状", () => {
 describe("authProvider.getIdentity", () => {
   it("返回 /me 主体", async () => {
     const me = { login: "boss", avatar_url: "https://avatars.githubusercontent.com/u/1", is_admin: true };
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify(me), { status: 200 }),
     );
     await expect(authProvider.getIdentity!()).resolves.toEqual(me);
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "/api/admin/me",
+      expect.objectContaining({ credentials: "include" }),
+    );
   });
 });
 

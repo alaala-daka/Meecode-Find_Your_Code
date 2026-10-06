@@ -20,8 +20,8 @@ export class ForbiddenError extends Error {
 
 const getStatus = (error: unknown): number | undefined => {
   if (typeof error !== "object" || error === null) return undefined;
-  const e = error as { status?: unknown; response?: { status?: unknown } };
-  const raw = e.response?.status ?? e.status;
+  const e = error as { status?: unknown; statusCode?: unknown; response?: { status?: unknown } };
+  const raw = e.response?.status ?? e.status ?? e.statusCode;
   return typeof raw === "number" ? raw : undefined;
 };
 

@@ -74,7 +74,7 @@ export default function App() {
         dataProvider={dataProvider}
         authProvider={authProvider}
         resources={resources}
-        options={{ disableTelemetry: true }}
+        options={{ disableTelemetry: true, disableRouteChangeHandler: true }}
       >
         <AuthGate>
           <Routes>
