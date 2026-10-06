@@ -94,6 +94,6 @@ def test_comment_list_shape_and_repo_filter(conn, client, admin):
                         "content", "status", "moderation_reason", "screened", "created_at"}
     assert row["repo_full_name"] == "demo/c81" and row["user_login"] == "u81"
     assert row["content"] == "内容" and row["screened"] == 1 and row["parent_id"] is None
+    assert [r["id"] for r in client.get("/api/admin/comments").json()["data"]] == [c2, c1]  # id DESC
     assert client.get("/api/admin/comments?status=nope").json()["total"] == 2  # 非法 status 不过滤
     assert client.get("/api/admin/comments?page=0").status_code == 422
-    assert c1 != c2
