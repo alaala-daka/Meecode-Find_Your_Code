@@ -73,7 +73,7 @@ export function RepoEdit({ row, onClose, onSaved }: RepoEditProps) {
           <DialogDescription className="font-mono text-ink-2">{row.full_name}</DialogDescription>
         </DialogHeader>
 
-        {actionError && <p className="text-sm text-danger">{actionError}</p>}
+        {actionError && !confirmOpen && <p className="text-sm text-danger">{actionError}</p>}
 
         <div className="space-y-4">
           <div>
@@ -131,7 +131,13 @@ export function RepoEdit({ row, onClose, onSaved }: RepoEditProps) {
           <Button type="button" variant="outline" className="border-line" onClick={onClose}>
             取消
           </Button>
-          <Button type="button" onClick={() => setConfirmOpen(true)}>
+          <Button
+            type="button"
+            onClick={() => {
+              setActionError(null);
+              setConfirmOpen(true);
+            }}
+          >
             保存
           </Button>
         </DialogFooter>
@@ -144,6 +150,7 @@ export function RepoEdit({ row, onClose, onSaved }: RepoEditProps) {
         description={`将 ${row.full_name} 的元数据更新为：分类 ${category} · 质量 ${
           clampQuality(quality) ?? "不变"
         } · 卖点 ${tagline || "（空）"}`}
+        error={actionError}
         onConfirm={handleSave}
       />
     </Dialog>

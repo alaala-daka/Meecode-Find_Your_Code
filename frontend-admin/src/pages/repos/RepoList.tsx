@@ -85,11 +85,16 @@ export function RepoList() {
     await query.refetch().catch(() => undefined);
   };
 
+  const askAction = (row: RepoRow, action: RepoAction) => {
+    setActionError(null);
+    setPending({ row, action });
+  };
+
   return (
     <section className="space-y-4">
       <h2 className="font-mono text-lg text-ink">仓库管理</h2>
 
-      {actionError && <p className="text-sm text-danger">{actionError}</p>}
+      {actionError && !pending && <p className="text-sm text-danger">{actionError}</p>}
 
       <form
         className="flex flex-wrap items-center gap-2"
@@ -201,7 +206,7 @@ export function RepoList() {
                         type="button"
                         size="sm"
                         variant="destructive"
-                        onClick={() => setPending({ row, action: "delist" })}
+                        onClick={() => askAction(row, "delist")}
                       >
                         下架
                       </Button>
@@ -211,7 +216,7 @@ export function RepoList() {
                         <Button
                           type="button"
                           size="sm"
-                          onClick={() => setPending({ row, action: "publish" })}
+                          onClick={() => askAction(row, "publish")}
                         >
                           上架
                         </Button>
@@ -220,7 +225,7 @@ export function RepoList() {
                           size="sm"
                           variant="outline"
                           className="border-line text-ink-2"
-                          onClick={() => setPending({ row, action: "restore" })}
+                          onClick={() => askAction(row, "restore")}
                         >
                           恢复
                         </Button>
@@ -230,7 +235,7 @@ export function RepoList() {
                       <Button
                         type="button"
                         size="sm"
-                        onClick={() => setPending({ row, action: "publish" })}
+                        onClick={() => askAction(row, "publish")}
                       >
                         上架
                       </Button>
@@ -296,6 +301,7 @@ export function RepoList() {
                 : `将 ${pending.row.full_name} 恢复为已发布。`
           }
           danger={pending.action === "delist"}
+          error={actionError}
           onConfirm={handleAction}
         />
       )}

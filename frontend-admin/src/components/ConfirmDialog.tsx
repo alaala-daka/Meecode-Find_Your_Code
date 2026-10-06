@@ -15,6 +15,7 @@ export type ConfirmDialogProps = {
   description: string;
   confirmText?: string;
   danger?: boolean;
+  error?: string | null;
   onConfirm: () => void | Promise<void>;
 };
 
@@ -25,6 +26,7 @@ export function ConfirmDialog({
   description,
   confirmText = "确认",
   danger = false,
+  error,
   onConfirm,
 }: ConfirmDialogProps) {
   const handleConfirm = async () => {
@@ -43,6 +45,11 @@ export function ConfirmDialog({
           <DialogTitle className="font-mono text-ink">{title}</DialogTitle>
           <DialogDescription className="text-ink-2">{description}</DialogDescription>
         </DialogHeader>
+        {error && (
+          <p role="alert" className="text-sm text-danger">
+            {error}
+          </p>
+        )}
         <DialogFooter>
           <Button
             type="button"

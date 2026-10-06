@@ -60,14 +60,14 @@ const rows = [
 
 type Call = { url: string; method: string; body: unknown };
 
-const setupFetch = (fail?: { urlSuffix: string; status: number; detail: string }) => {
+const setupFetch = (fail?: { urlSuffix: string; status: number; detail: string; method?: string }) => {
   const calls: Call[] = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
     const method = (init?.method ?? "GET").toUpperCase();
     const body = init?.body ? JSON.parse(String(init.body)) : undefined;
     calls.push({ url, method, body });
-    if (fail && method === "POST" && url.endsWith(fail.urlSuffix)) {
+    if (fail && method === (fail.method ?? "POST") && url.endsWith(fail.urlSuffix)) {
       return new Response(JSON.stringify({ detail: fail.detail }), { status: fail.status });
     }
     if (method === "GET") {
@@ -165,7 +165,7 @@ describe("RepoList · 状态动作", () => {
     expect(publish.body).toBeUndefined();
   });
 
-  it("非法状态转移 409 → 页面 actionError 展示 detail", async () => {
+  it("非法状态转移 409 → 错误浮现在确认弹窗内部且弹窗保持打开", async () => {
     setupFetch({
       urlSuffix: "/repos/3/delist",
       status: 409,
@@ -175,10 +175,13 @@ describe("RepoList · 状态动作", () => {
     await screen.findByText("demo/p100");
 
     await userEvent.click(rowScope("demo/p100").getByRole("button", { name: "下架" }));
-    await userEvent.click(await screen.findByRole("button", { name: "确认" }));
+    const dialog = await screen.findByRole("dialog", { name: "确认下架" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "确认" }));
 
-    expect(await screen.findByText(/非法状态转移/)).toBeInTheDocument();
-    expect(screen.getByText(/下架失败/)).toBeInTheDocument();
+    const errorNode = await within(dialog).findByRole("alert");
+    expect(errorNode).toHaveTextContent("下架失败：非法状态转移: published -> delist");
+    expect(dialog).toContainElement(errorNode);
+    expect(within(dialog).getByRole("button", { name: "确认" })).toBeInTheDocument();
   });
 });
 
@@ -210,6 +213,33 @@ describe("RepoList · 元数据编辑", () => {
     const patch = calls.find((c) => c.method === "PATCH")!;
     expect(patch.url).toBe("/api/admin/repos/3");
     expect(patch.body).toEqual({ category: "开发工具", quality: 9, tagline_zh: "新卖点" });
+  });
+
+  it("保存失败 409 → 错误浮现在保存确认弹窗内部且弹窗保持打开", async () => {
+    setupFetch({
+      urlSuffix: "/repos/3",
+      method: "PATCH",
+      status: 409,
+      detail: "非法状态转移",
+    });
+    renderList();
+    await screen.findByText("demo/p100");
+
+    await userEvent.click(rowScope("demo/p100").getByRole("button", { name: "编辑" }));
+
+    const tagline = screen.getByLabelText("卖点");
+    await userEvent.clear(tagline);
+    await userEvent.type(tagline, "新卖点");
+
+    await userEvent.click(screen.getByRole("button", { name: "保存" }));
+    const dialog = await screen.findByRole("dialog", { name: "保存仓库元数据" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "确认" }));
+
+    const errorNode = await within(dialog).findByRole("alert");
+    expect(errorNode).toHaveTextContent("保存失败：非法状态转移");
+    expect(dialog).toContainElement(errorNode);
+    expect(within(dialog).getByRole("button", { name: "确认" })).toBeInTheDocument();
+    expect(screen.getByLabelText("卖点")).toHaveValue("新卖点");
   });
 });
 
