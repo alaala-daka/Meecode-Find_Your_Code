@@ -194,7 +194,23 @@ npm run build
 rsync -az --delete -e "ssh -i <部署私钥>" dist/ deploy@<服务器IP>:/var/www/admin/
 ```
 
-首次部署先在服务器 `mkdir -p /var/www/admin`（deploy 用户）。主站产物 `frontend/dist/` 含 `robots.txt`（`Disallow: /admin/`），照常同步。
+首次部署须先建目录（`/var/www/` 属 root，deploy 用户不能直接 mkdir）：
+
+```bash
+ssh deploy@<服务器IP> "sudo mkdir -p /var/www/admin && sudo chown deploy:deploy /var/www/admin"
+```
+
+主站产物 `frontend/dist/` 含 `robots.txt`（`Disallow: /admin/`），照常同步。
+
+**Windows 开发机变体**（无原生 rsync，两选一）：
+- WSL 方案（语义与上式一致）：私钥须复制进 WSL 家目录再用（/mnt/c 直引会因权限映射过宽报 `UNPROTECTED PRIVATE KEY FILE`）：
+
+```powershell
+wsl bash -c "cp /mnt/c/Users/<你>/.ssh/<私钥> ~/.ssh/meecode-deploy && chmod 600 ~/.ssh/meecode-deploy"
+wsl rsync -az --delete -e "ssh -i ~/.ssh/meecode-deploy" /mnt/c/.../frontend-admin/dist/ deploy@<服务器IP>:/var/www/admin/
+```
+
+- scp 方案（零安装）：`ssh deploy@<服务器IP> "rm -rf /var/www/admin/*"` 后 `scp -r dist\* deploy@<服务器IP>:/var/www/admin/`（先清空模拟 `--delete`）。SSH 在服务端只收公钥时无钥匙会 `Connection closed`——先确认本地 `~/.ssh/` 有对应私钥。
 
 2. nginx：模板含 `location /admin/`（root 形态为主）与安全头 snippet，按 §13 方式替换配置后 `nginx -t && systemctl reload nginx`。**必须同时安装 snippet**（server 级与 /admin/ 共同 include，防 add_header 漂移）：
 
