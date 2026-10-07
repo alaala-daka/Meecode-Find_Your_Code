@@ -1,0 +1,18 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* 纸面墨线基调（令牌见 tokens.css，由 main.tsx 先行引入） */
+@layer base {
+  body {
+    @apply bg-paper text-ink;
+    font-family: var(--font-body);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* shadcn 组件全局覆写方向：静置无影、发丝线、小圆角、克制动效 */
+  * {
+    border-color: var(--line);
+    @apply border-border;
+  }
+}

@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
 from . import config, gh, security
+from .admin import routes as admin_routes
 from .agent import prompts
 from .agent.graph import run_elaborate, run_expand, run_repo_topic, run_rewrite
 from .agent.mock import mock_chat_events, mock_repo_context
@@ -64,6 +65,7 @@ app.include_router(submit_routes.router, prefix="/api")
 app.include_router(me_routes.router, prefix="/api")
 app.include_router(users_routes.router, prefix="/api")
 app.include_router(comments_routes.router, prefix="/api")
+app.include_router(admin_routes.router)
 
 class _SessionStore:
     """进程内解读会话:滑动 TTL + 容量上限,满额拒新键(不淘汰既有,防洪水重置)。

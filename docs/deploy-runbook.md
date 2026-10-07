@@ -178,3 +178,72 @@ for i in $(seq 1 25); do curl -s -o /dev/null -w '%{http_code}\n' -X POST https:
 > 前置条件：限流键取 nginx `$proxy_add_x_forwarded_for` 追加的 XFF 末段，仅在「后端仅监听 127.0.0.1、流量必经 nginx」时可信；若绕过 nginx 直连 8100，IP 限形同虚设。
 
 5. 回滚：删除 nginx 中 6 个 `add_header` 行 + `nginx -t && systemctl reload nginx`；限流置 `RATE_LIMIT_ENABLED=false` 并重启后端。
+
+## 14. 管理台部署（2026-10-05，入口加固 2026-10-07）
+
+管理台是独立静态 SPA（`frontend-admin/`），挂 `/admin/` 路径，产物放 `/var/www/admin/`（nginx 用 root 形态 `root /var/www;`，`/admin/` 映射 `/var/www/admin/`）；API 走既有 `/api/` 反代（同后端 8100），**无新增 proxy**。CSP 复用全局头（`script-src 'self'` 已满足打包产物），不放宽。
+
+**入口双凭证（spec F9）**：`/admin/` 全路径（页面/深链/JS bundle）前置 nginx Basic Auth + `X-Robots-Tag: noindex`；API 边界仍是后端 `ADMIN_LOGINS`（Basic 凭证作用域仅 `/admin/`，不波及 `/api/admin/`，浏览器不会向 API 附带 Basic 头）。
+
+1. 本机构建并同步产物（dist 文件名带 hash，整目录覆盖即可）：
+
+```bash
+cd frontend-admin
+npm ci
+npm run build
+rsync -az --delete -e "ssh -i <部署私钥>" dist/ deploy@<服务器IP>:/var/www/admin/
+```
+
+首次部署须先建目录（`/var/www/` 属 root，deploy 用户不能直接 mkdir）：
+
+```bash
+ssh deploy@<服务器IP> "sudo mkdir -p /var/www/admin && sudo chown deploy:deploy /var/www/admin"
+```
+
+主站产物 `frontend/dist/` 含 `robots.txt`（`Disallow: /admin/`），照常同步。
+
+**Windows 开发机变体**（无原生 rsync，两选一）：
+- WSL 方案（语义与上式一致）：私钥须复制进 WSL 家目录再用（/mnt/c 直引会因权限映射过宽报 `UNPROTECTED PRIVATE KEY FILE`）：
+
+```powershell
+wsl bash -c "cp /mnt/c/Users/<你>/.ssh/<私钥> ~/.ssh/meecode-deploy && chmod 600 ~/.ssh/meecode-deploy"
+wsl rsync -az --delete -e "ssh -i ~/.ssh/meecode-deploy" /mnt/c/.../frontend-admin/dist/ deploy@<服务器IP>:/var/www/admin/
+```
+
+- scp 方案（零安装）：`ssh deploy@<服务器IP> "rm -rf /var/www/admin/*"` 后 `scp -r dist\* deploy@<服务器IP>:/var/www/admin/`（先清空模拟 `--delete`）。SSH 在服务端只收公钥时无钥匙会 `Connection closed`——先确认本地 `~/.ssh/` 有对应私钥。
+
+2. nginx：模板含 `location /admin/`（root 形态为主）与安全头 snippet，按 §13 方式替换配置后 `nginx -t && systemctl reload nginx`。**必须同时安装 snippet**（server 级与 /admin/ 共同 include，防 add_header 漂移）：
+
+```bash
+cp deploy/nginx-security-headers.conf /etc/nginx/snippets/security-headers.conf
+```
+
+alias 形态（产物放 `/var/www/meecode-admin/`）仅作模板内注释备选，仅当 root 形态不可用时启用，且须重跑本节冒烟。
+
+3. Basic Auth 凭证（htpasswd，bcrypt）：
+
+```bash
+apt install apache2-utils
+htpasswd -cB /etc/nginx/.htpasswd-admin <管理用户名>
+chown root:www-data /etc/nginx/.htpasswd-admin && chmod 640 /etc/nginx/.htpasswd-admin
+```
+
+轮换口令 = 不带 `-c` 重复 htpasswd 命令。口令要求：强口令（≥12 位随机）、**不得与 GitHub 密码相同**、入密码管理器。注意：Basic Auth 401 发生在 nginx 层不走应用限流，强口令为首要缓解；如需更严可加 fail2ban 的 `nginx-http-auth` filter（可选）。
+
+4. 管理台鉴权是 GitHub 登录白名单 `ADMIN_LOGINS`（逗号分隔 GitHub login，大小写不敏感）。在 `/etc/systemd/system/meecode-backend.service` 的 `[Service]` 段追加一行（仓库模板 `deploy/meecode-backend.service` 不含此行，勿用模板覆盖线上 unit）：
+
+```ini
+Environment=ADMIN_LOGINS=<login1>,<login2>
+```
+
+然后 `systemctl daemon-reload && systemctl restart meecode-backend`。漏配时白名单为空，登录用户访问管理接口一律 403。
+
+5. `ADMIN_DEV_ORIGIN`（默认 `http://localhost:5174`）**仅本地开发需要**：本地 `frontend-admin` dev server 与后端不同源，靠它进 CORS 白名单；生产同源（`https://<你的域名>/admin/`）无需配置。
+
+6. 冒烟（硬门禁，逐条过）：
+
+- **匿名 401**：`curl -sI https://<你的域名>/admin/`、`/admin/users`（深链）、`/admin/assets/<任一产物>.js` 应全 401（带 `WWW-Authenticate: Basic`）——含 JS bundle 在内不可匿名下载；
+- **带凭证 200 且 7 头齐全**：`curl -sI -u <user>:<pass> https://<你的域名>/admin/users` 应 200 `text/html`，且响应头含 **全部 7 条**：`Content-Security-Policy`、`Strict-Transport-Security`、`X-Frame-Options`、`X-Content-Type-Options`、`Referrer-Policy`、`Permissions-Policy`、`X-Robots-Tag: noindex`（漏任一条 = snippet include 失效，安全头被剥，立即修）；
+- **robots.txt**：`curl -s https://<你的域名>/robots.txt` 含 `Disallow: /admin/`；
+- **API 边界未动**：`curl -sI https://<你的域名>/api/admin/me` 仍 401 JSON 且**不弹 Basic 框**（无 `WWW-Authenticate`）；
+- 浏览器输一次 Basic 口令（realm 缓存后续免输）→ GitHub 登录白名单账号进仪表盘，非白名单账号接 403 页。

@@ -115,6 +115,7 @@ def create_comment(
     ).fetchone() is None:
         raise HTTPException(status_code=404, detail="仓库不存在或已下架")
     user = auth.require_user(request, conn)
+    auth.ensure_not_banned(conn, user["id"], "comment")
     parent = (
         _normalize_parent(conn, body.repo_id, body.parent_id)
         if body.parent_id is not None else None

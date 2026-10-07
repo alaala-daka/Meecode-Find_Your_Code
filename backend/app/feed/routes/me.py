@@ -24,10 +24,14 @@ router = APIRouter()
 
 TOGGLEABLE = ("like", "favorite")
 OAUTH_STATE_COOKIE = "oauth_state"
+# 回跳白名单（防开放重定向，spec §5.3）：精确成员匹配，绝不做前缀/外部 URL 放行
+OAUTH_REDIRECT_COOKIE = "mc_oauth_redirect"
+ALLOWED_REDIRECTS = frozenset({"/", "/admin/"})
 
 
 @router.get("/auth/github")
-def oauth_entry() -> RedirectResponse:
+def oauth_entry(redirect: str = "/") -> RedirectResponse:
+    safe = redirect if redirect in ALLOWED_REDIRECTS else "/"
     state = secrets.token_urlsafe(32)
     params = urllib.parse.urlencode({
         "client_id": config.GITHUB_CLIENT_ID,
@@ -39,6 +43,11 @@ def oauth_entry() -> RedirectResponse:
         OAUTH_STATE_COOKIE, state,
         max_age=600, httponly=True, samesite="lax",
         secure=not config.GITHUB_MOCK,  # 生产(HTTPS)强制安全 cookie
+    )
+    resp.set_cookie(
+        OAUTH_REDIRECT_COOKIE, safe,
+        max_age=600, httponly=True, samesite="lax",
+        secure=not config.GITHUB_MOCK,
     )
     return resp
 
@@ -69,7 +78,11 @@ def oauth_callback(
     )
     conn.commit()
     background.add_task(star_sync.backfill_after_auth, user_id)
-    resp = RedirectResponse(config.FRONTEND_ORIGIN)
+    # 回跳目标以 cookie 往返；回来再校验白名单一次（纵深防御：cookie 若被篡改也只回 "/"）
+    target = request.cookies.get(OAUTH_REDIRECT_COOKIE, "/")
+    target = target if target in ALLOWED_REDIRECTS else "/"
+    resp = RedirectResponse(config.FRONTEND_ORIGIN.rstrip("/") + target)
+    resp.delete_cookie(OAUTH_REDIRECT_COOKIE)
     resp.delete_cookie(OAUTH_STATE_COOKIE)
     resp.set_cookie(
         config.SESSION_COOKIE, auth.issue_token(conn, user_id),

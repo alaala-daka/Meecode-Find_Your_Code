@@ -15,6 +15,7 @@ import hashlib
 import hmac
 import sqlite3
 import time
+from typing import Literal
 
 from fastapi import HTTPException, Request
 
@@ -107,3 +108,17 @@ def require_user(request: Request, conn: sqlite3.Connection) -> sqlite3.Row:
     if user is None:
         raise HTTPException(status_code=401, detail="请先用 GitHub 账号登录")
     return user
+
+
+def ensure_not_banned(conn: sqlite3.Connection, user_id: int,
+                      action: Literal["comment", "submit"],
+                      now: float | None = None) -> None:
+    """命中生效封禁 raise HTTPException(403, detail={"code":"banned","action":action,"until":until})。
+    拦截面：comment -> POST /api/comments；submit -> POST /api/submit + POST /api/ai-draft（F3）。
+    DELETE /api/comments 不拦（用户删自己评论是退出通道，F7）。"""
+    col = "ban_comment_until" if action == "comment" else "ban_submit_until"
+    until = conn.execute(f"SELECT {col} AS u FROM users WHERE id=?", (user_id,)).fetchone()
+    ts = int(now if now is not None else time.time())
+    if until is not None and (until["u"] or 0) > ts:
+        raise HTTPException(status_code=403, detail={"code": "banned", "action": action,
+                                                     "until": until["u"]})

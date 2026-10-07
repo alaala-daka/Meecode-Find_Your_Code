@@ -1,0 +1,92 @@
+"""管理台用户 API：列表/筛选/详情/备注。"""
+import time
+
+from app.admin.routes.users import BAN_FOREVER
+from app.feed import auth
+
+NOW = int(time.time())
+
+
+def _mk_user(conn, gh_id, login, *, ban_comment_until=None, ban_submit_until=None):
+    uid = auth.upsert_user(conn, {"id": gh_id, "login": login, "avatar_url": "https://a/x"})
+    conn.execute("UPDATE users SET ban_comment_until=?, ban_submit_until=? WHERE id=?",
+                 (ban_comment_until, ban_submit_until, uid))
+    conn.commit()
+    return uid
+
+
+def test_users_list_derives_status(conn, client, admin):
+    _mk_user(conn, 10, "alice", ban_comment_until=NOW + 3600)          # banned
+    _mk_user(conn, 11, "bob", ban_comment_until=NOW - 10)              # 过期=normal
+    body = client.get("/api/admin/users?status=banned").json()
+    assert [u["login"] for u in body["data"]] == ["alice"]
+    assert body["total"] == 1
+
+
+def test_users_search_escapes_like_wildcards(conn, client, admin):
+    _mk_user(conn, 10, "alice")
+    _mk_user(conn, 11, "a%b")
+    body = client.get("/api/admin/users?q=%25").json()  # q="%" 应只命中字面 % 的 a%b
+    assert [u["login"] for u in body["data"]] == ["a%b"]
+
+
+def test_user_detail_includes_recent_interactions_and_patch_note(conn, client, admin):
+    uid = _mk_user(conn, 10, "alice")
+    conn.execute("INSERT INTO repos (github_id, full_name, owner_login, source, status)"
+                 " VALUES (1, 'o/r', 'other', 'submitted', 'published')")
+    conn.execute("INSERT INTO interactions (user_id, repo_id, kind, updated_at)"
+                 " VALUES (?, 1, 'visit', ?)", (uid, NOW))
+    conn.commit()
+    body = client.get(f"/api/admin/users/{uid}").json()
+    assert body["counts"]["visits"] == 1
+    r = client.patch(f"/api/admin/users/{uid}", json={"admin_note": "观察对象"})
+    assert r.status_code == 200
+    assert client.get(f"/api/admin/users/{uid}").json()["admin_note"] == "观察对象"
+
+
+def test_recent_interactions_ordered_by_last_activity(conn, client, admin):
+    uid = _mk_user(conn, 10, "alice")
+    conn.execute("INSERT INTO repos (github_id, full_name, owner_login, source, status)"
+                 " VALUES (1, 'o/r1', 'other', 'submitted', 'published')")
+    conn.execute("INSERT INTO repos (github_id, full_name, owner_login, source, status)"
+                 " VALUES (2, 'o/r2', 'other', 'submitted', 'published')")
+    conn.execute("INSERT INTO interactions (user_id, repo_id, kind, updated_at)"
+                 " VALUES (?, 1, 'visit', ?)", (uid, NOW + 100))
+    conn.execute("INSERT INTO interactions (user_id, repo_id, kind, updated_at)"
+                 " VALUES (?, 2, 'visit', ?)", (uid, NOW))
+    conn.commit()
+    rows = client.get(f"/api/admin/users/{uid}").json()["recent_interactions"]
+    assert [r["repo_id"] for r in rows] == [1, 2]
+    assert rows[0]["created_at"] == NOW + 100
+
+
+def test_ban_single_dimension_and_combo(conn, client, admin):
+    uid = _mk_user(conn, 10, "alice")
+    r = client.post(f"/api/admin/users/{uid}/ban",
+                    json={"mute_comment": True, "mute_submit": False,
+                          "until": NOW + 3600, "note": "刷屏"})
+    assert r.status_code == 200
+    row = conn.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
+    assert row["ban_comment_until"] == NOW + 3600
+    assert row["ban_submit_until"] is None
+    assert row["ban_note"] == "刷屏"
+
+    r = client.post(f"/api/admin/users/{uid}/ban",
+                    json={"mute_comment": True, "mute_submit": True,
+                          "until": NOW + 7200, "note": "组合"})
+    row = conn.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
+    assert row["ban_comment_until"] == NOW + 7200 and row["ban_submit_until"] == NOW + 7200
+
+
+def test_ban_revokes_sessions_and_unban_clears(conn, client, admin):
+    uid = _mk_user(conn, 10, "alice")
+    before = conn.execute("SELECT session_epoch FROM users WHERE id=?", (uid,)).fetchone()["session_epoch"]
+    client.post(f"/api/admin/users/{uid}/ban",
+                json={"mute_comment": True, "mute_submit": True, "until": BAN_FOREVER})
+    after = conn.execute("SELECT session_epoch FROM users WHERE id=?", (uid,)).fetchone()["session_epoch"]
+    assert after == before + 1  # 全端下线
+
+    client.post(f"/api/admin/users/{uid}/unban")
+    row = conn.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
+    assert row["ban_comment_until"] is None and row["ban_submit_until"] is None
+    assert row["ban_note"] == ""

@@ -1,0 +1,103 @@
+/* frontend-admin/src/styles/tokens.css — 复制自 frontend/src/styles/theme.css 的根选择器块（令牌唯一出处），逐字引入，不得发明新色值。 */
+:root {
+  /* 中性面（§3.1）：纸面 / 白卡 / 浅填充 */
+  --paper: #FAF9F6;
+  --surface: #FFFFFF;
+  --tint: #F3F1EA;
+  --tint-deep: #ECE9E0;
+
+  /* 墨色文字（§3.2） */
+  --ink: #313A45;
+  --ink-2: #5F6874;
+  --ink-3: #9098A3;
+  --ink-4: #C3C8CE;
+
+  /* 赭红强调（§3.3）：唯一品牌 accent，锁全站 */
+  --brand: #AE5139;
+  --brand-hover: #96432C;
+  --brand-active: #7E3822;
+  --brand-disabled: #E3B4A5;
+  --brand-thin: #F8EFEA;
+  --brand-line: #E9D2C7;
+
+  /* 品牌标志橙（Logo 2026-08 更新）：仅 Logo 图形 / Meecode 字标 / favicon 使用 */
+  --logo-accent: #EE4B22;
+
+  /* 语义色（§3.4）：仅在状态语义处出现，不作装饰 */
+  --like: #C24E6F;
+  --fav: #D9962E;
+  --danger: #C25040;
+  --ok: #4E9B72;
+  --warn: #C98A2D;
+
+  /* 发丝线（§3.5） */
+  --line: #E7E3D8;
+  --line-strong: #D6D1C4;
+
+  /* 圆角（§4.1 规则）：卡片 10 / 控件 8 / 小件 6 / 胶囊全圆 */
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-xl: 14px;
+  --radius-pill: 999px;
+
+  /* 阴影（§4.2）：静置无影，悬停极浅投影，色调随纸面 */
+  --shadow-hover: 0 2px 10px rgba(62, 52, 36, 0.07);
+  --shadow-dropdown: 0 4px 16px rgba(62, 52, 36, 0.08);
+  --focus-ring: 0 0 0 2px var(--brand-thin), 0 0 0 3.5px var(--brand-line);
+
+  /* 动效（§4.3）：克制 */
+  --time-fast: 0.18s;
+  --time-slow: 0.28s;
+  --ease: cubic-bezier(0, 0, 0.2, 1);
+
+  /* 字型（身份层）：仓库名/路径/数字一律等宽；中文正文系统无衬线 */
+  --font-body: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica,
+    Arial, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --font-mono: ui-monospace, "Cascadia Code", "JetBrains Mono", Consolas,
+    Menlo, "Liberation Mono", "Courier New", monospace;
+
+  /* 布局（§5） */
+  --shell-max: 1280px;
+  --shell-pad: 24px;
+  --grid-gap: 16px;
+  --topbar-h: 64px;
+
+  /* 遮罩 */
+  --mask_modal: rgba(49, 42, 32, 0.44);
+
+  /* ── 旧令牌别名（兼容 explain 等外围引用；新代码请用上方语义令牌） ── */
+  --bg1: var(--surface);
+  --bg2: var(--tint);
+  --bg3: var(--paper);
+  --text1: var(--ink);
+  --text2: var(--ink-2);
+  --text3: var(--ink-3);
+  --text4: var(--ink-4);
+  --brand_blue: var(--brand);
+  --brand_blue_hover: var(--brand-hover);
+  --brand_blue_active: var(--brand-active);
+  --brand_blue_disabled: var(--brand-disabled);
+  --brand_blue_thin: var(--brand-thin);
+  --brand_blue_line: var(--brand-line);
+  --brand_amber: var(--fav);
+  --brand_amber_hover: var(--warn);
+  --brand_amber_active: var(--brand-active);
+  --brand_amber_thin: var(--brand-thin);
+  --like_pink: var(--like);
+  --fav_yellow: var(--fav);
+  --stress_red: var(--danger);
+  --success_green: var(--ok);
+  --operate_orange: var(--warn);
+  --badge_red: var(--danger);
+  --line_light: var(--line);
+  --line_regular: var(--line);
+  --line_bold: var(--line-strong);
+  --shadow_float: var(--shadow-hover);
+  --mask_cover: var(--mask_modal);
+  --topbar_bg: rgba(255, 255, 255, 0.92);
+  --dot_texture: rgba(255, 255, 255, 0.5);
+  --profile_banner: var(--paper);
+  --on_banner: var(--ink);
+  --on_banner_dim: var(--ink-2);
+}

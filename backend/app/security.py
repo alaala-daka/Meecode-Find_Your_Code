@@ -28,8 +28,10 @@ API_PREFIX = "/api"
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS", "TRACE"}
 
 # (方法或 None=不限, 路径前缀, 桶名)；按序首个命中，未命中落 default。
+# admin 必须排最前：管理台批量操作独立宽松桶（F5），否则落 default 与其他路径抢配额。
 # llm 六条必须排在 delist 之前：POST /api/repos/root 同时匹配 /api/repos/ 前缀。
 _RATE_RULES: tuple[tuple[str | None, str, str], ...] = (
+    (None, "/api/admin/", "admin"),
     ("POST", "/api/ai-draft", "llm"),
     ("POST", "/api/repos/root", "llm"),
     ("POST", "/api/roots", "llm"),

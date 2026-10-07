@@ -85,6 +85,7 @@ def submit(
     body: SubmitIn, request: Request, conn: sqlite3.Connection = Depends(get_conn)
 ) -> RepoCardOut:
     user = auth.require_user(request, conn)
+    auth.ensure_not_banned(conn, user["id"], "submit")
     if not body.tagline_zh.strip():
         raise HTTPException(status_code=422, detail="请填写一句话卖点")
     if body.category not in config.CATEGORIES:
@@ -190,6 +191,7 @@ def ai_draft(
 ) -> DraftResult:
     """「AI 帮我写」：失败返回空串，由前端提示手写，绝不 500。"""
     user = auth.require_user(request, conn)
+    auth.ensure_not_banned(conn, user["id"], "submit")
     gh = _own_repo_by_id(user["login"], body.github_id)
     try:
         readme = github.get_readme(gh["full_name"], interactive=True)
