@@ -452,7 +452,7 @@ def test_yearly_lists_years(conn):
 def test_year_pv_fast_path(conn):
     year = time.gmtime(NOW).tm_year
     conn.execute("INSERT INTO traffic_daily (date, pv, uv) VALUES (?,?,?)",
-                 (f"{year}-03-01", 9, 2))
+                 (traffic.today_utc(NOW - 3 * 86400), 9, 2))
     conn.commit()
     assert traffic.year_pv(conn, year, NOW) == 9
     today = traffic.today_utc(NOW)
