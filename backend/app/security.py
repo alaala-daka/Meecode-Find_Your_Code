@@ -21,7 +21,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from . import config
+from . import config, traffic
 from .feed import auth
 
 API_PREFIX = "/api"
@@ -90,6 +90,15 @@ def rate_key(request: Request) -> str:
     return f"u:{user_id}:{epoch}"
 
 
+HIT_PATH = "/api/hit"
+
+
+def session_user_id(request: Request) -> int | None:
+    token = request.cookies.get(config.SESSION_COOKIE, "")
+    verified = auth.verify(token) if token else None
+    return verified[0] if verified else None
+
+
 class SlidingWindowLimiter:
     """进程内滑动窗口计数。多 worker 部署时各进程独立计数（见 spec 风险表）。
 
@@ -135,13 +144,30 @@ _limiter = SlidingWindowLimiter()
 
 
 class SecurityMiddleware(BaseHTTPMiddleware):
-    """先 Origin 校验（403），再限流（429）；仅拦 /api 前缀路径。"""
+    """先 Origin 校验（403），再限流（429）；仅拦 /api 前缀路径。
+
+    二期（spec §2.4）：每请求缓冲写 access_events（含 4xx/5xx）；
+    HIT beacon 端点自身不入 api_calls（HIT 行由端点写入）。
+    """
 
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
         if not path.startswith(API_PREFIX):
             return await call_next(request)
+        response = await self._respond(request, call_next)
+        # 429 不落明细（限流器自知被拒量；落行会放大洪水面）。埋点吞异常（纵深）。
+        if not (path == HIT_PATH and request.method == "POST") and response.status_code != 429:
+            try:
+                traffic.writer.record(
+                    ts=int(time.time()), user_id=session_user_id(request),
+                    ip=client_ip(request), path=path,
+                    method=request.method, status_code=response.status_code)
+            except Exception:  # pragma: no cover - record 内已吞，双保险
+                pass
+        return response
 
+    async def _respond(self, request: Request, call_next):
+        path = request.url.path
         if request.method not in SAFE_METHODS:
             origin = request.headers.get("origin")
             if origin and origin not in config.ALLOWED_ORIGINS:

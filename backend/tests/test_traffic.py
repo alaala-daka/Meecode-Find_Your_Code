@@ -1,6 +1,8 @@
 """访问埋点：ip_hash 口径、缓冲 flush、day_stats 口径（spec §2.2）。"""
 import time
 
+from app import config
+from app import security
 from app import traffic
 
 NOW = int(time.time())
@@ -237,3 +239,51 @@ def test_writer_spawn_failure_releases_single_flight(monkeypatch):
     traffic.writer.record(ts=NOW, user_id=None, ip="1.1.1.1", path="/",
                           method="HIT", status_code=200)
     assert len(spawns) == 1
+
+
+# ---------- 中间件埋点（二期 §2.4） ----------
+
+def test_middleware_records_api_row(conn, client):
+    traffic.writer.reset()
+    client.get("/api/health")
+    traffic.writer.flush(conn)
+    row = conn.execute("SELECT * FROM access_events").fetchone()
+    assert row["path"] == "/api/health" and row["method"] == "GET"
+    assert row["status_code"] == 200 and row["user_id"] is None
+
+
+def test_middleware_records_4xx(conn, client):
+    traffic.writer.reset()
+    client.get("/api/no-such-route")
+    traffic.writer.flush(conn)
+    row = conn.execute("SELECT * FROM access_events").fetchone()
+    assert row["status_code"] == 404
+
+
+def test_middleware_records_user_id_for_logged_in(conn, client, admin):
+    traffic.writer.reset()
+    client.get("/api/health")
+    traffic.writer.flush(conn)
+    row = conn.execute("SELECT * FROM access_events").fetchone()
+    assert row["user_id"] == admin
+
+
+def test_middleware_skips_429_rows(conn, client, monkeypatch):
+    traffic.writer.reset()
+    monkeypatch.setattr(config, "RATE_LIMIT_ENABLED", True)
+    monkeypatch.setattr(config, "RATE_LIMITS", {**config.RATE_LIMITS, "default": 1})
+    security._limiter.reset()
+    assert client.get("/api/health").status_code == 200
+    assert client.get("/api/health").status_code == 429
+    traffic.writer.flush(conn)
+    rows = conn.execute("SELECT * FROM access_events").fetchall()
+    assert len(rows) == 1 and rows[0]["status_code"] == 200
+
+
+def test_middleware_skips_hit_post_but_records_hit_get(conn, client):
+    traffic.writer.reset()
+    client.post(security.HIT_PATH)
+    client.get(security.HIT_PATH)
+    traffic.writer.flush(conn)
+    rows = conn.execute("SELECT * FROM access_events").fetchall()
+    assert len(rows) == 1 and rows[0]["method"] == "GET"
