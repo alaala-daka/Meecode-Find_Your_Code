@@ -128,6 +128,7 @@ class AccessWriter:
             self._buf = []
             self._active = {}
             self._active_written = {}
+            self._flush_scheduled = False
             self.failures = 0
 
     def record(self, *, ts: int, user_id: int | None, ip: str, path: str,
@@ -147,7 +148,13 @@ class AccessWriter:
                 if spawn:
                     self._flush_scheduled = True
             if spawn:
-                threading.Thread(target=self._flush_auto, daemon=True).start()
+                try:
+                    threading.Thread(target=self._flush_auto, daemon=True).start()
+                except Exception:
+                    with self._lock:
+                        self._flush_scheduled = False  # 起线程失败须解除 single-flight，防永久停摆
+                        self.failures += 1
+                    log.exception("access_events flush 线程启动失败（fail-swallow）")
         except Exception:
             with self._lock:
                 self.failures += 1

@@ -202,3 +202,38 @@ def test_writer_last_active_max_no_regress(conn):
     assert conn.execute(
         "SELECT last_active_at FROM users WHERE id=?", (uid,)).fetchone()[0] == t_new
     assert traffic.writer.failures == 0
+
+
+def test_writer_spawn_failure_releases_single_flight(monkeypatch):
+    import types
+
+    traffic.writer.reset()
+    before = traffic.writer.failures
+    spawns = []
+
+    class _BoomThread:
+        def __init__(self, *a, **k):
+            raise RuntimeError("can't start new thread")
+
+    class _CountThread:
+        def __init__(self, target=None, daemon=None):
+            self.target = target
+
+        def start(self):
+            spawns.append(self.target)
+
+    monkeypatch.setattr(traffic, "ACCESS_FLUSH_ROWS", 1)
+    monkeypatch.setattr(traffic, "threading", types.SimpleNamespace(Thread=_BoomThread))
+    traffic.writer.record(ts=NOW, user_id=None, ip="1.1.1.1", path="/",
+                          method="HIT", status_code=200)
+    assert traffic.writer.failures == before + 1
+    assert traffic.writer._flush_scheduled is False
+
+    monkeypatch.setattr(traffic, "threading", types.SimpleNamespace(Thread=_CountThread))
+    traffic.writer.record(ts=NOW, user_id=None, ip="1.1.1.1", path="/",
+                          method="HIT", status_code=200)
+    assert len(spawns) == 1
+    assert traffic.writer._flush_scheduled is True
+    traffic.writer.record(ts=NOW, user_id=None, ip="1.1.1.1", path="/",
+                          method="HIT", status_code=200)
+    assert len(spawns) == 1
