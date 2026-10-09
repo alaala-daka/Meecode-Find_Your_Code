@@ -85,7 +85,7 @@ def online_window_minutes(conn: sqlite3.Connection) -> int:
     try:
         return max(1, int(config_get(
             conn, "online_window_minutes", str(DEFAULT_ONLINE_WINDOW_MINUTES))))
-    except ValueError:
+    except (ValueError, TypeError):
         return DEFAULT_ONLINE_WINDOW_MINUTES
 
 
@@ -105,6 +105,9 @@ class AccessWriter:
     - record 全路径吞异常（failures 计数），绝不让埋点把主请求打 500；
     - _buf 硬上限 ACCESS_MAX_BUFFER，满则丢新行计 failures（防内存 DoS）；
     - flush 在守护线程执行（dispatch 在事件循环线程，同步 SQLite I/O 会停摆全服务）。
+    并发修订（2026-10-09 任务评审 F1/F2）：
+    - single-flight：_flush_scheduled 防 record 洪峰刷出线程风暴与并发写连接；
+    - _active_written/failures 全部锁内读写；last_active_at 按 MAX 语义写（防回拨）。
     """
 
     def __init__(self) -> None:
@@ -112,6 +115,7 @@ class AccessWriter:
         self._active: dict[int, int] = {}
         self._active_written: dict[int, int] = {}
         self._lock = threading.Lock()
+        self._flush_scheduled = False
         self._factory = None
         self._last_flush = time.time()
         self.failures = 0
@@ -129,59 +133,78 @@ class AccessWriter:
     def record(self, *, ts: int, user_id: int | None, ip: str, path: str,
                method: str, status_code: int) -> None:
         try:
+            digest = ip_hash(ip)  # 锁外算：首次 PBKDF2 不阻塞并发 record
             with self._lock:
                 if len(self._buf) >= ACCESS_MAX_BUFFER:
                     self.failures += 1  # 满额丢新行：宁失真不炸内存
                     return
-                self._buf.append((ts, user_id, ip_hash(ip), path, method, status_code))
+                self._buf.append((ts, user_id, digest, path, method, status_code))
                 if user_id is not None:
                     self._active[user_id] = ts
                 due = (len(self._buf) >= ACCESS_FLUSH_ROWS
                        or ts - self._last_flush >= ACCESS_FLUSH_SECONDS)
-            if due:
+                spawn = due and not self._flush_scheduled
+                if spawn:
+                    self._flush_scheduled = True
+            if spawn:
                 threading.Thread(target=self._flush_auto, daemon=True).start()
         except Exception:
-            self.failures += 1
+            with self._lock:
+                self.failures += 1
             log.exception("access_events 埋点失败（fail-swallow）")
 
     def _flush_auto(self) -> None:
-        if self._factory is None:
-            return
         try:
-            conn = self._factory()
-        except Exception:
-            self.failures += 1
-            return
-        try:
-            self.flush(conn)
-        except Exception:
-            self.failures += 1
-        finally:
+            if self._factory is None:
+                with self._lock:
+                    self._flush_scheduled = False
+                return
             try:
-                conn.close()
+                conn = self._factory()
             except Exception:
-                pass
+                with self._lock:
+                    self.failures += 1
+                    self._flush_scheduled = False
+                return
+            try:
+                self.flush(conn)
+            finally:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+        except Exception:
+            log.exception("access_events 后台 flush 异常（fail-swallow）")
 
     def flush(self, conn: sqlite3.Connection) -> int:
         with self._lock:
             rows, self._buf = self._buf, []
             acts, self._active = self._active, {}
             self._last_flush = time.time()
+            self._flush_scheduled = False  # single-flight 解除
         if not rows:
             return 0
         try:
             conn.executemany(
                 "INSERT INTO access_events (ts, user_id, ip_hash, path, method, status_code)"
                 " VALUES (?,?,?,?,?,?)", rows)
-            for uid, ts in acts.items():
-                if ts - self._active_written.get(uid, 0) >= LAST_ACTIVE_THROTTLE_SECONDS:
-                    conn.execute("UPDATE users SET last_active_at=? WHERE id=?", (ts, uid))
-                    self._active_written[uid] = ts
-            if len(self._active_written) > 10_000:
-                self._active_written = {}
+            writes = []
+            with self._lock:
+                for uid, ts in acts.items():
+                    if ts - self._active_written.get(uid, 0) >= LAST_ACTIVE_THROTTLE_SECONDS:
+                        self._active_written[uid] = ts
+                        writes.append((uid, ts))
+                if len(self._active_written) > 10_000:
+                    self._active_written = {}
+            for uid, ts in writes:
+                conn.execute(
+                    "UPDATE users SET last_active_at=? WHERE id=?"
+                    " AND (last_active_at IS NULL OR last_active_at < ?)",
+                    (ts, uid, ts))  # MAX 语义：并发乱序提交不回拨
             conn.commit()
         except Exception:
-            self.failures += 1
+            with self._lock:
+                self.failures += 1
             log.exception("access_events 写失败（fail-swallow）")
             return 0
         return len(rows)

@@ -124,3 +124,81 @@ def test_online_count_window(conn):
     _insert(conn, NOW - 400, "HIT", path="/", ip="c")
     assert traffic.online_count(conn, 5) == 2
     assert traffic.online_count(conn, 1) == 1
+
+
+def test_online_window_minutes_bad_value_falls_back(conn):
+    conn.execute("UPDATE app_config SET value='abc' WHERE key='online_window_minutes'")
+    conn.commit()
+    assert traffic.online_window_minutes(conn) == traffic.DEFAULT_ONLINE_WINDOW_MINUTES
+
+
+def test_writer_single_flight_dispatch(monkeypatch, tmp_path):
+    import threading as _threading
+
+    from app.feed import db
+    db_path = str(tmp_path / "access.db")
+    boot = db.connect(db_path)
+    db.init_db(boot)
+    boot.close()
+
+    started = _threading.Event()
+    release = _threading.Event()
+    calls = []
+
+    def factory():
+        calls.append(1)
+        started.set()
+        assert release.wait(timeout=10)
+        return db.connect(db_path)
+
+    traffic.writer.reset()
+    traffic.writer.bind(factory)
+    try:
+        monkeypatch.setattr(traffic, "ACCESS_FLUSH_ROWS", 1)
+        for _ in range(5):
+            traffic.writer.record(ts=NOW, user_id=None, ip="1.1.1.1", path="/",
+                                  method="HIT", status_code=200)
+        assert started.wait(timeout=10)
+        for _ in range(5):
+            traffic.writer.record(ts=NOW, user_id=None, ip="1.1.1.1", path="/",
+                                  method="HIT", status_code=200)
+        assert len(calls) == 1
+        assert traffic.writer._flush_scheduled is True
+        release.set()
+        conn = db.connect(db_path)
+        try:
+            n = 0
+            deadline = time.time() + 10
+            while time.time() < deadline:
+                n = conn.execute("SELECT COUNT(*) AS n FROM access_events").fetchone()["n"]
+                if n == 10:
+                    break
+                time.sleep(0.01)
+            assert n == 10
+        finally:
+            conn.close()
+        assert traffic.writer._flush_scheduled is False
+        assert len(calls) == 1
+        assert traffic.writer.failures == 0
+    finally:
+        release.set()
+        traffic.writer.bind(None)
+
+
+def test_writer_last_active_max_no_regress(conn):
+    from app.feed import auth
+    traffic.writer.reset()
+    uid = auth.upsert_user(conn, {"id": 11, "login": "u11", "avatar_url": ""})
+    t_new, t_old = 2_000_000, 1_000_000
+    traffic.writer.record(ts=t_new, user_id=uid, ip="1.1.1.1", path="/api/feed",
+                          method="GET", status_code=200)
+    traffic.writer.flush(conn)
+    assert conn.execute(
+        "SELECT last_active_at FROM users WHERE id=?", (uid,)).fetchone()[0] == t_new
+    traffic.writer.reset()
+    traffic.writer.record(ts=t_old, user_id=uid, ip="1.1.1.1", path="/api/feed",
+                          method="GET", status_code=200)
+    traffic.writer.flush(conn)
+    assert conn.execute(
+        "SELECT last_active_at FROM users WHERE id=?", (uid,)).fetchone()[0] == t_new
+    assert traffic.writer.failures == 0
