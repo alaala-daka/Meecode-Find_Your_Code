@@ -329,11 +329,15 @@ def yearly(conn: sqlite3.Connection, now: int | None = None) -> list[dict]:
 
 
 def year_pv(conn: sqlite3.Connection, year: int, now: int | None = None) -> int:
-    """本年累计 PV 快路径（安全复审：overview 高频端点禁用 year_view 全年逐日扫描）。"""
+    """本年累计 PV 快路径（安全复审：overview 高频端点禁用 year_view 全年逐日扫描）。
+
+    SUM 只统计 < 今日 的 traffic_daily 行 + 今日 live 补齐，防手工补聚合今日行时双计。
+    """
     now = int(now if now is not None else time.time())
     total = conn.execute(
-        "SELECT COALESCE(SUM(pv),0) AS n FROM traffic_daily WHERE date>=? AND date<?",
-        (f"{year:04d}-01-01", f"{year + 1:04d}-01-01")).fetchone()["n"]
+        "SELECT COALESCE(SUM(pv),0) AS n FROM traffic_daily"
+        " WHERE date>=? AND date<? AND date<?",
+        (f"{year:04d}-01-01", f"{year + 1:04d}-01-01", today_utc(now))).fetchone()["n"]
     if time.gmtime(now).tm_year == year:
         total += day_stats(conn, today_utc(now))["pv"]
     return int(total)

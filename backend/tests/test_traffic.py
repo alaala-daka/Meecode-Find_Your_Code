@@ -431,14 +431,14 @@ def test_month_series_and_year_view(conn):
 
 
 def test_year_view_prefers_traffic_daily(conn):
-    year = time.gmtime(NOW).tm_year
+    yesterday = traffic.today_utc(NOW - 86400)
     conn.execute(
         "INSERT INTO traffic_daily (date, pv, uv) VALUES (?,?,?)",
-        (f"{year}-01-15", 9, 4))
+        (yesterday, 9, 4))
     conn.commit()
-    view = traffic.year_view(conn, year, NOW)
-    jan = next(m for m in view["months"] if m["month"] == f"{year}-01")
-    assert jan["pv"] == 9
+    view = traffic.year_view(conn, time.gmtime(NOW).tm_year, NOW)
+    month = next(m for m in view["months"] if m["month"] == yesterday[:7])
+    assert month["pv"] == 9
 
 
 def test_yearly_lists_years(conn):

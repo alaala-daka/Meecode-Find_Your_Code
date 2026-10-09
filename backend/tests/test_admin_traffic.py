@@ -44,6 +44,8 @@ def test_traffic_year_endpoint(conn, client, admin):
     body = client.get(f"/api/admin/traffic?range=year={year}").json()
     assert body["range"] == f"year={year}"
     assert len(body["months"]) == 12 and "summary" in body
+    assert body["summary"]["peak_day"] is None
+    assert client.get("/api/admin/traffic?range=year=9999").status_code == 422
 
 
 def test_traffic_invalid_range_422(client, admin):
