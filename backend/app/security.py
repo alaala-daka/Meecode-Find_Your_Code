@@ -154,7 +154,19 @@ class SecurityMiddleware(BaseHTTPMiddleware):
         path = request.url.path
         if not path.startswith(API_PREFIX):
             return await call_next(request)
-        response = await self._respond(request, call_next)
+        try:
+            response = await self._respond(request, call_next)
+        except Exception:
+            # 真 5xx（无响应对象）也落一行补全「含 4xx/5xx」口径；不吞异常，照常上抛
+            if not (path == HIT_PATH and request.method == "POST"):
+                try:
+                    traffic.writer.record(
+                        ts=int(time.time()), user_id=session_user_id(request),
+                        ip=client_ip(request), path=path,
+                        method=request.method, status_code=500)
+                except Exception:  # pragma: no cover - record 内已吞，双保险
+                    pass
+            raise
         # 429 不落明细（限流器自知被拒量；落行会放大洪水面）。埋点吞异常（纵深）。
         if not (path == HIT_PATH and request.method == "POST") and response.status_code != 429:
             try:

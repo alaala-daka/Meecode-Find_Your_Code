@@ -268,16 +268,38 @@ def test_middleware_records_user_id_for_logged_in(conn, client, admin):
     assert row["user_id"] == admin
 
 
+def test_middleware_records_true_5xx_then_reraises(conn, client, monkeypatch):
+    """真 5xx（异常逃出 call_next）落 status_code=500 行后照常上抛（口径含 5xx）。"""
+    import pytest
+
+    from app.security import SecurityMiddleware
+
+    traffic.writer.reset()
+
+    async def boom(self, request, call_next):
+        raise RuntimeError("kaboom")
+
+    monkeypatch.setattr(SecurityMiddleware, "_respond", boom)
+    with pytest.raises(RuntimeError):
+        client.get("/api/health")
+    traffic.writer.flush(conn)
+    row = conn.execute("SELECT * FROM access_events").fetchone()
+    assert row["path"] == "/api/health" and row["status_code"] == 500
+
+
 def test_middleware_skips_429_rows(conn, client, monkeypatch):
     traffic.writer.reset()
     monkeypatch.setattr(config, "RATE_LIMIT_ENABLED", True)
     monkeypatch.setattr(config, "RATE_LIMITS", {**config.RATE_LIMITS, "default": 1})
     security._limiter.reset()
-    assert client.get("/api/health").status_code == 200
-    assert client.get("/api/health").status_code == 429
-    traffic.writer.flush(conn)
-    rows = conn.execute("SELECT * FROM access_events").fetchall()
-    assert len(rows) == 1 and rows[0]["status_code"] == 200
+    try:
+        assert client.get("/api/health").status_code == 200
+        assert client.get("/api/health").status_code == 429
+        traffic.writer.flush(conn)
+        rows = conn.execute("SELECT * FROM access_events").fetchall()
+        assert len(rows) == 1 and rows[0]["status_code"] == 200
+    finally:
+        security._limiter.reset()
 
 
 def test_middleware_skips_hit_post_but_records_hit_get(conn, client):
@@ -286,4 +308,5 @@ def test_middleware_skips_hit_post_but_records_hit_get(conn, client):
     client.get(security.HIT_PATH)
     traffic.writer.flush(conn)
     rows = conn.execute("SELECT * FROM access_events").fetchall()
-    assert len(rows) == 1 and rows[0]["method"] == "GET"
+    assert len(rows) == 1
+    assert rows[0]["method"] == "GET" and rows[0]["path"] == security.HIT_PATH
