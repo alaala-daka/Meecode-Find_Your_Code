@@ -81,3 +81,4 @@ def _reset_policy_cache():
     security.policies.reset()
     yield
     security.policies.reset()
+    security.bind_policy_source(None)

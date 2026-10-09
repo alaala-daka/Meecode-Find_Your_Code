@@ -160,6 +160,7 @@ class PolicyCache:
     def __init__(self) -> None:
         self._data: dict[str, tuple[bool, int]] = {}
         self._loaded_at = 0.0
+        self._last_attempt = 0.0
         self._gen = 0
         self._lock = threading.Lock()
 
@@ -171,6 +172,8 @@ class PolicyCache:
         return True, config.RATE_LIMITS.get(bucket, config.RATE_LIMITS["default"])
 
     def set(self, bucket: str, enabled: bool, limit: int) -> None:
+        """保存即生效。不变量：值须先落库（Task 9 先写 api_policies 再 set）；
+        仅内存的覆盖会在 TTL 内被 refresh_from 整表替换回退为库值。"""
         if bucket in PROTECTED_BUCKETS:
             enabled = True  # 纵深防御：保护桶永不停用
         with self._lock:
@@ -203,6 +206,7 @@ class PolicyCache:
         if factory is None:
             return
         with self._lock:
+            self._last_attempt = time.time()  # 盖戳在先：失败也计入退避
             stale = time.time() - self._loaded_at >= POLICY_TTL_SECONDS
         if not stale:
             return
@@ -226,6 +230,8 @@ class PolicyCache:
         if factory is None:
             return
         with self._lock:
+            if time.time() - self._last_attempt < POLICY_TTL_SECONDS:
+                return  # 失败退避：刷不动也 30s 内最多起一线程，防线程/日志泛滥
             stale = time.time() - self._loaded_at >= POLICY_TTL_SECONDS
         if stale:
             threading.Thread(target=self.maybe_refresh, args=(factory,), daemon=True).start()
@@ -234,6 +240,7 @@ class PolicyCache:
         with self._lock:
             self._data = {}
             self._loaded_at = 0.0
+            self._last_attempt = 0.0
             self._gen += 1
 
 

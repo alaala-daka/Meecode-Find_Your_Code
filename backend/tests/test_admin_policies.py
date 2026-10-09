@@ -50,12 +50,41 @@ def test_policy_cache_maybe_refresh_ttl_and_invalidate(tmp_path):
         security.policies.reset()
 
 
+def test_schedule_refresh_backoff_bounds_thread_spawn_on_failure(monkeypatch):
+    security.policies.reset()
+    spawns = []
+
+    class CountingThread:
+        def __init__(self, target=None, args=(), daemon=None):
+            self._target, self._args = target, args
+            spawns.append(target)
+
+        def start(self):
+            self._target(*self._args)
+
+    monkeypatch.setattr(security.threading, "Thread", CountingThread)
+
+    def boom():
+        raise RuntimeError("db down")
+
+    security.policies.schedule_refresh(boom)
+    security.policies.schedule_refresh(boom)  # 失败也退避：TTL 内不得再起线程
+    assert len(spawns) == 1
+
+
 def test_policy_cache_protected_buckets_never_disabled():
     security.policies.reset()
     security.policies.set("admin", False, 300)
     assert security.policies.get("admin") == (True, 300)
     security.policies.set("default", False, 120)
     assert security.policies.get("default")[0] is True
+
+
+def test_policy_cache_refresh_from_clamps_protected_buckets(conn):
+    conn.execute("UPDATE api_policies SET enabled=0 WHERE route_key='admin'")
+    conn.commit()
+    security.policies.refresh_from(conn)
+    assert security.policies.get("admin")[0] is True
 
 
 def test_kill_switch_blocks_when_disabled(client):
