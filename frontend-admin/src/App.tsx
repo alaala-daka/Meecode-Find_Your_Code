@@ -9,6 +9,7 @@ import { CommentList } from "@/pages/comments/CommentList";
 import { DashboardPage } from "@/pages/DashboardPage";
 import { LoginDeniedPage } from "@/pages/LoginDeniedPage";
 import { RepoList } from "@/pages/repos/RepoList";
+import { TrafficPage } from "@/pages/traffic/TrafficPage";
 import { UserList } from "@/pages/users/UserList";
 import { UserShow } from "@/pages/users/UserShow";
 import { authProvider, OAUTH_ENTRY } from "@/providers/authProvider";
@@ -85,6 +86,7 @@ export default function App() {
           <Routes>
             <Route element={<AppLayout />}>
               <Route index element={<DashboardPage />} />
+              <Route path="/traffic" element={<TrafficPage />} />
               <Route path="/users" element={<UserList />} />
               <Route path="/users/show/:id" element={<UserShow />} />
               <Route path="/repos" element={<RepoList />} />

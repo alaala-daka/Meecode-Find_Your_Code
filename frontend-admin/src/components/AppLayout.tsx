@@ -9,7 +9,7 @@ type MenuItem = { label: string; to: string; phase?: undefined } | { label: stri
 
 const MENU: MenuItem[] = [
   { label: "仪表盘", to: "/" },
-  { label: "站点流量", phase: "二期" },
+  { label: "站点流量", to: "/traffic" },
   { label: "用户管理", to: "/users" },
   { label: "仓库管理", to: "/repos" },
   { label: "评论管理", to: "/comments" },
