@@ -310,3 +310,63 @@ def test_middleware_skips_hit_post_but_records_hit_get(conn, client):
     rows = conn.execute("SELECT * FROM access_events").fetchall()
     assert len(rows) == 1
     assert rows[0]["method"] == "GET" and rows[0]["path"] == security.HIT_PATH
+
+
+# ---------- HIT beacon 端点（二期 §2.3） ----------
+
+def test_hit_records_hit_row_anonymous(conn, client):
+    traffic.writer.reset()
+    r = client.post("/api/hit", json={"path": "/" + "a" * 3000})
+    assert r.status_code == 204 and r.text == ""
+    traffic.writer.flush(conn)
+    row = conn.execute("SELECT * FROM access_events").fetchone()
+    assert row["method"] == "HIT" and row["user_id"] is None
+    assert len(row["path"]) == 200 and row["path"].startswith("/aaa")
+
+
+def test_hit_accepts_text_plain_beacon_body(conn, client):
+    """sendBeacon 字符符 body = text/plain（安全复审 P0）：必须 204 且落行。"""
+    traffic.writer.reset()
+    r = client.post("/api/hit", content=b'{"path":"/search"}',
+                    headers={"Content-Type": "text/plain;charset=UTF-8"})
+    assert r.status_code == 204
+    traffic.writer.flush(conn)
+    row = conn.execute("SELECT * FROM access_events").fetchone()
+    assert row["method"] == "HIT" and row["path"] == "/search"
+
+
+def test_hit_normalizes_path_strips_query_and_controls(conn, client):
+    traffic.writer.reset()
+    client.post("/api/hit", json={"path": "/x?token=secret#frag\x01"})
+    client.post("/api/hit", json={"path": "no-slash"})
+    client.post("/api/hit", json={"path": ""})
+    traffic.writer.flush(conn)
+    paths = [r["path"] for r in conn.execute(
+        "SELECT path FROM access_events ORDER BY id")]
+    assert paths == ["/x", "/no-slash", "/"]
+
+
+def test_hit_invalid_body_silent_204(conn, client):
+    traffic.writer.reset()
+    assert client.post("/api/hit", content=b"not-json",
+                       headers={"Content-Type": "text/plain"}).status_code == 204
+    assert client.post("/api/hit", json={"nope": 1}).status_code == 204
+    traffic.writer.flush(conn)
+    assert conn.execute("SELECT COUNT(*) AS n FROM access_events").fetchone()["n"] == 0
+
+
+def test_hit_records_user_id_when_logged_in(conn, client, admin):
+    traffic.writer.reset()
+    client.post("/api/hit", json={"path": "/search"})
+    traffic.writer.flush(conn)
+    row = conn.execute("SELECT * FROM access_events").fetchone()
+    assert row["method"] == "HIT" and row["user_id"] == admin
+    assert row["path"] == "/search"
+
+
+def test_middleware_skips_hit_endpoint_itself(conn, client):
+    traffic.writer.reset()
+    client.post("/api/hit", json={"path": "/x"})
+    traffic.writer.flush(conn)
+    rows = conn.execute("SELECT * FROM access_events").fetchall()
+    assert [r["method"] for r in rows] == ["HIT"]  # 无 POST /api/hit 的 API 行

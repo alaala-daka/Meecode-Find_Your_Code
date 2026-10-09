@@ -51,6 +51,7 @@ _RATE_RULES: tuple[tuple[str | None, str, str], ...] = (
     ("GET", "/api/search", "browse"),
     ("GET", "/api/repos/", "browse"),
     (None, "/api/auth/", "auth"),
+    ("POST", "/api/hit", "hit"),   # 页面访问 beacon：独立桶防灌水（60/min）
 )
 
 
