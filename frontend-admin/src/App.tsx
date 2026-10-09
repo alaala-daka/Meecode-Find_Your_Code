@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { CommentList } from "@/pages/comments/CommentList";
 import { DashboardPage } from "@/pages/DashboardPage";
 import { LoginDeniedPage } from "@/pages/LoginDeniedPage";
+import { ApiPoliciesPage } from "@/pages/policies/ApiPoliciesPage";
 import { RepoList } from "@/pages/repos/RepoList";
 import { TrafficPage } from "@/pages/traffic/TrafficPage";
 import { UserList } from "@/pages/users/UserList";
@@ -91,6 +92,7 @@ export default function App() {
               <Route path="/users/show/:id" element={<UserShow />} />
               <Route path="/repos" element={<RepoList />} />
               <Route path="/comments" element={<CommentList />} />
+              <Route path="/api-policies" element={<ApiPoliciesPage />} />
               <Route path="*" element={<PendingPage title="页面不存在" />} />
             </Route>
           </Routes>

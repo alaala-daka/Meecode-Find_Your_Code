@@ -13,7 +13,7 @@ const MENU: MenuItem[] = [
   { label: "用户管理", to: "/users" },
   { label: "仓库管理", to: "/repos" },
   { label: "评论管理", to: "/comments" },
-  { label: "API 管控", phase: "二期" },
+  { label: "API 管控", to: "/api-policies" },
   { label: "系统配置", phase: "二期" },
   { label: "审计日志", phase: "二期" },
   { label: "登录日志", phase: "二期" },
