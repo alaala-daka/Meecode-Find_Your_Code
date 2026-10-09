@@ -45,6 +45,8 @@ async def lifespan(_app: FastAPI):
     finally:
         conn.close()
     traffic.writer.bind(db.connect)  # init_db 完成后绑定，fail-fast 语义不变
+    security.bind_policy_source(db.connect)
+    security.policies.maybe_refresh(db.connect)  # 同步预热：消除冷启动开关失效窗口
     yield
 
 

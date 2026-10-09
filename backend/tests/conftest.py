@@ -73,3 +73,11 @@ def _reset_access_writer():
     traffic.writer.reset()
     yield
     traffic.writer.reset()
+
+
+@pytest.fixture(autouse=True)
+def _reset_policy_cache():
+    from app import security
+    security.policies.reset()
+    yield
+    security.policies.reset()
