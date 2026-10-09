@@ -65,3 +65,11 @@ def _rate_limit_off(monkeypatch):
     security._limiter.reset()
     yield
     security._limiter.reset()
+
+
+@pytest.fixture(autouse=True)
+def _reset_access_writer():
+    from app import traffic
+    traffic.writer.reset()
+    yield
+    traffic.writer.reset()
