@@ -370,3 +370,41 @@ def test_middleware_skips_hit_endpoint_itself(conn, client):
     traffic.writer.flush(conn)
     rows = conn.execute("SELECT * FROM access_events").fetchall()
     assert [r["method"] for r in rows] == ["HIT"]  # 无 POST /api/hit 的 API 行
+
+
+def test_aggregate_yesterday_writes_traffic_daily(conn):
+    from app.admin.jobs import traffic_agg
+
+    yesterday = time.strftime("%Y-%m-%d", time.gmtime(NOW - 86400))
+    start, _ = traffic.day_bounds_utc(yesterday)
+    _insert(conn, start + 1, method="HIT", path="/", ip="a")
+    _insert(conn, start + 2, method="HIT", path="/search", ip="a")
+    _insert(conn, start + 3, method="HIT", path="/repo/1", ip="b")
+    _insert(conn, start + 4, method="GET", path="/api/feed", status=200)
+    _insert(conn, start + 5, method="POST", path="/api/comments", status=503)
+    _insert(conn, start + 6, method="GET", path="/api/feed", status=404)
+    out = traffic_agg.aggregate_yesterday(conn, now=NOW)
+    assert out["pv"] == 3 and out["uv"] == 2
+    assert out["api_calls"] == 3 and out["errors"] == 1
+    row = conn.execute("SELECT * FROM traffic_daily WHERE date=?", (yesterday,)).fetchone()
+    assert dict(row) == {"date": yesterday, "pv": 3, "uv": 2, "new_users": 0,
+                         "active_users": 0, "api_calls": 3, "errors": 1}
+
+
+def test_aggregate_yesterday_prunes_old_rows(conn):
+    from app.admin.jobs import traffic_agg
+
+    _insert(conn, NOW - 31 * 86400, method="HIT", path="/")
+    _insert(conn, NOW - 86400 + 10, method="HIT", path="/")
+    out = traffic_agg.aggregate_yesterday(conn, now=NOW)
+    assert out["pruned"] == 1
+    assert conn.execute("SELECT COUNT(*) AS n FROM access_events").fetchone()["n"] == 1
+
+
+def test_aggregate_yesterday_idempotent(conn):
+    from app.admin.jobs import traffic_agg
+
+    _insert(conn, NOW - 86400 + 1, method="HIT", path="/")
+    traffic_agg.aggregate_yesterday(conn, now=NOW)
+    traffic_agg.aggregate_yesterday(conn, now=NOW)
+    assert conn.execute("SELECT COUNT(*) AS n FROM traffic_daily").fetchone()["n"] == 1
