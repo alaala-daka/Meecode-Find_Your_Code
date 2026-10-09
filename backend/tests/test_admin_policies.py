@@ -94,3 +94,64 @@ def test_kill_switch_blocks_when_disabled(client):
     assert r.json() == {"detail": "接口已停用", "code": "disabled"}
     security.policies.reset()
     assert client.get("/api/feed").status_code == 200
+
+
+def test_api_policies_list_shape(conn, client, admin):
+    body = client.get("/api/admin/api-policies").json()
+    assert body["total"] == len(body["data"])
+    row = next(r for r in body["data"] if r["route_key"] == "llm")
+    assert set(row) == {"route_key", "enabled", "limit_per_min"}
+    assert row["enabled"] is True and isinstance(row["limit_per_min"], int)
+
+
+def test_api_policies_patch_updates_db_audit_and_cache(conn, client, admin):
+    r = client.patch("/api/admin/api-policies/llm",
+                     json={"enabled": False, "limit_per_min": 5})
+    assert r.status_code == 200
+    assert r.json() == {"route_key": "llm", "enabled": False, "limit_per_min": 5}
+    row = conn.execute("SELECT * FROM api_policies WHERE route_key='llm'").fetchone()
+    assert row["enabled"] == 0 and row["limit_per_min"] == 5
+    a = conn.execute(
+        "SELECT * FROM audit_logs WHERE action='api_policy.update'").fetchone()
+    assert a["target_id"] == "llm"
+    assert security.policies.get("llm") == (False, 5)
+    # 保存即生效：llm 桶命中即 403
+    resp = client.post("/api/ai-draft", json={"a": 1})
+    assert resp.status_code == 403 and resp.json()["code"] == "disabled"
+
+
+def test_api_policies_patch_rejects_unknown_and_extra(conn, client, admin):
+    assert client.patch(
+        "/api/admin/api-policies/nope", json={"enabled": False}).status_code == 404
+    assert client.patch(
+        "/api/admin/api-policies/llm", json={"nope": 1}).status_code == 422
+
+
+def test_api_policies_protected_buckets_reject_enabled(conn, client, admin):
+    for key in ("default", "admin"):
+        assert client.patch(
+            f"/api/admin/api-policies/{key}",
+            json={"enabled": False}).status_code == 400
+        assert client.patch(
+            f"/api/admin/api-policies/{key}",
+            json={"limit_per_min": 99}).status_code == 200  # 限额仍可调
+
+
+def test_api_policies_limit_validation(conn, client, admin):
+    assert client.patch(
+        "/api/admin/api-policies/llm",
+        json={"limit_per_min": 0}).status_code == 422
+
+
+def test_api_policies_protected_limit_floor(conn, client, admin):
+    """保护桶限额下限 60（安全复审：防失手把兜底桶限成 1/min）。"""
+    for key in ("default", "admin"):
+        assert client.patch(
+            f"/api/admin/api-policies/{key}",
+            json={"limit_per_min": 5}).status_code == 400
+
+
+def test_api_policies_anonymous_401(conn, client):
+    assert client.get("/api/admin/api-policies").status_code == 401
+    assert client.patch("/api/admin/api-policies/llm",
+                        json={"enabled": False}).status_code == 401

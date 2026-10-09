@@ -2,7 +2,7 @@
 from fastapi import APIRouter, Depends
 
 from ..deps import require_admin
-from . import audit, comments, overview, repos, traffic as traffic_routes, users
+from . import audit, comments, overview, policies, repos, traffic as traffic_routes, users
 
 router = APIRouter(prefix="/api/admin", dependencies=[Depends(require_admin)])
 
@@ -18,3 +18,4 @@ router.include_router(comments.router)
 router.include_router(overview.router)
 router.include_router(audit.router)
 router.include_router(traffic_routes.router)
+router.include_router(policies.router)
