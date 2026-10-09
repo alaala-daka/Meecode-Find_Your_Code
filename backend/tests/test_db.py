@@ -212,3 +212,27 @@ def test_users_ban_columns_and_audit_logs_exist(conn):
     )
     row = conn.execute("SELECT COUNT(*) AS n FROM audit_logs").fetchone()
     assert row["n"] == 1
+
+
+# ---------- 管理台二期观测表（spec 2026-10-09） ----------
+def test_phase2_tables_exist(conn):
+    # == 0 仅适用明细/聚合表；app_config/api_policies 由 init_db seed，见下两用例
+    for table in ("access_events", "traffic_daily"):
+        assert conn.execute(f"SELECT COUNT(*) AS n FROM {table}").fetchone()["n"] == 0
+    for table in ("app_config", "api_policies"):
+        assert conn.execute(f"SELECT COUNT(*) AS n FROM {table}").fetchone()["n"] > 0
+
+
+def test_api_policies_seeded_from_rate_limits(conn):
+    from app import config
+    rows = {r["route_key"]: (r["enabled"], r["limit_per_min"])
+            for r in conn.execute("SELECT * FROM api_policies")}
+    assert set(rows) == set(config.RATE_LIMITS)
+    assert all(en == 1 for en, _ in rows.values())
+    assert {k: lim for k, (_, lim) in rows.items()} == dict(config.RATE_LIMITS)
+
+
+def test_app_config_seeded_online_window(conn):
+    row = conn.execute("SELECT * FROM app_config WHERE key='online_window_minutes'").fetchone()
+    assert row is not None
+    assert row["value"] == "5" and row["version"] == 1

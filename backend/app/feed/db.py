@@ -118,6 +118,42 @@ CREATE TRIGGER IF NOT EXISTS repos_fts_au AFTER UPDATE ON repos BEGIN
     INSERT INTO repos_fts (rowid, full_name, tagline_zh, intro_zh, topics)
     VALUES (new.id, new.full_name, new.tagline_zh, new.intro_zh, new.topics);
 END;
+
+CREATE TABLE IF NOT EXISTS access_events (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts          INTEGER NOT NULL,
+    user_id     INTEGER,
+    ip_hash     TEXT    NOT NULL,
+    path        TEXT    NOT NULL,
+    method      TEXT    NOT NULL,
+    status_code INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_access_ts ON access_events (ts);
+CREATE INDEX IF NOT EXISTS idx_access_ip_ts ON access_events (ip_hash, ts);
+
+CREATE TABLE IF NOT EXISTS traffic_daily (
+    date         TEXT PRIMARY KEY,
+    pv           INTEGER NOT NULL DEFAULT 0,
+    uv           INTEGER NOT NULL DEFAULT 0,
+    new_users    INTEGER NOT NULL DEFAULT 0,
+    active_users INTEGER NOT NULL DEFAULT 0,
+    api_calls    INTEGER NOT NULL DEFAULT 0,
+    errors       INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS app_config (
+    key        TEXT PRIMARY KEY,
+    value      TEXT    NOT NULL DEFAULT '',
+    version    INTEGER NOT NULL DEFAULT 1,
+    updated_at INTEGER NOT NULL DEFAULT 0,
+    updated_by TEXT    NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS api_policies (
+    route_key     TEXT PRIMARY KEY,
+    enabled       INTEGER NOT NULL DEFAULT 1,
+    limit_per_min INTEGER NOT NULL DEFAULT 60
+);
 """
 
 
@@ -190,4 +226,13 @@ def init_db(conn: sqlite3.Connection) -> None:
         detail TEXT)"""
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_logs(ts)")
+    if "created_at" in cols:
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_users_created ON users (created_at)")
+    for bucket, limit in config.RATE_LIMITS.items():
+        conn.execute(
+            "INSERT OR IGNORE INTO api_policies (route_key, enabled, limit_per_min)"
+            " VALUES (?,1,?)", (bucket, limit))
+    conn.execute(
+        "INSERT OR IGNORE INTO app_config (key, value, version, updated_at, updated_by)"
+        " VALUES (?,?,?,?,?)", ("online_window_minutes", "5", 1, 0, "system"))
     conn.commit()
