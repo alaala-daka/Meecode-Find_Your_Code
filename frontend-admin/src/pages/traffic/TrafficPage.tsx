@@ -6,6 +6,9 @@ import { Bar, CartesianGrid, ComposedChart, Line, Tooltip, XAxis, YAxis } from "
 
 type View = "7d" | "30d" | "12m" | "year";
 
+const MIN_YEAR = 2020;
+const MAX_YEAR = new Date().getFullYear() + 1;
+
 const VIEW_OPTIONS: { key: View; label: string }[] = [
   { key: "7d", label: "近 7 天" },
   { key: "30d", label: "近 30 天" },
@@ -64,10 +67,12 @@ export function TrafficPage() {
           {view === "year" && (
             <>
               <Button type="button" variant="outline" size="sm" className="border-line"
-                onClick={() => setYear((y) => y - 1)}>‹</Button>
+                disabled={year <= MIN_YEAR}
+                onClick={() => setYear((y) => Math.max(MIN_YEAR, y - 1))}>‹</Button>
               <span className="font-mono text-sm text-ink-2">{year}</span>
               <Button type="button" variant="outline" size="sm" className="border-line"
-                onClick={() => setYear((y) => y + 1)}>›</Button>
+                disabled={year >= MAX_YEAR}
+                onClick={() => setYear((y) => Math.min(MAX_YEAR, y + 1))}>›</Button>
             </>
           )}
           {VIEW_OPTIONS.map((o) => (
@@ -85,7 +90,7 @@ export function TrafficPage() {
       {loading && <p className="font-mono text-sm text-ink-3">加载中…</p>}
 
       {summary && (
-        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
           {SUMMARY_CARDS.map(({ key, label }) => (
             <div key={key} className="rounded-lg border border-line bg-surface p-5">
               <div className="text-sm text-ink-2">{label}</div>
@@ -106,7 +111,7 @@ export function TrafficPage() {
       {chartData.length > 0 && (
         <div className="rounded-lg border border-line bg-surface p-5">
           <ComposedChart width={760} height={280} data={chartData}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#E7E2D8" />
+            <CartesianGrid strokeDasharray="3 3" stroke="#E7E3D8" />
             <XAxis dataKey="label" tick={{ fontSize: 12 }} />
             <YAxis tick={{ fontSize: 12 }} />
             <Tooltip />

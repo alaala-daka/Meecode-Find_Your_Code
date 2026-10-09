@@ -59,4 +59,31 @@ describe("TrafficPage", () => {
     expect(screen.getByText("100")).toBeInTheDocument();
     expect(screen.getByText("2026-10-09（12）")).toBeInTheDocument();
   });
+
+  it("年导航钳制 [2020, current+1]：到界后按钮 disabled 且不再发请求", async () => {
+    const calls = setupFetch();
+    render(<TrafficPage />);
+    await waitFor(() => expect(document.querySelector("svg")).not.toBeNull());
+    fireEvent.click(screen.getByRole("button", { name: "年度" }));
+    expect(await screen.findByText("年 PV 总量")).toBeInTheDocument();
+
+    const MIN_YEAR = 2020;
+    const MAX_YEAR = new Date().getFullYear() + 1;
+    const prev = screen.getByRole("button", { name: "‹" });
+    const next = screen.getByRole("button", { name: "›" });
+
+    for (let i = 0; i < 15; i += 1) fireEvent.click(prev);
+    await waitFor(() => expect(prev).toBeDisabled());
+    expect(screen.getByText(String(MIN_YEAR))).toBeInTheDocument();
+    const callsAtMin = calls.length;
+    fireEvent.click(prev);
+    expect(calls.length).toBe(callsAtMin);
+
+    for (let i = 0; i < 15; i += 1) fireEvent.click(next);
+    await waitFor(() => expect(next).toBeDisabled());
+    expect(screen.getByText(String(MAX_YEAR))).toBeInTheDocument();
+    const callsAtMax = calls.length;
+    fireEvent.click(next);
+    expect(calls.length).toBe(callsAtMax);
+  });
 });
