@@ -431,12 +431,14 @@ def test_month_series_and_year_view(conn):
 
 
 def test_year_view_prefers_traffic_daily(conn):
-    yesterday = traffic.today_utc(NOW - 86400)
+    import calendar
+    now = calendar.timegm((time.gmtime(NOW).tm_year, 6, 15, 12, 0, 0))
+    yesterday = traffic.today_utc(now - 86400)  # 同年 6/14
     conn.execute(
         "INSERT INTO traffic_daily (date, pv, uv) VALUES (?,?,?)",
         (yesterday, 9, 4))
     conn.commit()
-    view = traffic.year_view(conn, time.gmtime(NOW).tm_year, NOW)
+    view = traffic.year_view(conn, int(yesterday[:4]), now)
     month = next(m for m in view["months"] if m["month"] == yesterday[:7])
     assert month["pv"] == 9
 
@@ -450,13 +452,15 @@ def test_yearly_lists_years(conn):
 
 
 def test_year_pv_fast_path(conn):
-    year = time.gmtime(NOW).tm_year
+    import calendar
+    now = calendar.timegm((time.gmtime(NOW).tm_year, 6, 15, 12, 0, 0))
+    seed = traffic.today_utc(now - 3 * 86400)  # 同年 6/12
     conn.execute("INSERT INTO traffic_daily (date, pv, uv) VALUES (?,?,?)",
-                 (traffic.today_utc(NOW - 3 * 86400), 9, 2))
+                 (seed, 9, 2))
     conn.commit()
-    assert traffic.year_pv(conn, year, NOW) == 9
-    today = traffic.today_utc(NOW)
+    assert traffic.year_pv(conn, int(seed[:4]), now) == 9
+    today = traffic.today_utc(now)
     start, _ = traffic.day_bounds_utc(today)
     _insert(conn, start + 1, "HIT", path="/", ip="a")
-    assert traffic.year_pv(conn, year, NOW) == 10  # traffic_daily + 今日现算
-    assert traffic.year_pv(conn, year - 1, NOW) == 0
+    assert traffic.year_pv(conn, int(seed[:4]), now) == 10  # traffic_daily + 今日现算
+    assert traffic.year_pv(conn, int(seed[:4]) - 1, now) == 0
