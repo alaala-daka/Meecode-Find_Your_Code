@@ -1,7 +1,6 @@
 /**
- * GET /api/admin/overview 契约（Task 10）：6 项整数计数。
- * 二期字段（在线 / 今日 PV / 本年累计）不在契约内，类型不定义。
- * 六键全可选：缺键是运行时事实，渲染侧按 `—` 容错（不伪造 0）。
+ * GET /api/admin/overview 契约（Task 8）：9 项计数（含二期观测三字段）；缺键渲染 `—` 容错。
+ * 九键全可选：缺键是运行时事实，渲染侧按 `—` 容错（不伪造 0）。
  */
 export type Overview = {
   total_users?: number;
@@ -10,6 +9,9 @@ export type Overview = {
   published_repos?: number;
   delisted_repos?: number;
   pending_comments?: number;
+  online?: number;
+  today_pv?: number;
+  year_pv?: number;
 };
 
 const API_URL = "/api/admin";

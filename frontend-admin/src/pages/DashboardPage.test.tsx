@@ -37,9 +37,22 @@ const FULL = {
   published_repos: 12,
   delisted_repos: 2,
   pending_comments: 5,
+  online: 7,
+  today_pv: 21,
+  year_pv: 5000,
 };
 
-const LIVE_LABELS = ["注册总数", "今日新增", "仓库总数", "已上架", "已下架", "待审评论"] as const;
+const LIVE_LABELS = [
+  "注册总数",
+  "今日新增",
+  "仓库总数",
+  "已上架",
+  "已下架",
+  "待审评论",
+  "本年累计访问",
+  "今日访问",
+  "当前在线",
+] as const;
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -82,20 +95,18 @@ describe("DashboardPage · 空数据容错", () => {
 });
 
 describe("DashboardPage · 卡片构成", () => {
-  it("共 8 张卡（6 实况 + 2 灰态占位带「二期」徽章），全部静置无影", async () => {
+  it("共 9 张实况卡，全部静置无影", async () => {
     setupFetch(FULL);
     const { container } = render(<DashboardPage />);
     await cardScope("注册总数").findByText("42");
 
-    expect(screen.getAllByText("二期")).toHaveLength(2);
-    for (const label of ["本年累计访问", "当前在线"] as const) {
-      const card = cardScope(label);
-      expect(card.getByText("—")).toBeInTheDocument();
-      expect(card.getByText("二期")).toBeInTheDocument();
-    }
+    expect(cardScope("本年累计访问").getByText("5000")).toBeInTheDocument();
+    expect(cardScope("今日访问").getByText("21")).toBeInTheDocument();
+    expect(cardScope("当前在线").getByText("7")).toBeInTheDocument();
+    expect(screen.queryByText("二期")).toBeNull();
 
     const cards = container.querySelectorAll("div.rounded-lg");
-    expect(cards).toHaveLength(8);
+    expect(cards).toHaveLength(9);
     for (const card of cards) {
       expect(card.classList.contains("shadow")).toBe(false);
     }
@@ -116,17 +127,3 @@ describe("DashboardPage · 数据拉取", () => {
   });
 });
 
-describe("DashboardPage · 二期字段红线", () => {
-  it("mock 混入二期字段也不渲染数值，占位卡恒显 `—`", async () => {
-    setupFetch({ ...FULL, today_pv: 9999, year_visits: 88888, online: 77 });
-    render(<DashboardPage />);
-
-    expect(await cardScope("注册总数").findByText("42")).toBeInTheDocument();
-    for (const leaked of ["9999", "88888", "77"]) {
-      expect(screen.queryByText(leaked)).toBeNull();
-    }
-    for (const label of ["本年累计访问", "当前在线"] as const) {
-      expect(cardScope(label).getByText("—")).toBeInTheDocument();
-    }
-  });
-});
