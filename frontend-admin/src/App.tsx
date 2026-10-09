@@ -6,6 +6,7 @@ import { BrowserRouter, Route, Routes } from "react-router";
 import { AppLayout } from "@/components/AppLayout";
 import { Button } from "@/components/ui/button";
 import { CommentList } from "@/pages/comments/CommentList";
+import { ConfigPage } from "@/pages/config/ConfigPage";
 import { DashboardPage } from "@/pages/DashboardPage";
 import { LoginDeniedPage } from "@/pages/LoginDeniedPage";
 import { ApiPoliciesPage } from "@/pages/policies/ApiPoliciesPage";
@@ -93,6 +94,7 @@ export default function App() {
               <Route path="/repos" element={<RepoList />} />
               <Route path="/comments" element={<CommentList />} />
               <Route path="/api-policies" element={<ApiPoliciesPage />} />
+              <Route path="/config" element={<ConfigPage />} />
               <Route path="*" element={<PendingPage title="页面不存在" />} />
             </Route>
           </Routes>
