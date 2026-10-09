@@ -408,3 +408,55 @@ def test_aggregate_yesterday_idempotent(conn):
     traffic_agg.aggregate_yesterday(conn, now=NOW)
     traffic_agg.aggregate_yesterday(conn, now=NOW)
     assert conn.execute("SELECT COUNT(*) AS n FROM traffic_daily").fetchone()["n"] == 1
+
+
+# ---------- 流量查询助手（Task 7） ----------
+
+def test_month_series_and_year_view(conn):
+    year = time.gmtime(NOW).tm_year
+    today = traffic.today_utc(NOW)
+    start, _ = traffic.day_bounds_utc(today)
+    for i in range(3):
+        _insert(conn, start + i + 1, "HIT", path="/", ip="a")
+    months = traffic.month_series(conn, 12, NOW)
+    assert len(months) == 12 and months[-1]["month"] == today[:7]
+    assert months[-1]["pv"] == 3
+    view = traffic.year_view(conn, year, NOW)
+    assert len(view["months"]) == 12
+    s = view["summary"]
+    assert s["year"] == year and s["year_pv"] == 3
+    assert set(s) == {"year", "year_pv", "daily_pv_avg", "daily_uv_avg",
+                      "new_users_year", "peak_day"}
+    assert s["peak_day"] == {"date": today, "pv": 3}
+
+
+def test_year_view_prefers_traffic_daily(conn):
+    year = time.gmtime(NOW).tm_year
+    conn.execute(
+        "INSERT INTO traffic_daily (date, pv, uv) VALUES (?,?,?)",
+        (f"{year}-01-15", 9, 4))
+    conn.commit()
+    view = traffic.year_view(conn, year, NOW)
+    jan = next(m for m in view["months"] if m["month"] == f"{year}-01")
+    assert jan["pv"] == 9
+
+
+def test_yearly_lists_years(conn):
+    conn.execute("INSERT INTO traffic_daily (date, pv, uv) VALUES ('2025-06-01', 5, 2)")
+    conn.commit()
+    years = {y["year"]: y for y in traffic.yearly(conn, NOW)}
+    assert years[2025]["pv"] == 5
+    assert time.gmtime(NOW).tm_year in years
+
+
+def test_year_pv_fast_path(conn):
+    year = time.gmtime(NOW).tm_year
+    conn.execute("INSERT INTO traffic_daily (date, pv, uv) VALUES (?,?,?)",
+                 (f"{year}-03-01", 9, 2))
+    conn.commit()
+    assert traffic.year_pv(conn, year, NOW) == 9
+    today = traffic.today_utc(NOW)
+    start, _ = traffic.day_bounds_utc(today)
+    _insert(conn, start + 1, "HIT", path="/", ip="a")
+    assert traffic.year_pv(conn, year, NOW) == 10  # traffic_daily + 今日现算
+    assert traffic.year_pv(conn, year - 1, NOW) == 0

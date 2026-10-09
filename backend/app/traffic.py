@@ -218,3 +218,122 @@ class AccessWriter:
 
 
 writer = AccessWriter()
+
+
+def _next_date(date_str: str) -> str:
+    start, _ = day_bounds_utc(date_str)
+    return time.strftime("%Y-%m-%d", time.gmtime(start + 86400))
+
+
+def _days_of_month(conn: sqlite3.Connection, month_key: str, now: int) -> list[dict]:
+    """该月已过 UTC 日（≤今日）：完成日优先 traffic_daily，当日/缺失日现算。"""
+    y, m = int(month_key[:4]), int(month_key[5:7])
+    ny, nm = (y + 1, 1) if m == 12 else (y, m + 1)
+    today = today_utc(now)
+    out = []
+    date_str = f"{month_key}-01"
+    stop = f"{ny:04d}-{nm:02d}-01"
+    while date_str < stop and date_str <= today:
+        if date_str != today:
+            row = conn.execute(
+                "SELECT * FROM traffic_daily WHERE date=?", (date_str,)).fetchone()
+            if row:
+                out.append(dict(row))
+                date_str = _next_date(date_str)
+                continue
+        out.append(day_stats(conn, date_str))
+        date_str = _next_date(date_str)
+    return out
+
+
+def _month_from_days(month_key: str, days: list[dict]) -> dict:
+    return {
+        "month": month_key,
+        "pv": sum(s["pv"] for s in days),
+        "uv_avg": round(sum(s["uv"] for s in days) / len(days), 2) if days else 0.0,
+        "api_calls": sum(s["api_calls"] for s in days),
+        "errors": sum(s["errors"] for s in days),
+        "new_users": sum(s["new_users"] for s in days),
+    }
+
+
+def _month_keys(now: int, months: int) -> list[str]:
+    t = time.gmtime(now)
+    year, mon = t.tm_year, t.tm_mon
+    out = []
+    for _ in range(months):
+        out.append(f"{year:04d}-{mon:02d}")
+        mon -= 1
+        if mon == 0:
+            mon, year = 12, year - 1
+    return list(reversed(out))
+
+
+def day_series(conn: sqlite3.Connection, days: int, now: int | None = None) -> list[dict]:
+    now = int(now if now is not None else time.time())
+    today = today_utc(now)
+    out = []
+    for offset in range(days - 1, -1, -1):
+        date_str = today_utc(now - offset * 86400)
+        if date_str != today:
+            row = conn.execute(
+                "SELECT * FROM traffic_daily WHERE date=?", (date_str,)).fetchone()
+            if row:
+                out.append(dict(row))
+                continue
+        out.append(day_stats(conn, date_str))
+    return out
+
+
+def month_series(conn: sqlite3.Connection, months: int, now: int | None = None) -> list[dict]:
+    now = int(now if now is not None else time.time())
+    return [_month_from_days(k, _days_of_month(conn, k, now))
+            for k in _month_keys(now, months)]
+
+
+def year_view(conn: sqlite3.Connection, year: int, now: int | None = None) -> dict:
+    now = int(now if now is not None else time.time())
+    today = today_utc(now)
+    months = []
+    days: list[dict] = []
+    for m in range(1, 13):
+        month_key = f"{year:04d}-{m:02d}"
+        mdays = _days_of_month(conn, month_key, now) if month_key <= today[:7] else []
+        months.append(_month_from_days(month_key, mdays))
+        days.extend(mdays)
+    elapsed = len(days)
+    year_pv = sum(s["pv"] for s in days)
+    peak = max(days, key=lambda s: s["pv"]) if days else None
+    summary = {
+        "year": year,
+        "year_pv": year_pv,
+        "daily_pv_avg": round(year_pv / elapsed, 2) if elapsed else 0.0,
+        "daily_uv_avg": (round(sum(s["uv"] for s in days) / elapsed, 2)
+                         if elapsed else 0.0),
+        "new_users_year": sum(s["new_users"] for s in days),
+        "peak_day": ({"date": peak["date"], "pv": peak["pv"]}
+                     if peak and peak["pv"] else None),
+    }
+    return {"year": year, "months": months, "summary": summary}
+
+
+def yearly(conn: sqlite3.Connection, now: int | None = None) -> list[dict]:
+    now = int(now if now is not None else time.time())
+    years = {int(r["date"][:4]) for r in conn.execute("SELECT date FROM traffic_daily")}
+    years.add(time.gmtime(now).tm_year)
+    out = []
+    for y in sorted(years):
+        s = year_view(conn, y, now)["summary"]
+        out.append({"year": y, "pv": s["year_pv"], "uv_avg": s["daily_uv_avg"]})
+    return out
+
+
+def year_pv(conn: sqlite3.Connection, year: int, now: int | None = None) -> int:
+    """本年累计 PV 快路径（安全复审：overview 高频端点禁用 year_view 全年逐日扫描）。"""
+    now = int(now if now is not None else time.time())
+    total = conn.execute(
+        "SELECT COALESCE(SUM(pv),0) AS n FROM traffic_daily WHERE date>=? AND date<?",
+        (f"{year:04d}-01-01", f"{year + 1:04d}-01-01")).fetchone()["n"]
+    if time.gmtime(now).tm_year == year:
+        total += day_stats(conn, today_utc(now))["pv"]
+    return int(total)
