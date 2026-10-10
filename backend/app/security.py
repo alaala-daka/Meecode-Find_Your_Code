@@ -21,7 +21,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from . import config
+from . import config, traffic
 from .feed import auth
 
 API_PREFIX = "/api"
@@ -51,6 +51,7 @@ _RATE_RULES: tuple[tuple[str | None, str, str], ...] = (
     ("GET", "/api/search", "browse"),
     ("GET", "/api/repos/", "browse"),
     (None, "/api/auth/", "auth"),
+    ("POST", "/api/hit", "hit"),   # 页面访问 beacon：独立桶防灌水（60/min）
 )
 
 
@@ -88,6 +89,15 @@ def rate_key(request: Request) -> str:
         return f"ip:{client_ip(request)}"
     user_id, epoch = verified
     return f"u:{user_id}:{epoch}"
+
+
+HIT_PATH = "/api/hit"
+
+
+def session_user_id(request: Request) -> int | None:
+    token = request.cookies.get(config.SESSION_COOKIE, "")
+    verified = auth.verify(token) if token else None
+    return verified[0] if verified else None
 
 
 class SlidingWindowLimiter:
@@ -133,23 +143,166 @@ class SlidingWindowLimiter:
 
 _limiter = SlidingWindowLimiter()
 
+POLICY_TTL_SECONDS = 30.0
+PROTECTED_BUCKETS = frozenset({"default", "admin"})  # 不可停用（防自锁），Task 9 复用
+
+
+class PolicyCache:
+    """api_policies → 限流参数缓存：30s 惰性刷新 + 保存即失效（spec §2.4）。
+
+    安全复审修订（2026-10-09）：
+    - 缺桶/未刷新回落 config.RATE_LIMITS（冷启动与测试不依赖库），fail-open 仅限限流阈值；
+    - 保护桶 enabled 恒钳为 True（set/refresh_from 双侧，防直调与库被误改后自锁）；
+    - _gen 代数守卫：并发 refresh 不回滚刚保存的值（保存后 _gen 自增，过期快照丢弃）；
+    - schedule_refresh 在守护线程刷新，不阻塞事件循环。
+    """
+
+    def __init__(self) -> None:
+        self._data: dict[str, tuple[bool, int]] = {}
+        self._loaded_at = 0.0
+        self._last_attempt = 0.0
+        self._gen = 0
+        self._lock = threading.Lock()
+
+    def get(self, bucket: str) -> tuple[bool, int]:
+        with self._lock:
+            hit = self._data.get(bucket)
+        if hit is not None:
+            return hit
+        return True, config.RATE_LIMITS.get(bucket, config.RATE_LIMITS["default"])
+
+    def set(self, bucket: str, enabled: bool, limit: int) -> None:
+        """保存即生效。不变量：值须先落库（Task 9 先写 api_policies 再 set）；
+        仅内存的覆盖会在 TTL 内被 refresh_from 整表替换回退为库值。"""
+        if bucket in PROTECTED_BUCKETS:
+            enabled = True  # 纵深防御：保护桶永不停用
+        with self._lock:
+            self._data[bucket] = (enabled, limit)
+            self._gen += 1
+
+    def refresh_from(self, conn) -> None:
+        with self._lock:
+            gen0 = self._gen
+        rows = conn.execute(
+            "SELECT route_key, enabled, limit_per_min FROM api_policies").fetchall()
+        data = {}
+        for r in rows:
+            enabled = bool(r["enabled"])
+            if r["route_key"] in PROTECTED_BUCKETS:
+                enabled = True
+            data[r["route_key"]] = (enabled, int(r["limit_per_min"]))
+        with self._lock:
+            if gen0 != self._gen:
+                return  # 刷新期间有保存发生：丢弃过期快照，防回滚
+            self._data = data
+            self._loaded_at = time.time()
+
+    def invalidate(self) -> None:
+        with self._lock:
+            self._loaded_at = 0.0
+            self._gen += 1
+
+    def maybe_refresh(self, factory) -> None:
+        if factory is None:
+            return
+        with self._lock:
+            self._last_attempt = time.time()  # 盖戳在先：失败也计入退避
+            stale = time.time() - self._loaded_at >= POLICY_TTL_SECONDS
+        if not stale:
+            return
+        try:
+            conn = factory()
+        except Exception:
+            logging.getLogger(__name__).exception("api_policies 刷新开连接失败，沿用旧缓存")
+            return
+        try:
+            self.refresh_from(conn)
+        except Exception:
+            logging.getLogger(__name__).exception("api_policies 刷新失败，沿用旧缓存")
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    def schedule_refresh(self, factory) -> None:
+        """stale 时在守护线程刷新（dispatch 在事件循环线程，同步 I/O 会停摆全服务）。"""
+        if factory is None:
+            return
+        with self._lock:
+            if time.time() - self._last_attempt < POLICY_TTL_SECONDS:
+                return  # 失败退避：刷不动也 30s 内最多起一线程，防线程/日志泛滥
+            stale = time.time() - self._loaded_at >= POLICY_TTL_SECONDS
+        if stale:
+            threading.Thread(target=self.maybe_refresh, args=(factory,), daemon=True).start()
+
+    def reset(self) -> None:
+        with self._lock:
+            self._data = {}
+            self._loaded_at = 0.0
+            self._last_attempt = 0.0
+            self._gen += 1
+
+
+policies = PolicyCache()
+_policy_factory = None
+
+
+def bind_policy_source(factory) -> None:
+    global _policy_factory
+    _policy_factory = factory
+
 
 class SecurityMiddleware(BaseHTTPMiddleware):
-    """先 Origin 校验（403），再限流（429）；仅拦 /api 前缀路径。"""
+    """先 Origin 校验（403），再限流（429）；仅拦 /api 前缀路径。
+
+    二期（spec §2.4）：每请求缓冲写 access_events（含 4xx/5xx）；
+    HIT beacon 端点自身不入 api_calls（HIT 行由端点写入）。
+    """
 
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
         if not path.startswith(API_PREFIX):
             return await call_next(request)
+        try:
+            policies.schedule_refresh(_policy_factory)
+            response = await self._respond(request, call_next)
+        except Exception:
+            # 真 5xx（无响应对象）也落一行补全「含 4xx/5xx」口径；不吞异常，照常上抛
+            if not (path == HIT_PATH and request.method == "POST"):
+                try:
+                    traffic.writer.record(
+                        ts=int(time.time()), user_id=session_user_id(request),
+                        ip=client_ip(request), path=path,
+                        method=request.method, status_code=500)
+                except Exception:  # pragma: no cover - record 内已吞，双保险
+                    pass
+            raise
+        # 429 不落明细（限流器自知被拒量；落行会放大洪水面）。埋点吞异常（纵深）。
+        if not (path == HIT_PATH and request.method == "POST") and response.status_code != 429:
+            try:
+                traffic.writer.record(
+                    ts=int(time.time()), user_id=session_user_id(request),
+                    ip=client_ip(request), path=path,
+                    method=request.method, status_code=response.status_code)
+            except Exception:  # pragma: no cover - record 内已吞，双保险
+                pass
+        return response
 
+    async def _respond(self, request: Request, call_next):
+        path = request.url.path
         if request.method not in SAFE_METHODS:
             origin = request.headers.get("origin")
             if origin and origin not in config.ALLOWED_ORIGINS:
                 return JSONResponse({"detail": "非法来源请求"}, status_code=403)
 
+        bucket = bucket_for(request.method, path)
+        enabled, limit = policies.get(bucket)
+        if not enabled:
+            return JSONResponse(
+                {"detail": "接口已停用", "code": "disabled"}, status_code=403)
+
         if config.RATE_LIMIT_ENABLED:
-            bucket = bucket_for(request.method, path)
-            limit = config.RATE_LIMITS.get(bucket, config.RATE_LIMITS["default"])
             allowed, retry_after = _limiter.allow(
                 f"{bucket}:{rate_key(request)}", limit, config.RATE_LIMIT_WINDOW,
                 time.time(), config.RATE_LIMIT_MAX_KEYS,

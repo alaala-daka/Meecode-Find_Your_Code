@@ -1,7 +1,6 @@
 import * as React from "react";
 
 import { getOverview, type Overview } from "@/api/overview";
-import { Badge } from "@/components/ui/badge";
 
 const EMPTY = "—";
 
@@ -14,9 +13,10 @@ const LIVE_CARDS: LiveCard[] = [
   { key: "published_repos", label: "已上架" },
   { key: "delisted_repos", label: "已下架" },
   { key: "pending_comments", label: "待审评论" },
+  { key: "year_pv", label: "本年累计访问" },
+  { key: "today_pv", label: "今日访问" },
+  { key: "online", label: "当前在线" },
 ];
-
-const PHASE2_CARDS = [{ label: "本年累计访问" }, { label: "当前在线" }];
 
 const showValue = (value: number | undefined): string =>
   typeof value === "number" ? String(value) : EMPTY;
@@ -44,17 +44,6 @@ export function DashboardPage() {
         <div key={key} className="rounded-lg border border-line bg-surface p-5">
           <div className="text-sm text-ink-2">{label}</div>
           <div className="mt-2 font-mono text-2xl text-ink">{showValue(overview?.[key])}</div>
-        </div>
-      ))}
-      {PHASE2_CARDS.map(({ label }) => (
-        <div key={label} className="rounded-lg border border-line bg-tint p-5">
-          <div className="flex items-center justify-between gap-2">
-            <div className="text-sm text-ink-3">{label}</div>
-            <Badge variant="outline" className="border-line px-1.5 text-ink-4">
-              二期
-            </Badge>
-          </div>
-          <div className="mt-2 font-mono text-2xl text-ink-3">{EMPTY}</div>
         </div>
       ))}
     </div>

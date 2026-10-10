@@ -9,14 +9,14 @@ type MenuItem = { label: string; to: string; phase?: undefined } | { label: stri
 
 const MENU: MenuItem[] = [
   { label: "仪表盘", to: "/" },
-  { label: "站点流量", phase: "二期" },
+  { label: "站点流量", to: "/traffic" },
   { label: "用户管理", to: "/users" },
   { label: "仓库管理", to: "/repos" },
   { label: "评论管理", to: "/comments" },
-  { label: "API 管控", phase: "二期" },
-  { label: "系统配置", phase: "二期" },
-  { label: "审计日志", phase: "二期" },
-  { label: "登录日志", phase: "二期" },
+  { label: "API 管控", to: "/api-policies" },
+  { label: "系统配置", to: "/config" },
+  { label: "审计日志", to: "/audit-logs" },
+  { label: "登录日志", phase: "三期" },
 ];
 
 function Identity() {

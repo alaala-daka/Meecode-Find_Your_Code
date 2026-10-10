@@ -1,17 +1,9 @@
-/**
- * GET /api/admin/overview 契约（Task 8）：9 项计数（含二期观测三字段）；缺键渲染 `—` 容错。
- * 九键全可选：缺键是运行时事实，渲染侧按 `—` 容错（不伪造 0）。
- */
-export type Overview = {
-  total_users?: number;
-  new_users_today?: number;
-  total_repos?: number;
-  published_repos?: number;
-  delisted_repos?: number;
-  pending_comments?: number;
-  online?: number;
-  today_pv?: number;
-  year_pv?: number;
+export type ConfigRow = {
+  key: string;
+  value: string;
+  version: number;
+  updated_at: number;
+  updated_by: string;
 };
 
 const API_URL = "/api/admin";
@@ -34,4 +26,16 @@ const request = async <T>(path: string, init: RequestInit = {}): Promise<T> => {
   return (await res.json()) as T;
 };
 
-export const getOverview = (): Promise<Overview> => request("/overview");
+export const getConfig = (): Promise<{ data: ConfigRow[]; total: number }> =>
+  request("/config");
+
+export const updateConfig = (body: {
+  key: string;
+  value: string;
+  version: number;
+}): Promise<ConfigRow> =>
+  request("/config", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });

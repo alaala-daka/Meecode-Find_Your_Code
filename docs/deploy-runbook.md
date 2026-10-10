@@ -137,7 +137,10 @@ rsync -az --delete -e "ssh -i <部署私钥>" frontend/dist/ deploy@<服务器IP
 0 4 * * * cd /opt/meecode/backend && .venv/bin/python -m app.feed.jobs.report >> /var/log/meecode-report.log 2>&1
 */5 * * * * cd /opt/meecode/backend && .venv/bin/python -m app.feed.jobs.moderate >> /var/log/meecode-moderate.log 2>&1
 */5 * * * * cd /opt/meecode/backend && .venv/bin/python -m app.feed.jobs.star_sync >> /var/log/meecode-star-sync.log 2>&1
+5 0 * * * cd /opt/meecode/backend && .venv/bin/python -m app.admin.jobs.traffic_agg >> /var/log/meecode-traffic-agg.log 2>&1
 ```
+
+traffic_agg 每日 00:05 聚合昨日进 traffic_daily 并清理 30 天前 access_events；漏跑一天当日数据从明细现算补（≤30 天），超 30 天永久缺失。
 
 5. 冒烟：`curl -s "https://<domain>/api/feed" | head -c 200`（有 DB 内容后返回 cards）；`curl -s "https://<domain>/api/categories"` 返回 8 分类。
 
@@ -247,3 +250,8 @@ Environment=ADMIN_LOGINS=<login1>,<login2>
 - **robots.txt**：`curl -s https://<你的域名>/robots.txt` 含 `Disallow: /admin/`；
 - **API 边界未动**：`curl -sI https://<你的域名>/api/admin/me` 仍 401 JSON 且**不弹 Basic 框**（无 `WWW-Authenticate`）；
 - 浏览器输一次 Basic 口令（realm 缓存后续免输）→ GitHub 登录白名单账号进仪表盘，非白名单账号接 403 页。
+- [ ] `curl -s -u <basic用户>:<口令> https://<域名>/admin/traffic 深链刷新 200，图表渲染（recharts SVG 存在）`
+- [ ] `curl -s https://<域名>/api/admin/online -H 'Cookie: mc_session=…' 返回 {"online":…,"window_minutes":…}`
+- [ ] 系统配置页修改 online_window_minutes 保存 → 二次确认 → `/api/admin/online` 的 window_minutes 随之变化
+- [ ] 主站任一页面切换路由后 `SELECT COUNT(*) FROM access_events WHERE method='HIT'` 增长
+- [ ] 仪表盘「本年累计访问/今日访问/当前在线」三卡显示数值而非 `—`

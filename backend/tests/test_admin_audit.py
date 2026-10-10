@@ -75,10 +75,11 @@ def test_audit_logs_query_filters(conn, client, admin):
     assert body["total"] == 1 and body["data"][0]["detail"] == {"x": 1}
 
 
-def test_overview_shape_excludes_phase2_fields(conn, client, admin):
+def test_overview_shape_includes_phase2_fields(conn, client, admin):
     body = client.get("/api/admin/overview").json()
     assert set(body) == {"total_users", "new_users_today", "total_repos",
-                         "published_repos", "delisted_repos", "pending_comments"}
+                         "published_repos", "delisted_repos", "pending_comments",
+                         "online", "today_pv", "year_pv"}
     assert all(type(v) is int for v in body.values())
 
 
@@ -92,7 +93,8 @@ def test_overview_counts_breakdown(conn, client, admin):
     _mk_comment(conn, "visible", r_pub, uid)
     body = client.get("/api/admin/overview").json()
     assert body == {"total_users": 3, "new_users_today": 2, "total_repos": 3,
-                    "published_repos": 1, "delisted_repos": 1, "pending_comments": 1}
+                    "published_repos": 1, "delisted_repos": 1, "pending_comments": 1,
+                    "online": 0, "today_pv": 0, "year_pv": 0}
 
 
 def test_audit_logs_row_shape_and_ts_desc(conn, client, admin):
@@ -142,3 +144,14 @@ def test_audit_logs_pagination(conn, client, admin):
 def test_overview_and_audit_logs_require_admin(conn, client):
     assert client.get("/api/admin/overview").status_code == 401
     assert client.get("/api/admin/audit-logs").status_code == 401
+
+
+def test_overview_observation_fields_from_access_events(conn, client, admin):
+    from app import traffic as t
+    ts = int(time.time())
+    t.writer.reset()
+    t.writer.record(ts=ts, user_id=None, ip="1.1.1.1", path="/",
+                    method="HIT", status_code=200)
+    t.writer.flush(conn)
+    body = client.get("/api/admin/overview").json()
+    assert body["today_pv"] == 1 and body["year_pv"] == 1 and body["online"] == 1

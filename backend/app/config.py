@@ -65,6 +65,7 @@ _RATE_LIMIT_DEFAULTS: dict[str, int] = {
     "auth": 10,      # OAuth 跳转与回调
     "delist": 5,     # 下架：高危写操作，与 submit 同档
     "admin": 300,    # 管理台批量操作独立宽松桶（F5）
+    "hit": 60,       # 页面访问 beacon：60/min 贴近真人翻页，防灌水
     "default": 120,  # 兜底
 }
 
