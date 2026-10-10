@@ -47,4 +47,26 @@ describe("ConfigPage", () => {
       (c) => c.method === "PATCH" && c.body?.key === "online_window_minutes" &&
         c.body?.value === "10" && c.body?.version === 1)).toBe(true));
   });
+
+  it("409 版本冲突：弹窗保留并展示 detail", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (method === "PATCH") {
+        return new Response(
+          JSON.stringify({ detail: "配置已被他人修改，请刷新重试" }),
+          { status: 409 },
+        );
+      }
+      return new Response(JSON.stringify(CONFIG), { status: 200 });
+    });
+    render(<ConfigPage />);
+    await screen.findByText("online_window_minutes");
+    fireEvent.change(screen.getByRole("textbox", { name: "online_window_minutes 值" }),
+      { target: { value: "10" } });
+    fireEvent.click(screen.getByRole("button", { name: "online_window_minutes 保存" }));
+    fireEvent.click(screen.getByRole("button", { name: "确认" }));
+    expect(await screen.findByText("配置已被他人修改，请刷新重试")).toBeInTheDocument();
+    expect(screen.getByText("确认修改")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "确认" })).toBeInTheDocument();
+  });
 });

@@ -132,9 +132,23 @@ def test_api_policies_protected_buckets_reject_enabled(conn, client, admin):
         assert client.patch(
             f"/api/admin/api-policies/{key}",
             json={"enabled": False}).status_code == 400
-        assert client.patch(
+        r = client.patch(
             f"/api/admin/api-policies/{key}",
-            json={"limit_per_min": 99}).status_code == 200  # 限额仍可调
+            json={"limit_per_min": 99})
+        assert r.status_code == 200
+        assert r.json()["enabled"] is True  # 保护桶响应恒启用，限额仍可调
+
+
+def test_api_policies_protected_patch_clamps_enabled(conn, client, admin):
+    """脏行（admin.enabled=0）时 PATCH 响应/落库与 PolicyCache 同源钳制为 True。"""
+    conn.execute("UPDATE api_policies SET enabled=0 WHERE route_key='admin'")
+    conn.commit()
+    r = client.patch("/api/admin/api-policies/admin", json={"limit_per_min": 99})
+    assert r.status_code == 200
+    assert r.json() == {"route_key": "admin", "enabled": True, "limit_per_min": 99}
+    row = conn.execute("SELECT enabled FROM api_policies WHERE route_key='admin'").fetchone()
+    assert row["enabled"] == 1
+    assert security.policies.get("admin") == (True, 99)
 
 
 def test_api_policies_limit_validation(conn, client, admin):

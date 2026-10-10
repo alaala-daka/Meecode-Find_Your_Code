@@ -187,6 +187,54 @@ def test_writer_single_flight_dispatch(monkeypatch, tmp_path):
         traffic.writer.bind(None)
 
 
+def test_writer_timer_flush_dispatch(tmp_path):
+    """定时触发：不足 ACCESS_FLUSH_ROWS 时，ts 超出 _last_flush+ACCESS_FLUSH_SECONDS 也派发守护 flush。"""
+    import threading as _threading
+
+    from app.feed import db
+    db_path = str(tmp_path / "access.db")
+    boot = db.connect(db_path)
+    db.init_db(boot)
+    boot.close()
+
+    started = _threading.Event()
+    release = _threading.Event()
+    calls = []
+
+    def factory():
+        calls.append(1)
+        started.set()
+        assert release.wait(timeout=10)
+        return db.connect(db_path)
+
+    traffic.writer.reset()
+    traffic.writer.bind(factory)
+    try:
+        ts = int(traffic.writer._last_flush) + int(traffic.ACCESS_FLUSH_SECONDS) + 10
+        traffic.writer.record(ts=ts, user_id=None, ip="1.1.1.1", path="/",
+                              method="HIT", status_code=200)
+        assert started.wait(timeout=10)  # 1 行 < ACCESS_FLUSH_ROWS=200 也须定时派发
+        assert traffic.writer._flush_scheduled is True
+        release.set()
+        conn = db.connect(db_path)
+        try:
+            n = 0
+            deadline = time.time() + 10
+            while time.time() < deadline:
+                n = conn.execute("SELECT COUNT(*) AS n FROM access_events").fetchone()["n"]
+                if n == 1:
+                    break
+                time.sleep(0.01)
+            assert n == 1
+        finally:
+            conn.close()
+        assert len(calls) == 1
+        assert traffic.writer.failures == 0
+    finally:
+        release.set()
+        traffic.writer.bind(None)
+
+
 def test_writer_last_active_max_no_regress(conn):
     from app.feed import auth
     traffic.writer.reset()
@@ -464,3 +512,32 @@ def test_year_pv_fast_path(conn):
     _insert(conn, start + 1, "HIT", path="/", ip="a")
     assert traffic.year_pv(conn, int(seed[:4]), now) == 10  # traffic_daily + 今日现算
     assert traffic.year_pv(conn, int(seed[:4]) - 1, now) == 0
+
+
+def test_year_pv_backfills_missing_days_within_retention(conn):
+    import calendar
+    now = calendar.timegm((time.gmtime(NOW).tm_year, 12, 20, 12, 0, 0))
+    year = time.gmtime(now).tm_year
+    done = traffic.today_utc(now - 10 * 86400)  # 同年 12/10，已完成聚合
+    gap = traffic.today_utc(now - 5 * 86400)    # 同年 12/15，缺失日仅剩原始行
+    conn.execute("INSERT INTO traffic_daily (date, pv, uv) VALUES (?,?,?)", (done, 5, 2))
+    conn.commit()
+    start, _ = traffic.day_bounds_utc(gap)
+    for i in range(3):
+        _insert(conn, start + i + 1, "HIT", path="/", ip="a")
+    assert traffic.year_pv(conn, year, now) == 5 + 3  # + 今日 live 0
+
+
+def test_year_pv_agrees_with_year_view(conn):
+    import calendar
+    now = calendar.timegm((time.gmtime(NOW).tm_year, 12, 20, 12, 0, 0))
+    year = time.gmtime(now).tm_year
+    done = traffic.today_utc(now - 10 * 86400)
+    gap = traffic.today_utc(now - 5 * 86400)
+    conn.execute("INSERT INTO traffic_daily (date, pv, uv) VALUES (?,?,?)", (done, 5, 2))
+    conn.commit()
+    start, _ = traffic.day_bounds_utc(gap)
+    for i in range(3):
+        _insert(conn, start + i + 1, "HIT", path="/", ip="a")
+    assert (traffic.year_pv(conn, year, now)
+            == traffic.year_view(conn, year, now)["summary"]["year_pv"])

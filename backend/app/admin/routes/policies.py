@@ -49,6 +49,8 @@ def update_policy(
         if body.limit_per_min is not None and body.limit_per_min < 60:
             raise HTTPException(status_code=400, detail="default/admin 桶限额下限 60")
     enabled = row["enabled"] if body.enabled is None else int(body.enabled)
+    if key in PROTECTED_BUCKETS:
+        enabled = 1  # 与 PolicyCache 同源钳制：保护桶恒启用，脏行不回显 false
     limit = row["limit_per_min"] if body.limit_per_min is None else body.limit_per_min
     conn.execute(
         "UPDATE api_policies SET enabled=?, limit_per_min=? WHERE route_key=?",

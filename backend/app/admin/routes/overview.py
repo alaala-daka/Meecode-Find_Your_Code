@@ -37,5 +37,5 @@ def overview(conn: Annotated[sqlite3.Connection, Depends(deps.get_conn)]) -> dic
             conn, "SELECT COUNT(*) AS n FROM comments WHERE status='pending'"),
         "online": traffic.online_count(conn),
         "today_pv": traffic.day_stats(conn, traffic.today_utc(now))["pv"],
-        "year_pv": traffic.year_view(conn, year, now)["summary"]["year_pv"],
+        "year_pv": traffic.year_pv(conn, year, now),
     }

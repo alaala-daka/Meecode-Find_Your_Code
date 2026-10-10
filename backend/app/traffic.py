@@ -331,13 +331,27 @@ def yearly(conn: sqlite3.Connection, now: int | None = None) -> list[dict]:
 def year_pv(conn: sqlite3.Connection, year: int, now: int | None = None) -> int:
     """本年累计 PV 快路径（安全复审：overview 高频端点禁用 year_view 全年逐日扫描）。
 
-    SUM 只统计 < 今日 的 traffic_daily 行 + 今日 live 补齐，防手工补聚合今日行时双计。
+    口径与 year_view 一致：完成日 traffic_daily，缺失日保留期内现算。
+    SUM 只统计 < 今日 的 traffic_daily 行（防手工补聚合今日行时双计）；
+    缺失日在 ACCESS_RETENTION_DAYS 窗口内回补 day_stats（与 _days_of_month 同源）；
+    今日 live 现算；保留期外缺失日聚合任务已裁剪，两路径同为 0，无口径分叉。
     """
     now = int(now if now is not None else time.time())
+    today = today_utc(now)
+    year_start, year_end = f"{year:04d}-01-01", f"{year + 1:04d}-01-01"
     total = conn.execute(
         "SELECT COALESCE(SUM(pv),0) AS n FROM traffic_daily"
         " WHERE date>=? AND date<? AND date<?",
-        (f"{year:04d}-01-01", f"{year + 1:04d}-01-01", today_utc(now))).fetchone()["n"]
+        (year_start, year_end, today)).fetchone()["n"]
+    have = {r["date"] for r in conn.execute(
+        "SELECT date FROM traffic_daily WHERE date>=? AND date<? AND date<?",
+        (year_start, year_end, today))}
+    stop = min(today, year_end)
+    date_str = max(year_start, today_utc(now - ACCESS_RETENTION_DAYS * 86400))
+    while date_str < stop:
+        if date_str not in have:
+            total += day_stats(conn, date_str)["pv"]
+        date_str = _next_date(date_str)
     if time.gmtime(now).tm_year == year:
-        total += day_stats(conn, today_utc(now))["pv"]
+        total += day_stats(conn, today)["pv"]
     return int(total)

@@ -19,7 +19,7 @@ const STATS = {
 };
 
 const setupFetch = () => {
-  const calls: { url: string; method: string; body?: { limit_per_min?: number } }[] = [];
+  const calls: { url: string; method: string; body?: { enabled?: boolean; limit_per_min?: number } }[] = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
     const method = (init?.method ?? "GET").toUpperCase();
@@ -56,5 +56,18 @@ describe("ApiPoliciesPage", () => {
     await waitFor(() => expect(calls.some(
       (c) => c.method === "PATCH" && c.url.includes("/api-policies/llm") &&
         c.body?.limit_per_min === 5)).toBe(true));
+  });
+
+  it("停用走 ConfirmDialog，确认后 PATCH enabled:false", async () => {
+    const calls = setupFetch();
+    render(<ApiPoliciesPage />);
+    await screen.findByText("llm");
+    const stopButtons = screen.getAllByRole("button", { name: "停用" });
+    fireEvent.click(stopButtons.find((b) => !(b as HTMLButtonElement).disabled)!);
+    expect(screen.getByText(/停用 llm 桶/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "确认" }));
+    await waitFor(() => expect(calls.some(
+      (c) => c.method === "PATCH" && c.url.includes("/api-policies/llm") &&
+        c.body?.enabled === false)).toBe(true));
   });
 });
