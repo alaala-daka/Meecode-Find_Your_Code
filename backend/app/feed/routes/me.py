@@ -15,7 +15,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, R
 from fastapi.responses import RedirectResponse
 
 from ... import config, security
-from .. import auth, github, star_sync
+from .. import auth, github, login_events, star_sync
 from ..cards import to_card, _card_select
 from ..deps import get_conn
 from ..schemas import BioIn, InteractionIn, InteractionOut, RepoCardOut, UserOut
@@ -69,6 +69,7 @@ def oauth_callback(
         token = github.exchange_oauth_code(code)
         gh_user = github.get_authenticated_user(token)
     except github.GitHubError as exc:
+        login_events.record(conn, request, user_id=None, login="", event="login", ok=0)
         raise HTTPException(status_code=502, detail=f"GitHub 登录失败：{exc}") from exc
 
     user_id = auth.upsert_user(conn, gh_user)
@@ -77,6 +78,8 @@ def oauth_callback(
         (security.seal_token(token, str(user_id)), int(time.time()), user_id),
     )
     conn.commit()
+    login_events.record(conn, request, user_id=user_id, login=gh_user["login"],
+                        event="login", ok=1)
     background.add_task(star_sync.backfill_after_auth, user_id)
     # 回跳目标以 cookie 往返；回来再校验白名单一次（纵深防御：cookie 若被篡改也只回 "/"）
     target = request.cookies.get(OAUTH_REDIRECT_COOKIE, "/")
@@ -102,6 +105,8 @@ def logout(request: Request, response: Response,
     user = auth.current_user(request, conn)
     if user is not None:
         auth.revoke_all(conn, user["id"])
+        login_events.record(conn, request, user_id=user["id"], login=user["login"],
+                            event="logout", ok=1)
     response.delete_cookie(config.SESSION_COOKIE)
     return {"ok": True}
 
