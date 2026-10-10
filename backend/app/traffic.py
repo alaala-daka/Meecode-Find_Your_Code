@@ -9,6 +9,7 @@ import calendar
 import functools
 import hashlib
 import hmac
+import ipaddress
 import logging
 import sqlite3
 import threading
@@ -37,6 +38,21 @@ def ip_hash(ip: str) -> str:
 def _ip_key() -> bytes:
     return hashlib.pbkdf2_hmac("sha256", config.SESSION_SECRET.encode("utf-8"),
                                _IP_SALT, 200_000, dklen=32)
+
+
+_LOGIN_IP_SALT = b"meecode-login-ip-v1"
+
+
+def login_ip_hash(ip: str) -> str:
+    """登录日志专用假名化：独立派生标签，与 access_events 的 ip_hash 不可联表；IPv6 归一化最简形。"""
+    normalized = str(ipaddress.ip_address(ip))
+    return hmac.new(_login_ip_key(), normalized.encode("utf-8"), hashlib.sha256).hexdigest()[:32]
+
+
+@functools.lru_cache(maxsize=1)
+def _login_ip_key() -> bytes:
+    return hashlib.pbkdf2_hmac("sha256", config.SESSION_SECRET.encode("utf-8"),
+                               _LOGIN_IP_SALT, 200_000, dklen=32)
 
 
 def day_bounds_utc(date_str: str) -> tuple[int, int]:

@@ -541,3 +541,22 @@ def test_year_pv_agrees_with_year_view(conn):
         _insert(conn, start + i + 1, "HIT", path="/", ip="a")
     assert (traffic.year_pv(conn, year, now)
             == traffic.year_view(conn, year, now)["summary"]["year_pv"])
+
+
+def test_login_ip_hash_独立标签且与访问哈希不可联表():
+    from app import traffic
+    a = traffic.login_ip_hash("1.2.3.4")
+    assert len(a) == 32
+    assert a != traffic.ip_hash("1.2.3.4")
+
+
+def test_login_ip_hash_ipv6归一化():
+    from app import traffic
+    assert traffic.login_ip_hash("::1") == traffic.login_ip_hash("0:0:0:0:0:0:0:1")
+
+
+def test_login_ip_hash_非法IP抛错():
+    import pytest
+    from app import traffic
+    with pytest.raises(ValueError):
+        traffic.login_ip_hash("not-an-ip")
