@@ -188,7 +188,7 @@ for i in $(seq 1 25); do curl -s -o /dev/null -w '%{http_code}\n' -X POST https:
 
 **入口双凭证（spec F9）**：`/admin/` 全路径（页面/深链/JS bundle）前置 nginx Basic Auth + `X-Robots-Tag: noindex`；API 边界仍是后端 `ADMIN_LOGINS`（Basic 凭证作用域仅 `/admin/`，不波及 `/api/admin/`，浏览器不会向 API 附带 Basic 头）。
 
-1. 本机构建并同步产物（dist 文件名带 hash，整目录覆盖即可）：
+1. 产物同步：**常规走 CI**——push/合入 `feat/frontend-ui` 触发 `.github/workflows/deploy.yml`，自动构建 `frontend-admin` 并 rsync 到 `/var/www/admin/`（test 门禁含管理台 typecheck+tests）；下方手动步骤保留为**回退方案**（CI 故障/热修时用）。dist 文件名带 hash，整目录覆盖即可：
 
 ```bash
 cd frontend-admin
