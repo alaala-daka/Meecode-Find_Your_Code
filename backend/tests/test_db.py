@@ -236,3 +236,15 @@ def test_app_config_seeded_online_window(conn):
     row = conn.execute("SELECT * FROM app_config WHERE key='online_window_minutes'").fetchone()
     assert row is not None
     assert row["value"] == "5" and row["version"] == 1
+
+
+def test_login_events_table_and_indices(conn):
+    t = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='login_events'"
+    ).fetchall()
+    assert t
+    idx = {r["name"] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='login_events'")}
+    assert {"idx_login_events_ts", "idx_login_events_login", "idx_login_events_ip"} <= idx
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(login_events)")}
+    assert cols == {"id", "ts", "user_id", "login", "ip_hash", "event", "ok"}

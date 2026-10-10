@@ -171,6 +171,19 @@ def connect(path: str | None = None) -> sqlite3.Connection:
 
 def init_db(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA)
+    conn.execute("""
+CREATE TABLE IF NOT EXISTS login_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts INTEGER NOT NULL,
+  user_id INTEGER,
+  login TEXT NOT NULL DEFAULT '',
+  ip_hash TEXT NOT NULL DEFAULT '',
+  event TEXT NOT NULL CHECK(event IN ('login','logout')),
+  ok INTEGER NOT NULL CHECK(ok IN (0,1))
+)""")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_login_events_ts ON login_events(ts)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_login_events_login ON login_events(login)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_login_events_ip ON login_events(ip_hash)")
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(users)")}
     if "session_epoch" not in cols:
         conn.execute("ALTER TABLE users ADD COLUMN session_epoch INTEGER NOT NULL DEFAULT 0")
