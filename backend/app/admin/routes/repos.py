@@ -47,8 +47,9 @@ def list_repos(
 ) -> dict:
     where, args = ["1=1"], []
     if q:
-        where.append("full_name LIKE ? ESCAPE '\\'")
-        args.append(_like(q))
+        where.append("(full_name LIKE ? ESCAPE '\\' OR tagline_zh LIKE ? ESCAPE '\\'"
+                     " OR intro_zh LIKE ? ESCAPE '\\')")
+        args.extend([_like(q)] * 3)
     if status in _STATUSES:
         where.append("status=?")
         args.append(status)

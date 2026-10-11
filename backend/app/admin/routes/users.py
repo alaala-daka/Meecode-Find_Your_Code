@@ -60,7 +60,8 @@ def list_users(
 ) -> dict:
     where, args = ["1=1"], []
     if q:
-        where.append("u.login LIKE ? ESCAPE '\\'")
+        where.append("(u.login LIKE ? ESCAPE '\\' OR u.bio LIKE ? ESCAPE '\\')")
+        args.append(_like(q))
         args.append(_like(q))
     if status == "banned":
         where.append(_status_sql() + "='banned'")

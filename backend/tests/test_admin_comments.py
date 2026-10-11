@@ -7,7 +7,7 @@ from app.feed import auth
 NOW = int(time.time())
 
 
-def _mk_comment(conn, status="visible", reason=None, gid=50):
+def _mk_comment(conn, status="visible", reason=None, gid=50, content="内容"):
     conn.execute(
         "INSERT INTO repos (github_id, full_name, owner_login, language, source, status,"
         " quality, published_at, tagline_zh, screened)"
@@ -15,8 +15,8 @@ def _mk_comment(conn, status="visible", reason=None, gid=50):
     uid = auth.upsert_user(conn, {"id": 100 + gid, "login": f"u{gid}", "avatar_url": "https://a/u"})
     cid = conn.execute(
         "INSERT INTO comments (repo_id, user_id, parent_id, content, status, screened, moderation_reason)"
-        " VALUES ((SELECT id FROM repos WHERE github_id=?),?,NULL,'内容',?,1,?)",
-        (gid, uid, status, reason or "")).lastrowid
+        " VALUES ((SELECT id FROM repos WHERE github_id=?),?,NULL,?,?,1,?)",
+        (gid, uid, content, status, reason or "")).lastrowid
     conn.commit()
     return cid
 
@@ -135,3 +135,9 @@ def test_comment_list_shape_and_repo_filter(conn, client, admin):
     assert [r["id"] for r in client.get("/api/admin/comments").json()["data"]] == [c2, c1]  # id DESC
     assert client.get("/api/admin/comments?status=nope").json()["total"] == 2  # 非法 status 不过滤
     assert client.get("/api/admin/comments?page=0").status_code == 422
+
+
+def test_新增q内容过滤(conn, client, admin):
+    _mk_comment(conn, gid=90, content="独特关键词")
+    assert client.get("/api/admin/comments", params={"q": "独特关键词"}).json()["total"] == 1
+    assert client.get("/api/admin/comments", params={"q": "不存在词"}).json()["total"] == 0
