@@ -39,8 +39,11 @@ describe("LoginEventsPage", () => {
     const calls = setupFetch();
     render(<LoginEventsPage />);
     await screen.findAllByText("alice");
+    fireEvent.change(screen.getByPlaceholderText("登录名模糊"),
+      { target: { value: "bob" } });
     fireEvent.click(screen.getByRole("button", { name: "查询" }));
-    await waitFor(() => expect(calls.some((c) => c.url.includes("page=1"))).toBe(true));
+    await waitFor(() =>
+      expect(calls.some((c) => c.url.includes("q=bob"))).toBe(true));
   });
 
   it("ip 反查弹窗提交后带 ip 参数", async () => {

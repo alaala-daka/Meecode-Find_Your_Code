@@ -104,9 +104,9 @@ export function LoginEventsPage() {
             <SelectItem value="logout">登出</SelectItem>
           </SelectContent>
         </Select>
-        <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)}
+        <Input type="date" value={from} onChange={(e) => { setFrom(e.target.value); setPage(1); }}
           className="w-36 border-line" aria-label="开始日期" />
-        <Input type="date" value={to} onChange={(e) => setTo(e.target.value)}
+        <Input type="date" value={to} onChange={(e) => { setTo(e.target.value); setPage(1); }}
           className="w-36 border-line" aria-label="结束日期" />
         <Button type="submit" variant="outline" className="border-line text-ink-2">查询</Button>
         {ip && (
@@ -131,10 +131,10 @@ export function LoginEventsPage() {
           </TableHeader>
           <TableBody>
             {state === "loading" && (
-              <TableRow><TableCell colSpan={6} className="py-8 text-center text-ink-3">加载中…</TableCell></TableRow>
+              <TableRow><TableCell colSpan={6} role="status" className="py-8 text-center text-ink-3">加载中…</TableCell></TableRow>
             )}
             {state === "error" && (
-              <TableRow><TableCell colSpan={6} className="py-8 text-center text-danger">加载失败</TableCell></TableRow>
+              <TableRow><TableCell colSpan={6} role="alert" className="py-8 text-center text-danger">加载失败</TableCell></TableRow>
             )}
             {state === "ready" && rows.length === 0 && (
               <TableRow><TableCell colSpan={6} className="py-8 text-center text-ink-3">暂无登录日志</TableCell></TableRow>
