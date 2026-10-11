@@ -1,6 +1,6 @@
 import * as React from "react";
 import { useList, type CrudFilter } from "@refinedev/core";
-import { Link } from "react-router";
+import { Link, useSearchParams } from "react-router";
 
 import { BAN_FOREVER, type UserRow } from "@/api/users";
 import { Badge } from "@/components/ui/badge";
@@ -51,6 +51,15 @@ export function UserList() {
   const [q, setQ] = React.useState("");
   const [status, setStatus] = React.useState("all");
   const [page, setPage] = React.useState(1);
+
+  const [searchParams] = useSearchParams();
+  React.useEffect(() => {
+    const urlQ = searchParams.get("q");
+    if (urlQ) {
+      setSearch(urlQ);
+      setQ(urlQ);
+    }
+  }, []);
 
   const filters: CrudFilter[] = React.useMemo(() => {
     const list: CrudFilter[] = [];

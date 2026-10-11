@@ -135,9 +135,9 @@ const setupFetch = (options: SetupOptions = {}) => {
   return calls;
 };
 
-const renderList = () =>
+const renderList = (entry = "/comments") =>
   render(
-    <MemoryRouter initialEntries={["/comments"]}>
+    <MemoryRouter initialEntries={[entry]}>
       <Refine dataProvider={dataProvider} resources={[{ name: "comments", list: "/comments" }]}>
         <CommentList />
       </Refine>
@@ -340,5 +340,16 @@ describe("CommentList · 筛选", () => {
     await waitFor(() => {
       expect(calls.some((c) => c.method === "GET" && c.url.includes("repo_id=3"))).toBe(true);
     });
+  });
+});
+
+describe("CommentList · URL 预填", () => {
+  it("URL ?q= 预填过滤", async () => {
+    const calls = setupFetch();
+    renderList("/comments?q=3");
+    expect(screen.getByDisplayValue("3")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(calls.some((c) => c.method === "GET" && c.url.includes("repo_id=3"))).toBe(true),
+    );
   });
 });

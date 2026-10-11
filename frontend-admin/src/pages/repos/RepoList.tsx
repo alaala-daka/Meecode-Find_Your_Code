@@ -1,5 +1,6 @@
 import * as React from "react";
 import { useList, type CrudFilter } from "@refinedev/core";
+import { useSearchParams } from "react-router";
 
 import {
   repoStateAction,
@@ -54,6 +55,15 @@ export function RepoList() {
   const [pending, setPending] = React.useState<{ row: RepoRow; action: RepoAction } | null>(null);
   const [editing, setEditing] = React.useState<RepoRow | null>(null);
   const [actionError, setActionError] = React.useState<string | null>(null);
+
+  const [searchParams] = useSearchParams();
+  React.useEffect(() => {
+    const urlQ = searchParams.get("q");
+    if (urlQ) {
+      setSearch(urlQ);
+      setQ(urlQ);
+    }
+  }, []);
 
   const filters: CrudFilter[] = React.useMemo(() => {
     const list: CrudFilter[] = [];

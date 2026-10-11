@@ -1,5 +1,6 @@
 import * as React from "react";
 import { useList, type CrudFilter } from "@refinedev/core";
+import { useSearchParams } from "react-router";
 
 import {
   bulkHideComments,
@@ -83,6 +84,15 @@ export function CommentList() {
   const [actionError, setActionError] = React.useState<string | null>(null);
   const [bulkResult, setBulkResult] = React.useState<BulkHideResult | null>(null);
   const [stats, setStats] = React.useState<CommentStats | null>(null);
+
+  const [searchParams] = useSearchParams();
+  React.useEffect(() => {
+    const urlQ = searchParams.get("q");
+    if (urlQ) {
+      setRepoSearch(urlQ);
+      setRepoId(urlQ);
+    }
+  }, []);
 
   const filters: CrudFilter[] = React.useMemo(() => {
     const list: CrudFilter[] = [];
