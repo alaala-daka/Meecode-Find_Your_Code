@@ -13,6 +13,7 @@ import { LoginDeniedPage } from "@/pages/LoginDeniedPage";
 import { LoginEventsPage } from "@/pages/loginEvents/LoginEventsPage";
 import { ApiPoliciesPage } from "@/pages/policies/ApiPoliciesPage";
 import { RepoList } from "@/pages/repos/RepoList";
+import { SearchPage } from "@/pages/search/SearchPage";
 import { TrafficPage } from "@/pages/traffic/TrafficPage";
 import { UserList } from "@/pages/users/UserList";
 import { UserShow } from "@/pages/users/UserShow";
@@ -99,6 +100,7 @@ export default function App() {
               <Route path="/config" element={<ConfigPage />} />
               <Route path="/audit-logs" element={<AuditLogPage />} />
               <Route path="/login-events" element={<LoginEventsPage />} />
+              <Route path="/search" element={<SearchPage />} />
               <Route path="*" element={<PendingPage title="页面不存在" />} />
             </Route>
           </Routes>
