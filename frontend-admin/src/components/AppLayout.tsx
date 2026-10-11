@@ -1,11 +1,17 @@
-import { useGetIdentity, useLogout } from "@refinedev/core";
-import { NavLink, Outlet } from "react-router";
+import * as React from "react";
 
+import { useGetIdentity, useLogout } from "@refinedev/core";
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router";
+
+import { getLoginEvents } from "@/api/loginEvents";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import type { AdminIdentity } from "@/providers/authProvider";
 
-type MenuItem = { label: string; to: string; phase?: undefined } | { label: string; phase: string; to?: undefined };
+type MenuItem =
+  | { label: string; to: string; phase?: undefined; badge?: "loginFails" }
+  | { label: string; phase: string; to?: undefined };
 
 const MENU: MenuItem[] = [
   { label: "仪表盘", to: "/" },
@@ -16,7 +22,7 @@ const MENU: MenuItem[] = [
   { label: "API 管控", to: "/api-policies" },
   { label: "系统配置", to: "/config" },
   { label: "审计日志", to: "/audit-logs" },
-  { label: "登录日志", phase: "三期" },
+  { label: "登录日志", to: "/login-events", badge: "loginFails" },
 ];
 
 function Identity() {
@@ -42,6 +48,21 @@ function Identity() {
 
 export function AppLayout() {
   const { mutate: logout } = useLogout();
+  const location = useLocation();
+  const [fails, setFails] = React.useState(0);
+  const [term, setTerm] = React.useState("");
+  const navigate = useNavigate();
+
+  React.useEffect(() => {
+    let alive = true;
+    const from = new Date().toISOString().slice(0, 10);
+    getLoginEvents({ ok: "0", from, to: from, page: 1, page_size: 1 })
+      .then((b) => alive && setFails(b.total ?? 0))
+      .catch(() => alive && setFails(0));
+    return () => {
+      alive = false;
+    };
+  }, [location.pathname]);
 
   return (
     <div className="flex min-h-screen bg-paper text-ink">
@@ -68,7 +89,13 @@ export function AppLayout() {
                   ].join(" ")
                 }
               >
-                {item.label}
+                <span className="flex items-center justify-between">
+                  <span>{item.label}</span>
+                  {item.badge === "loginFails" && fails > 0 && (
+                    <Badge variant="outline"
+                      className="border-line px-1.5 font-mono text-danger">{fails}</Badge>
+                  )}
+                </span>
               </NavLink>
             ) : (
               <div
@@ -88,6 +115,22 @@ export function AppLayout() {
       </aside>
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="flex h-14 shrink-0 items-center justify-end gap-4 border-b border-line bg-surface px-6">
+          <form
+            className="mr-auto"
+            onSubmit={(e) => {
+              e.preventDefault();
+              const t = term.trim();
+              if (t) navigate(`/search?q=${encodeURIComponent(t)}`);
+            }}
+          >
+            <Input
+              value={term}
+              onChange={(e) => setTerm(e.target.value)}
+              placeholder="搜索用户 / 仓库 / 评论"
+              className="w-64 border-line"
+              aria-label="全局搜索"
+            />
+          </form>
           <Identity />
           <Button
             type="button"
