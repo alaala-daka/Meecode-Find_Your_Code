@@ -10,6 +10,7 @@ import { CommentList } from "@/pages/comments/CommentList";
 import { ConfigPage } from "@/pages/config/ConfigPage";
 import { DashboardPage } from "@/pages/DashboardPage";
 import { LoginDeniedPage } from "@/pages/LoginDeniedPage";
+import { LoginEventsPage } from "@/pages/loginEvents/LoginEventsPage";
 import { ApiPoliciesPage } from "@/pages/policies/ApiPoliciesPage";
 import { RepoList } from "@/pages/repos/RepoList";
 import { TrafficPage } from "@/pages/traffic/TrafficPage";
@@ -97,6 +98,7 @@ export default function App() {
               <Route path="/api-policies" element={<ApiPoliciesPage />} />
               <Route path="/config" element={<ConfigPage />} />
               <Route path="/audit-logs" element={<AuditLogPage />} />
+              <Route path="/login-events" element={<LoginEventsPage />} />
               <Route path="*" element={<PendingPage title="页面不存在" />} />
             </Route>
           </Routes>
