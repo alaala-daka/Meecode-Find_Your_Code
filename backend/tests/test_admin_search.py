@@ -66,8 +66,7 @@ def test_短词回退LIKE且通配符转义(conn, client, admin):
     _mk_repo(conn, "o/pct%name")
     r = client.get("/api/admin/search", params={"q": "AI"}).json()
     assert r["repos"]["count"] == 1
-    r = client.get("/api/admin/search", params={"q": "%"}).json()
-    assert r["repos"]["count"] == 1 and r["repos"]["items"][0]["name"] == "o/pct%name"
+    assert client.get("/api/admin/search", params={"q": "%"}).status_code == 422
 
 
 def test_count封顶1001(conn, client, admin):

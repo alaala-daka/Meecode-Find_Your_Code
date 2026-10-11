@@ -48,9 +48,9 @@ def global_search(
     q: str = Query(..., min_length=1, max_length=200),
 ) -> dict:
     term = q.strip()
-    pat = _like(term)
-    if len(pat) - 2 < 2 or len(pat) - 2 > 50:
+    if len(term) < 2 or len(term) > 50:
         raise HTTPException(422, "q 须为 2–50 字符")
+    pat = _like(term)
 
     u_tail = "FROM users u WHERE u.login LIKE ? ESCAPE '\\' OR u.bio LIKE ? ESCAPE '\\'"
     u_args = [pat, pat]
