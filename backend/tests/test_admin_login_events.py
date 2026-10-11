@@ -1,8 +1,5 @@
 """管理台登录日志（spec 2026-10-10 三期 §2.3）。"""
-import pytest
-
 from app import traffic
-from app.feed import db
 
 
 def _seed(conn, *, login="alice", event="login", ok=1, ts=1_700_000_000, ip="9.9.9.9"):
@@ -40,7 +37,7 @@ def test_列表倒序与过滤_and(conn, client, admin):
 
 
 def test_时间区间与422(conn, client, admin):
-    _seed(conn, ts=1_700_000_000)  # 2023-11-14 UTC
+    _seed(conn, ts=1_700_000_000)
     r = client.get("/api/admin/login-events",
                    params={"from": "2023-11-14", "to": "2023-11-14"}).json()
     assert r["total"] == 1
