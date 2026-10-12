@@ -1,0 +1,33 @@
+/* src/components/FeedbackModal.css —— 照 LoginModal.css：mask 用 --mask_modal + fade-in */
+.fb-mask {
+  position: fixed; inset: 0; z-index: 100;
+  display: flex; align-items: center; justify-content: center; padding: 24px;
+  background: var(--mask_modal); animation: fade-in 0.15s var(--ease);
+}
+.fb-panel {
+  width: 460px; max-width: 100%; padding: 28px 28px 24px;
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--radius-xl); box-shadow: var(--shadow-dropdown);
+}
+.fb-title { font-family: var(--font-mono); font-size: 17px; color: var(--ink); }
+.fb-tip { margin-top: 6px; font-size: 13px; color: var(--ink-3); }
+.fb-pills { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+.fb-field { display: flex; flex-direction: column; gap: 6px; margin-top: 16px; }
+.fb-label { font-size: 13px; font-weight: 600; color: var(--ink); }
+.fb-count { margin-left: 6px; font-family: var(--font-mono); font-size: 12px; color: var(--ink-3); }
+.fb-input, .fb-textarea {
+  width: 100%; padding: 9px 12px; font-family: inherit; font-size: 14px;
+  color: var(--ink); background: var(--surface);
+  border: 1px solid var(--line); border-radius: var(--radius-md);
+}
+.fb-textarea { resize: vertical; }
+.fb-input:focus, .fb-textarea:focus { border-color: var(--brand-line); }
+.fb-error { margin-top: 12px; font-size: 13px; color: var(--danger); }
+.fb-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+.fb-close {
+  position: absolute; top: 12px; right: 12px;
+  width: 28px; height: 28px; border-radius: var(--radius-pill);
+  color: var(--ink-3); transition: color var(--time-fast), background-color var(--time-fast);
+}
+.fb-close:hover { color: var(--ink); background: var(--tint); }
+.fb-mask .fb-panel { position: relative; }
