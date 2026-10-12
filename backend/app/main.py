@@ -20,6 +20,7 @@ from .agent.mock import mock_chat_events, mock_repo_context
 from .feed import db
 from .security import SecurityMiddleware
 from .feed.routes import comments as comments_routes
+from .feed.routes import feedback as feedback_routes
 from .feed.routes import feed as feed_routes
 from .feed.routes import hit as hit_routes
 from .feed.routes import me as me_routes
@@ -70,6 +71,7 @@ app.include_router(submit_routes.router, prefix="/api")
 app.include_router(me_routes.router, prefix="/api")
 app.include_router(users_routes.router, prefix="/api")
 app.include_router(comments_routes.router, prefix="/api")
+app.include_router(feedback_routes.router, prefix="/api")
 app.include_router(hit_routes.router, prefix="/api")
 app.include_router(admin_routes.router)
 

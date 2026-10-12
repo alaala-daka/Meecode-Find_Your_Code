@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class ScreeningResult(BaseModel):
@@ -194,3 +194,38 @@ class CommentVerdict(BaseModel):
     """LLM 评论合规判定输出（spec 决策 8）。"""
     is_compliant: bool
     reason: str = ""
+
+
+class FeedbackIn(BaseModel):
+    """提交反馈。body/contact 一律先 strip 再判空与计长，纯空白视为非法（spec §3.2）。"""
+    model_config = ConfigDict(extra="forbid")
+    category: Literal["bug", "suggest", "other"]
+    body: str
+    contact: str | None = None
+
+    @field_validator("body")
+    @classmethod
+    def _check_body(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("反馈内容不能为空")
+        if len(v) > 500:
+            raise ValueError("反馈内容过长（上限 500 字符）")
+        return v
+
+    @field_validator("contact")
+    @classmethod
+    def _check_contact(cls, v: str | None) -> str | None:
+        """spec §3.2：strip 后纯空白视为非法；「没填」请直接不传该键（主站表单即如此）。"""
+        if v is None:
+            return None
+        v = v.strip()
+        if not v:
+            raise ValueError("联系方式不能留空（不填请省略该字段）")
+        if len(v) > 100:
+            raise ValueError("联系方式过长（上限 100 字符）")
+        return v
+
+
+class FeedbackOut(BaseModel):
+    id: int
