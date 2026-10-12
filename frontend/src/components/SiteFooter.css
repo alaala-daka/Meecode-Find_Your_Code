@@ -34,3 +34,5 @@
   transition: color var(--time-fast);
 }
 .footer-cta:hover { color: var(--brand-hover); }
+.footer-cta-group { margin-left: auto; display: flex; align-items: baseline; gap: 24px; }
+.footer-cta-group .footer-cta { margin-left: 0; }

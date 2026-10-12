@@ -5,6 +5,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { FIXTURE_USER } from '../api/fixtures'
 import { useAuthStore } from '../store/authStore'
+import { useNotificationStore } from '../store/notificationStore'
 import TopBar from './TopBar'
 
 const navigateSpy = vi.fn()
@@ -86,5 +87,31 @@ describe('TopBar', () => {
       </MemoryRouter>,
     )
     expect(screen.getByRole('link', { name: '首页' })).not.toHaveClass('is-current')
+  })
+
+  it('铃铛显示未读红点且可展开菜单', async () => {
+    useAuthStore.setState({ user: FIXTURE_USER })   // 未登录会被守卫拦下弹登录框
+    useNotificationStore.setState({ count: 2 })
+    const { api } = await import('../api/client')
+    vi.spyOn(api, 'replyNotifications').mockResolvedValue({
+      items: [{ feedback_id: 3, feedback_body_preview: '原问题', reply_id: 9,
+                reply_body_preview: '已修复', created_at: 1_700_000_000 }],
+      total: 1,
+    })
+    renderTopBar()
+    const bell = screen.getByRole('button', { name: '反馈回复通知' })
+    expect(bell).toHaveAttribute('aria-expanded', 'false')
+    await userEvent.click(bell)                      // 该文件既有 import 是 userEvent，没有 fireEvent
+    expect(bell).toHaveAttribute('aria-expanded', 'true')
+    expect(await screen.findByText('已修复')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: '查看全部反馈 →' })).toHaveAttribute(
+      'href', '/my/feedback')
+  })
+
+  it('未登录点铃铛弹登录框而非菜单（UI 约束 §1.8）', async () => {
+    renderTopBar()
+    await userEvent.click(screen.getByRole('button', { name: '反馈回复通知' }))
+    expect(screen.getByText('用 GitHub 登录')).toBeInTheDocument()
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
   })
 })
