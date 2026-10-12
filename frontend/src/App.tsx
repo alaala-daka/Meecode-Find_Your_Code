@@ -1,7 +1,9 @@
 // src/App.tsx
 import { useEffect } from 'react'
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
+import FeedbackDetailPage from './pages/FeedbackDetailPage'
 import HomePage from './pages/HomePage'
+import MyFeedbackPage from './pages/MyFeedbackPage'
 import ProfilePage from './pages/ProfilePage'
 import RepoPage from './pages/RepoPage'
 import SearchPage from './pages/SearchPage'
@@ -43,6 +45,8 @@ export default function App() {
         <Route path="/repo/:id" element={<RepoPage />} />
         <Route path="/submit" element={<SubmitPage />} />
         <Route path="/user/:login" element={<ProfilePage />} />
+        <Route path="/my/feedback" element={<MyFeedbackPage />} />
+        <Route path="/my/feedback/:id" element={<FeedbackDetailPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
       <SiteFooter />

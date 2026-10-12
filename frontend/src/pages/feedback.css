@@ -1,0 +1,21 @@
+/* src/pages/feedback.css —— 我的反馈：列表沿 .search-card，回复串沿 .comment-*（注释模块专属 sanitize 不用） */
+.mfb-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 14px; }
+.mfb-title { font-family: var(--font-mono); font-size: 19px; color: var(--ink); }
+.mfb-count { font-family: var(--font-mono); font-size: 13px; color: var(--ink-3);
+  font-variant-numeric: tabular-nums; }
+.mfb-row { cursor: pointer; }
+.mfb-badge { padding: 1px 9px; font-size: 11.5px; line-height: 18px;
+  border-radius: var(--radius-pill); border: 1px solid var(--line); color: var(--ink-2);
+  background: var(--tint); }
+.mfb-badge-pending { color: var(--warn); background: var(--surface); }
+.mfb-badge-done { color: var(--ok); background: var(--surface); }
+.mfb-badge-ignored { color: var(--ink-3); }
+.mfb-detail-head { padding: 20px 22px; background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--radius-lg); }
+.mfb-detail-body { margin-top: 12px; font-size: 14.5px; line-height: 1.7; color: var(--ink);
+  white-space: pre-wrap; word-break: break-word; }
+.mfb-thread { margin-top: 16px; padding: 20px 22px; background: var(--surface);
+  border: 1px solid var(--line); border-radius: var(--radius-lg); }
+.mfb-thread-title { font-family: var(--font-mono); font-size: 15px; color: var(--ink-2); }
+.mfb-note { margin-left: 24px; }
+@media (max-width: 640px) { .mfb-note { margin-left: 12px; } }
