@@ -1,6 +1,5 @@
 import * as React from "react";
 import { useList, type CrudFilter } from "@refinedev/core";
-import { useSearchParams } from "react-router";
 
 import {
   bulkHideComments,
@@ -31,6 +30,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { useQPrefill } from "@/hooks/useQPrefill";
 import { formatTime } from "@/pages/users/UserList";
 
 const PAGE_SIZE = 10;
@@ -87,14 +87,10 @@ export function CommentList() {
   const [bulkResult, setBulkResult] = React.useState<BulkHideResult | null>(null);
   const [stats, setStats] = React.useState<CommentStats | null>(null);
 
-  const [searchParams] = useSearchParams();
-  React.useEffect(() => {
-    const urlQ = searchParams.get("q");
-    if (urlQ) {
-      setSearch(urlQ);
-      setQ(urlQ);
-    }
-  }, []);
+  useQPrefill((urlQ) => {
+    setSearch(urlQ);
+    setQ(urlQ);
+  });
 
   const filters: CrudFilter[] = React.useMemo(() => {
     const list: CrudFilter[] = [];

@@ -9,9 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { AdminIdentity } from "@/providers/authProvider";
 
-type MenuItem =
-  | { label: string; to: string; phase?: undefined; badge?: "loginFails" }
-  | { label: string; phase: string; to?: undefined };
+type MenuItem = { label: string; to: string; badge?: "loginFails" };
 
 const MENU: MenuItem[] = [
   { label: "仪表盘", to: "/" },
@@ -74,43 +72,29 @@ export function AppLayout() {
           <div className="mt-1 text-xs text-ink-4">管理台</div>
         </div>
         <nav className="flex-1 space-y-1 px-3 pb-6">
-          {MENU.map((item) =>
-            item.to ? (
-              <NavLink
-                key={item.label}
-                to={item.to}
-                end={item.to === "/"}
-                className={({ isActive }) =>
-                  [
-                    "flex items-center justify-between rounded-sm px-3 py-2 text-sm transition-colors duration-[180ms]",
-                    isActive
-                      ? "bg-tint font-medium text-ink"
-                      : "text-ink-2 hover:bg-tint hover:text-ink",
-                  ].join(" ")
-                }
-              >
-                <span className="flex items-center justify-between">
-                  <span>{item.label}</span>
-                  {item.badge === "loginFails" && fails > 0 && (
-                    <Badge variant="outline"
-                      className="border-line px-1.5 font-mono text-danger">{fails}</Badge>
-                  )}
-                </span>
-              </NavLink>
-            ) : (
-              <div
-                key={item.label}
-                aria-disabled="true"
-                title={`${item.label}（${item.phase}开放）`}
-                className="flex cursor-not-allowed items-center justify-between rounded-sm px-3 py-2 text-sm text-ink-4"
-              >
+          {MENU.map((item) => (
+            <NavLink
+              key={item.label}
+              to={item.to}
+              end={item.to === "/"}
+              className={({ isActive }) =>
+                [
+                  "flex items-center justify-between rounded-sm px-3 py-2 text-sm transition-colors duration-[180ms]",
+                  isActive
+                    ? "bg-tint font-medium text-ink"
+                    : "text-ink-2 hover:bg-tint hover:text-ink",
+                ].join(" ")
+              }
+            >
+              <span className="flex items-center justify-between">
                 <span>{item.label}</span>
-                <Badge variant="outline" className="border-line px-1.5 text-ink-4">
-                  {item.phase}
-                </Badge>
-              </div>
-            ),
-          )}
+                {item.badge === "loginFails" && fails > 0 && (
+                  <Badge variant="outline"
+                    className="border-line px-1.5 font-mono text-danger">{fails}</Badge>
+                )}
+              </span>
+            </NavLink>
+          ))}
         </nav>
       </aside>
       <div className="flex min-w-0 flex-1 flex-col">

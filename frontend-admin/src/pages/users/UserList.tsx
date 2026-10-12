@@ -1,6 +1,6 @@
 import * as React from "react";
 import { useList, type CrudFilter } from "@refinedev/core";
-import { Link, useSearchParams } from "react-router";
+import { Link } from "react-router";
 
 import { BAN_FOREVER, type UserRow } from "@/api/users";
 import { Badge } from "@/components/ui/badge";
@@ -21,6 +21,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { useQPrefill } from "@/hooks/useQPrefill";
 
 const PAGE_SIZE = 10;
 
@@ -52,14 +53,10 @@ export function UserList() {
   const [status, setStatus] = React.useState("all");
   const [page, setPage] = React.useState(1);
 
-  const [searchParams] = useSearchParams();
-  React.useEffect(() => {
-    const urlQ = searchParams.get("q");
-    if (urlQ) {
-      setSearch(urlQ);
-      setQ(urlQ);
-    }
-  }, []);
+  useQPrefill((urlQ) => {
+    setSearch(urlQ);
+    setQ(urlQ);
+  });
 
   const filters: CrudFilter[] = React.useMemo(() => {
     const list: CrudFilter[] = [];

@@ -17,8 +17,9 @@ import {
 import { formatTime } from "@/pages/users/UserList";
 
 const PAGE_SIZE = 20;
+const IP_HASH_TRUNC = 12;
 
-export function EventBadge({ event }: { event: string }) {
+export function EventBadge({ event }: { event: "login" | "logout" }) {
   return (
     <Badge variant="outline" className="border-line font-mono text-ink-2">
       {event === "login" ? "登录" : "登出"}
@@ -26,7 +27,7 @@ export function EventBadge({ event }: { event: string }) {
   );
 }
 
-export function OkBadge({ ok }: { ok: number }) {
+export function OkBadge({ ok }: { ok: 0 | 1 }) {
   return ok === 1 ? (
     <Badge variant="outline" className="border-line font-mono text-ok">成功</Badge>
   ) : (
@@ -145,7 +146,7 @@ export function LoginEventsPage() {
                 <TableCell className="font-mono text-ink-2">{r.login || "—"}</TableCell>
                 <TableCell><EventBadge event={r.event} /></TableCell>
                 <TableCell><OkBadge ok={r.ok} /></TableCell>
-                <TableCell className="font-mono text-xs text-ink-2">{r.ip_hash ? r.ip_hash.slice(0, 12) : "—"}</TableCell>
+                <TableCell className="font-mono text-xs text-ink-2">{r.ip_hash ? r.ip_hash.slice(0, IP_HASH_TRUNC) : "—"}</TableCell>
                 <TableCell>
                   <Button type="button" variant="outline" size="sm"
                     className="border-line text-ink-2"

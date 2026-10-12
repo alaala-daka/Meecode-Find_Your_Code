@@ -1,6 +1,5 @@
 import * as React from "react";
 import { useList, type CrudFilter } from "@refinedev/core";
-import { useSearchParams } from "react-router";
 
 import {
   repoStateAction,
@@ -26,6 +25,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { useQPrefill } from "@/hooks/useQPrefill";
 import { formatTime } from "@/pages/users/UserList";
 import { RepoEdit } from "./RepoEdit";
 
@@ -56,14 +56,10 @@ export function RepoList() {
   const [editing, setEditing] = React.useState<RepoRow | null>(null);
   const [actionError, setActionError] = React.useState<string | null>(null);
 
-  const [searchParams] = useSearchParams();
-  React.useEffect(() => {
-    const urlQ = searchParams.get("q");
-    if (urlQ) {
-      setSearch(urlQ);
-      setQ(urlQ);
-    }
-  }, []);
+  useQPrefill((urlQ) => {
+    setSearch(urlQ);
+    setQ(urlQ);
+  });
 
   const filters: CrudFilter[] = React.useMemo(() => {
     const list: CrudFilter[] = [];

@@ -5,7 +5,7 @@ export type LoginEventRow = {
   login: string;
   ip_hash: string;
   event: "login" | "logout";
-  ok: number;
+  ok: 0 | 1;
 };
 
 const API_URL = "/api/admin";
