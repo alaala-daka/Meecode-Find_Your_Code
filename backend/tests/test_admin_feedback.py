@@ -112,3 +112,90 @@ def test_详情含contact与note且回复正序(conn, monkeypatch):
     assert [x["id"] for x in d["replies"]] == [r2, r1]
     assert d["replies"][0]["read_at"] == NOW + 5 and d["replies"][1]["read_at"] is None
     assert client.get("/api/admin/feedback/999999").status_code == 404
+
+
+def test_patch状态与备注各写一条审计(conn, monkeypatch):
+    client = _admin_client(conn, monkeypatch)
+    uid = auth.upsert_user(conn, {"id": 11, "login": "dave", "avatar_url": ""})
+    fid = _mk(conn, uid)
+    r = client.patch(f"/api/admin/feedback/{fid}",
+                     json={"status": "done", "note": "已联系作者"})
+    assert r.status_code == 200 and r.json() == {"ok": True}
+    row = conn.execute("SELECT * FROM feedback WHERE id=?", (fid,)).fetchone()
+    assert row["status"] == "done" and row["note"] == "已联系作者"
+    assert _audits(conn, "feedback.status")[0] == '{"from": "pending", "to": "done"}'
+    assert _audits(conn, "feedback.note")[0] == '{"note": "已联系作者"}'
+    assert all(r["admin_login"] == "boss" for r in conn.execute(
+        "SELECT * FROM audit_logs WHERE target_type='feedback'"))
+
+
+def test_patch部分更新与缺省不变(conn, monkeypatch):
+    client = _admin_client(conn, monkeypatch)
+    uid = auth.upsert_user(conn, {"id": 12, "login": "e", "avatar_url": ""})
+    fid = _mk(conn, uid)
+    client.patch(f"/api/admin/feedback/{fid}", json={"note": "N"})
+    client.patch(f"/api/admin/feedback/{fid}", json={"status": "ignored"})
+    row = conn.execute("SELECT * FROM feedback WHERE id=?", (fid,)).fetchone()
+    assert row["note"] == "N" and row["status"] == "ignored"
+    assert len(_audits(conn, "feedback.status")) == 1
+
+
+def test_patch三态互转与清空备注(conn, monkeypatch):
+    client = _admin_client(conn, monkeypatch)
+    uid = auth.upsert_user(conn, {"id": 13, "login": "f", "avatar_url": ""})
+    fid = _mk(conn, uid, note="旧")
+    for s in ("done", "ignored", "pending", "done"):
+        assert client.patch(f"/api/admin/feedback/{fid}",
+                            json={"status": s}).status_code == 200
+    client.patch(f"/api/admin/feedback/{fid}", json={"note": ""})
+    assert conn.execute("SELECT note FROM feedback WHERE id=?",
+                        (fid,)).fetchone()["note"] == ""
+
+
+def test_patch非法422与404(conn, monkeypatch):
+    client = _admin_client(conn, monkeypatch)
+    uid = auth.upsert_user(conn, {"id": 14, "login": "g", "avatar_url": ""})
+    fid = _mk(conn, uid)
+    assert client.patch(f"/api/admin/feedback/{fid}", json={"status": "nope"}).status_code == 422
+    assert client.patch(f"/api/admin/feedback/{fid}", json={"status": None}).status_code == 422
+    assert client.patch(f"/api/admin/feedback/{fid}",
+                        json={"note": "x" * 2001}).status_code == 422
+    assert client.patch(f"/api/admin/feedback/{fid}",
+                        json={"status": "done", "bad": 1}).status_code == 422
+    assert client.patch(f"/api/admin/feedback/{fid}", json={}).status_code == 422
+    assert client.patch("/api/admin/feedback/999999",
+                        json={"status": "done"}).status_code == 404
+
+
+def test_回复多轮不改状态并写审计(conn, monkeypatch):
+    client = _admin_client(conn, monkeypatch)
+    uid = auth.upsert_user(conn, {"id": 15, "login": "h", "avatar_url": ""})
+    fid = _mk(conn, uid, body="正文")
+    r1 = client.post(f"/api/admin/feedback/{fid}/replies", json={"body": " 第一轮 "})
+    r2 = client.post(f"/api/admin/feedback/{fid}/replies", json={"body": "第二轮"})
+    assert r1.status_code == 201 and r2.status_code == 201
+    rows = conn.execute("SELECT * FROM feedback_replies WHERE feedback_id=? ORDER BY id",
+                        (fid,)).fetchall()
+    assert [x["body"] for x in rows] == ["第一轮", "第二轮"]
+    assert {x["author_login"] for x in rows} == {"boss"}
+    assert {x["read_at"] for x in rows} == {None}
+    assert conn.execute("SELECT status FROM feedback WHERE id=?",
+                        (fid,)).fetchone()["status"] == "pending"
+    d = client.get(f"/api/admin/feedback/{fid}").json()
+    assert len(d["replies"]) == 2
+    assert len(_audits(conn, "feedback.reply")) == 2
+    assert "第一轮" in _audits(conn, "feedback.reply")[0]
+
+
+def test_回复非法422与404(conn, monkeypatch):
+    client = _admin_client(conn, monkeypatch)
+    uid = auth.upsert_user(conn, {"id": 16, "login": "i", "avatar_url": ""})
+    fid = _mk(conn, uid)
+    assert client.post(f"/api/admin/feedback/{fid}/replies",
+                       json={"body": "  "}).status_code == 422
+    assert client.post(f"/api/admin/feedback/{fid}/replies",
+                       json={"body": "x" * 1001}).status_code == 422
+    assert client.post(f"/api/admin/feedback/{fid}/replies",
+                       json={"body": "x", "extra": 1}).status_code == 422
+    assert client.post("/api/admin/feedback/999999/replies",
+                       json={"body": "x"}).status_code == 404
