@@ -9,6 +9,7 @@ import { AuditLogPage } from "@/pages/audit/AuditLogPage";
 import { CommentList } from "@/pages/comments/CommentList";
 import { ConfigPage } from "@/pages/config/ConfigPage";
 import { DashboardPage } from "@/pages/DashboardPage";
+import { FeedbackInbox } from "@/pages/feedback/FeedbackInbox";
 import { LoginDeniedPage } from "@/pages/LoginDeniedPage";
 import { LoginEventsPage } from "@/pages/loginEvents/LoginEventsPage";
 import { ApiPoliciesPage } from "@/pages/policies/ApiPoliciesPage";
@@ -96,6 +97,7 @@ export default function App() {
               <Route path="/users/show/:id" element={<UserShow />} />
               <Route path="/repos" element={<RepoList />} />
               <Route path="/comments" element={<CommentList />} />
+              <Route path="/feedback" element={<FeedbackInbox />} />
               <Route path="/api-policies" element={<ApiPoliciesPage />} />
               <Route path="/config" element={<ConfigPage />} />
               <Route path="/audit-logs" element={<AuditLogPage />} />
