@@ -449,6 +449,22 @@ def test_aggregate_yesterday_prunes_old_rows(conn):
     assert conn.execute("SELECT COUNT(*) AS n FROM access_events").fetchone()["n"] == 1
 
 
+def test_aggregate_yesterday_prunes_old_login_fails(conn):
+    from app.admin.jobs import traffic_agg
+
+    for login, ok, ts in (("old-fail", 0, NOW - 181 * 86400),
+                          ("old-ok", 1, NOW - 181 * 86400),
+                          ("fresh-fail", 0, NOW - 86400 + 10)):
+        conn.execute(
+            "INSERT INTO login_events (ts, user_id, login, ip_hash, event, ok)"
+            " VALUES (?,?,?,?,?,?)", (ts, 1, login, "", "login", ok))
+    conn.commit()
+    out = traffic_agg.aggregate_yesterday(conn, now=NOW)
+    assert out["pruned_login_fails"] == 1
+    rows = {r["login"] for r in conn.execute("SELECT login FROM login_events")}
+    assert rows == {"old-ok", "fresh-fail"}
+
+
 def test_aggregate_yesterday_idempotent(conn):
     from app.admin.jobs import traffic_agg
 
