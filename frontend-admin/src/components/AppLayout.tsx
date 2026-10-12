@@ -3,13 +3,14 @@ import * as React from "react";
 import { useGetIdentity, useLogout } from "@refinedev/core";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router";
 
+import { getFeedback } from "@/api/feedback";
 import { getLoginEvents } from "@/api/loginEvents";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { AdminIdentity } from "@/providers/authProvider";
 
-type MenuItem = { label: string; to: string; badge?: "loginFails" };
+type MenuItem = { label: string; to: string; badge?: "loginFails" | "feedbackPending" };
 
 const MENU: MenuItem[] = [
   { label: "仪表盘", to: "/" },
@@ -17,6 +18,7 @@ const MENU: MenuItem[] = [
   { label: "用户管理", to: "/users" },
   { label: "仓库管理", to: "/repos" },
   { label: "评论管理", to: "/comments" },
+  { label: "反馈收件箱", to: "/feedback", badge: "feedbackPending" },
   { label: "API 管控", to: "/api-policies" },
   { label: "系统配置", to: "/config" },
   { label: "审计日志", to: "/audit-logs" },
@@ -48,6 +50,7 @@ export function AppLayout() {
   const { mutate: logout } = useLogout();
   const location = useLocation();
   const [fails, setFails] = React.useState(0);
+  const [pendingFb, setPendingFb] = React.useState(0);
   const [term, setTerm] = React.useState("");
   const navigate = useNavigate();
 
@@ -57,6 +60,9 @@ export function AppLayout() {
     getLoginEvents({ ok: "0", from, page: 1, page_size: 1 })
       .then((b) => alive && setFails(b.total ?? 0))
       .catch(() => alive && setFails(0));
+    getFeedback({ status: "pending", page: 1, page_size: 1 })
+      .then((b) => alive && setPendingFb(b.total ?? 0))
+      .catch(() => alive && setPendingFb(0));
     return () => {
       alive = false;
     };
@@ -88,10 +94,14 @@ export function AppLayout() {
             >
               <span className="flex items-center justify-between">
                 <span>{item.label}</span>
-                {item.badge === "loginFails" && fails > 0 && (
-                  <Badge variant="outline"
-                    className="border-line px-1.5 font-mono text-danger">{fails}</Badge>
-                )}
+                {(() => {
+                  const n = item.badge === "loginFails" ? fails
+                    : item.badge === "feedbackPending" ? pendingFb : 0;
+                  return n > 0 ? (
+                    <Badge variant="outline"
+                      className="border-line px-1.5 font-mono text-danger">{n}</Badge>
+                  ) : null;
+                })()}
               </span>
             </NavLink>
           ))}

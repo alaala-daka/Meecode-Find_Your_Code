@@ -68,4 +68,18 @@ describe("AppLayout · 菜单", () => {
     fireEvent.submit(input.closest("form") as HTMLFormElement);
     expect(await screen.findByText("/search?q=meecode")).toBeInTheDocument();
   });
+
+  it("反馈收件箱菜单带 pending 徽章", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      const payload = url.includes("/admin/feedback?")
+        ? { data: [], total: 4 }
+        : { data: [], total: 0 };
+      return new Response(JSON.stringify(payload), { status: 200 });
+    });
+    render(<MemoryRouter><AppLayout /></MemoryRouter>);
+    const link = await screen.findByRole("link", { name: /反馈收件箱/ });
+    expect(link).toHaveAttribute("href", "/feedback");
+    expect(await screen.findByText("4")).toBeInTheDocument();
+  });
 });
