@@ -137,6 +137,13 @@ def test_comment_list_shape_and_repo_filter(conn, client, admin):
     assert client.get("/api/admin/comments?page=0").status_code == 422
 
 
+def test_q内容过滤通配符转义(conn, client, admin):
+    _mk_comment(conn, gid=91, content="100%通过")
+    _mk_comment(conn, gid=92, content="100 分通过")
+    body = client.get("/api/admin/comments?q=0%25").json()  # q="0%" 仅命中字面 "0%"
+    assert [c["content"] for c in body["data"]] == ["100%通过"]
+
+
 def test_新增q内容过滤(conn, client, admin):
     _mk_comment(conn, gid=90, content="独特关键词")
     assert client.get("/api/admin/comments", params={"q": "独特关键词"}).json()["total"] == 1

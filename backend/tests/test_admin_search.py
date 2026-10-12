@@ -64,9 +64,24 @@ def test_三组命中与字段(conn, client, admin):
 def test_短词回退LIKE且通配符转义(conn, client, admin):
     _mk_repo(conn, "o/AI-tool")
     _mk_repo(conn, "o/pct%name")
+    _mk_user(conn, "ab%cd")
+    _mk_comment(conn, "100%通过")
     r = client.get("/api/admin/search", params={"q": "AI"}).json()
     assert r["repos"]["count"] == 1
-    assert client.get("/api/admin/search", params={"q": "%"}).status_code == 422
+    r = client.get("/api/admin/search", params={"q": "t%"}).json()
+    assert r["users"]["count"] == 0
+    assert r["repos"]["count"] == 1 and r["repos"]["items"][0]["name"] == "o/pct%name"
+    assert r["comments"]["count"] == 0
+    r = client.get("/api/admin/search", params={"q": "0%"}).json()
+    assert r["comments"]["count"] == 1 and r["comments"]["items"][0]["body"] == "100%通过"
+    assert r["users"]["count"] == 0 and r["repos"]["count"] == 0
+
+
+def test_三字符起走FTS分支命中(conn, client, admin):
+    _mk_repo(conn, "o/awesome-tool", tagline_zh="好用的工具")
+    r = client.get("/api/admin/search", params={"q": "awesome"}).json()
+    assert r["repos"]["count"] == 1
+    assert r["repos"]["items"][0]["name"] == "o/awesome-tool"
 
 
 def test_count封顶1001(conn, client, admin):

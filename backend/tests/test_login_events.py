@@ -57,6 +57,16 @@ def test_匿名logout不落行(conn, client):
     assert conn.execute("SELECT COUNT(*) AS n FROM login_events").fetchone()["n"] == 0
 
 
+def test_鉴权拒绝403不落行(conn, client):
+    from app import config
+    from app.feed import auth
+
+    uid = auth.upsert_user(conn, {"id": 9, "login": "eve", "avatar_url": "https://a/e"})
+    client.cookies.set(config.SESSION_COOKIE, auth.sign(uid), domain="testserver.local")
+    assert client.get("/api/admin/users").status_code == 403
+    assert conn.execute("SELECT COUNT(*) AS n FROM login_events").fetchone()["n"] == 0
+
+
 def test_record_写失败吞异常(conn, caplog):
     import logging
     from app.feed import login_events
