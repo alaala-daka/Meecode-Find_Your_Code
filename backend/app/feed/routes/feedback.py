@@ -14,7 +14,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from .. import auth
 from ..deps import get_conn
 from ..schemas import (FeedbackDetailOut, FeedbackIn, FeedbackOut, FeedbackReply,
-                       MyFeedbackItem, MyFeedbackOut)
+                       MyFeedbackItem, MyFeedbackOut, ReplyNotification,
+                       ReplyNotificationsOut)
 
 log = logging.getLogger(__name__)
 
@@ -101,3 +102,41 @@ def get_my_feedback(feedback_id: int, request: Request,
     except Exception:                       # 置已读是写副作用，炸出也不许拖垮读面
         log.exception("feedback_replies 置已读调用炸出（feedback_id=%s）", feedback_id)
     return out
+
+
+@router.get("/notifications/replies/unread-count")
+def unread_reply_count(request: Request,
+                       conn: sqlite3.Connection = Depends(get_conn)) -> dict:
+    user = auth.require_user(request, conn)
+    n = conn.execute(
+        "SELECT COUNT(*) AS n FROM feedback_replies r"
+        " JOIN feedback f ON f.id = r.feedback_id"
+        " WHERE f.user_id = ? AND r.read_at IS NULL",
+        (user["id"],)).fetchone()["n"]
+    return {"count": n}
+
+
+@router.get("/notifications/replies", response_model=ReplyNotificationsOut)
+def list_reply_notifications(
+    request: Request,
+    limit: int = Query(10, ge=1, le=50),
+    conn: sqlite3.Connection = Depends(get_conn),
+) -> ReplyNotificationsOut:
+    """铃铛下拉数据源。已读未读全量返回（红点由 unread-count 单独驱动）。"""
+    user = auth.require_user(request, conn)
+    rows = conn.execute(
+        f"""SELECT f.id AS feedback_id,
+                   substr(f.body, 1, {_BODY_PREVIEW}) AS feedback_body_preview,
+                   r.id AS reply_id,
+                   substr(r.body, 1, {_REPLY_PREVIEW}) AS reply_body_preview,
+                   r.created_at
+              FROM feedback_replies r JOIN feedback f ON f.id = r.feedback_id
+             WHERE f.user_id = ?
+             ORDER BY r.id DESC LIMIT ?""",
+        (user["id"], limit)).fetchall()
+    total = conn.execute(
+        "SELECT COUNT(*) AS n FROM feedback_replies r"
+        " JOIN feedback f ON f.id = r.feedback_id WHERE f.user_id = ?",
+        (user["id"],)).fetchone()["n"]
+    return ReplyNotificationsOut(items=[ReplyNotification(**dict(r)) for r in rows],
+                                 total=total)

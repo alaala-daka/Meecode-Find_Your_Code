@@ -265,3 +265,16 @@ class MyFeedbackItem(BaseModel):
 class MyFeedbackOut(BaseModel):
     items: list[MyFeedbackItem]
     total: int
+
+
+class ReplyNotification(BaseModel):
+    feedback_id: int
+    feedback_body_preview: str
+    reply_id: int
+    reply_body_preview: str
+    created_at: int
+
+
+class ReplyNotificationsOut(BaseModel):
+    items: list[ReplyNotification]
+    total: int

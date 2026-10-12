@@ -194,3 +194,37 @@ def test_置已读失败吞异常(conn, client, monkeypatch):
     monkeypatch.setattr(fb, "_mark_replies_read",
                         lambda *a, **k: (_ for _ in ()).throw(RuntimeError("db down")))
     assert client.get(f"/api/feedback/{fid}").status_code == 200
+
+
+def test_未读数只算本人未读(conn, client):
+    uid = _login(conn, client)
+    fid = _mk_feedback(conn, uid)
+    _mk_reply(conn, fid)
+    _mk_reply(conn, fid)
+    _mk_reply(conn, fid, read_at=NOW)
+    other = auth.upsert_user(conn, {"id": 997, "login": "x", "avatar_url": ""})
+    _mk_reply(conn, _mk_feedback(conn, other))
+    assert client.get("/api/notifications/replies/unread-count").json() == {"count": 2}
+    client.cookies.set(config.SESSION_COOKIE, auth.sign(other), domain="testserver.local")
+    assert client.get("/api/notifications/replies/unread-count").json() == {"count": 1}
+
+
+def test_通知列表倒序含摘要(conn, client):
+    uid = _login(conn, client)
+    fid = _mk_feedback(conn, uid, body="f" * 100)
+    r1 = _mk_reply(conn, fid, body="a" * 100, created_at=NOW)
+    _mk_reply(conn, fid, body="bb", created_at=NOW + 10, read_at=NOW + 20)
+    r = client.get("/api/notifications/replies").json()
+    assert r["total"] == 2
+    assert r["items"][0]["reply_id"] == r1 + 1          # ORDER BY id DESC（"bb" 仅 2 字符）
+    assert len(r["items"][1]["reply_body_preview"]) == 80   # "a"*100 的截断在次新条
+    assert len(r["items"][0]["feedback_body_preview"]) == 60
+    assert set(r["items"][0]) == {"feedback_id", "feedback_body_preview", "reply_id",
+                                  "reply_body_preview", "created_at"}
+    assert client.get("/api/notifications/replies",
+                      params={"limit": 51}).status_code == 422
+
+
+def test_通知匿名401(client):
+    assert client.get("/api/notifications/replies").status_code == 401
+    assert client.get("/api/notifications/replies/unread-count").status_code == 401
