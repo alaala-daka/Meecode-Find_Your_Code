@@ -248,3 +248,40 @@ def test_login_events_table_and_indices(conn):
     assert {"idx_login_events_ts", "idx_login_events_login", "idx_login_events_ip"} <= idx
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(login_events)")}
     assert cols == {"id", "ts", "user_id", "login", "ip_hash", "event", "ok"}
+
+
+# ---------- 管理面板三期 3B 用户反馈表（spec 2026-10-12） ----------
+def test_feedback_tables_and_indices(conn):
+    for t in ("feedback", "feedback_replies"):
+        assert conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (t,)
+        ).fetchone()
+    idx = {r["name"] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='feedback'")}
+    assert {"idx_feedback_user", "idx_feedback_status"} <= idx
+    ridx = {r["name"] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='feedback_replies'")}
+    assert {"idx_feedback_replies_fb", "idx_feedback_replies_read"} <= ridx
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(feedback)")}
+    assert cols == {"id", "user_id", "category", "body", "contact", "status", "note",
+                    "created_at", "updated_at"}
+    rcols = {r["name"] for r in conn.execute("PRAGMA table_info(feedback_replies)")}
+    assert rcols == {"id", "feedback_id", "body", "author_login", "created_at", "read_at"}
+
+
+def test_feedback_默认值与约束(conn):
+    import sqlite3
+
+    conn.execute("INSERT INTO users (github_id, login) VALUES (9, 'fb-user')")  # FK：users(id)=1
+    conn.execute("INSERT INTO feedback (user_id, category, body) VALUES (1,'bug','x')")
+    row = conn.execute("SELECT * FROM feedback").fetchone()
+    assert row["status"] == "pending"
+    assert row["note"] is None and row["contact"] is None
+    assert row["created_at"] > 0 and row["updated_at"] > 0
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute("INSERT INTO feedback (user_id, category, body) VALUES (1,'nope','x')")
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute("UPDATE feedback SET status='nope' WHERE id=?", (row["id"],))
+    conn.execute("UPDATE feedback SET status='done' WHERE id=?", (row["id"],))
+    assert conn.execute("SELECT status FROM feedback WHERE id=?",
+                        (row["id"],)).fetchone()["status"] == "done"

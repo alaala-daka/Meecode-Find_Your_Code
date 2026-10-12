@@ -184,6 +184,33 @@ CREATE TABLE IF NOT EXISTS login_events (
     conn.execute("CREATE INDEX IF NOT EXISTS idx_login_events_ts ON login_events(ts)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_login_events_login ON login_events(login)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_login_events_ip ON login_events(ip_hash)")
+    conn.execute("""
+CREATE TABLE IF NOT EXISTS feedback (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  category TEXT NOT NULL CHECK(category IN ('bug','suggest','other')),
+  body TEXT NOT NULL,
+  contact TEXT,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','done','ignored')),
+  note TEXT,
+  created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+  updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+)""")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_feedback_user ON feedback(user_id, created_at)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_feedback_status ON feedback(status)")
+    conn.execute("""
+CREATE TABLE IF NOT EXISTS feedback_replies (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  feedback_id INTEGER NOT NULL REFERENCES feedback(id),
+  body TEXT NOT NULL,
+  author_login TEXT NOT NULL,
+  created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+  read_at INTEGER
+)""")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_feedback_replies_fb ON feedback_replies(feedback_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_feedback_replies_read ON feedback_replies(read_at)")
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(users)")}
     if "session_epoch" not in cols:
         conn.execute("ALTER TABLE users ADD COLUMN session_epoch INTEGER NOT NULL DEFAULT 0")
