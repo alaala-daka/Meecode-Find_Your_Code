@@ -23,4 +23,16 @@ describe('notificationStore', () => {
     expect(useNotificationStore.getState().count).toBe(0)
     vi.restoreAllMocks()
   })
+
+  it('reset 作废在途 refresh：登出竞态下迟到响应不复活红点', async () => {
+    const { api } = await import('../api/client')
+    let resolve!: (v: { count: number }) => void
+    vi.spyOn(api, 'unreadReplyCount').mockReturnValue(new Promise<{ count: number }>((r) => { resolve = r }))
+    const inflight = useNotificationStore.getState().refresh()  // 在途请求
+    useNotificationStore.getState().reset()                     // 登出清零（App.tsx !user 分支）
+    resolve({ count: 5 })                                       // 迟到响应
+    await inflight
+    expect(useNotificationStore.getState().count).toBe(0)
+    vi.restoreAllMocks()
+  })
 })

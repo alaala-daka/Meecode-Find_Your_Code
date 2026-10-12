@@ -77,6 +77,17 @@ describe("FeedbackDetail", () => {
     expect(calls.find((c) => c.url.endsWith("/replies"))?.body).toEqual({ body: "已修复" });
   });
 
+  it("备注确认框描述截断到 60 字（长备注不整段塞进弹窗）", async () => {
+    setupFetch();
+    renderDetail();
+    await screen.findByText("窄屏文件树错乱 <script>x</script>");
+    const long = "长".repeat(100);
+    fireEvent.change(screen.getByLabelText("内部备注"), { target: { value: long } });
+    fireEvent.click(screen.getByRole("button", { name: "保存备注" }));
+    expect(await screen.findByText(`将内部备注保存为：${"长".repeat(60)}`)).toBeInTheDocument();
+    expect(screen.queryByText(`将内部备注保存为：${long}`)).not.toBeInTheDocument();
+  });
+
   it("加载失败展示内联错误", async () => {
     vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("boom"));
     renderDetail();

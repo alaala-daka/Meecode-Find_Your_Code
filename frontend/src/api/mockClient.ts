@@ -240,8 +240,10 @@ export function createMockClient(): ApiClient {
     },
     async myFeedback(page, pageSize = 20): Promise<MyFeedbackPage> {
       const start = (page - 1) * pageSize
+      // 对齐真实端点 ORDER BY f.id DESC：夹具插入顺序≠id 顺序，先排序再分页
+      const sorted = [...state.feedback].sort((a, b) => b.id - a.id)
       return {
-        items: state.feedback.slice(start, start + pageSize).map((f) => {
+        items: sorted.slice(start, start + pageSize).map((f) => {
           const last = f.replies[f.replies.length - 1] ?? null
           return {
             id: f.id,
@@ -262,7 +264,7 @@ export function createMockClient(): ApiClient {
       const hit = state.feedback.find((f) => f.id === id)
       if (!hit) throw new Error('反馈不存在')
       hit.replies = hit.replies.map((r) => ({ ...r, read_at: Math.floor(Date.now() / 1000) }))
-      return hit
+      return { ...hit, replies: [...hit.replies] }  // 深一层拷贝返回：调用方改不到内存态
     },
     async replyNotifications(limit = 10): Promise<ReplyNotificationPage> {
       const all = state.feedback

@@ -48,7 +48,8 @@ export type FeedbackReply = {
   read_at: number | null;
 };
 
-export type FeedbackDetail = FeedbackRow & {
+// 详情响应不含 reply_count（spec §3.3）：Omit 掉列表行专属字段，客户端契约与后端一致
+export type FeedbackDetail = Omit<FeedbackRow, "reply_count"> & {
   contact: string | null;
   replies: FeedbackReply[];
 };

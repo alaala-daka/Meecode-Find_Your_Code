@@ -155,6 +155,22 @@ describe('mockClient', () => {
     expect(await createMockClient().unreadReplyCount()).toEqual({ count: 1 })
   })
 
+  it('myFeedback 按 id DESC 排序（对齐真实端点 ORDER BY f.id DESC）', async () => {
+    const api = createMockClient()
+    const page = await api.myFeedback(1)
+    expect(page.items.map((f) => f.id)).toEqual([2, 1])  // 夹具插入顺序 [1,2] ≠ id 序
+  })
+
+  it('feedback 返回拷贝：改返回值不污染内存态', async () => {
+    const api = createMockClient()
+    const d = await api.feedback(1)
+    d.body = '篡改'
+    d.replies.push({ id: 999, body: 'x', author_login: 'x', created_at: 0 })
+    const again = await api.feedback(1)
+    expect(again.body).not.toBe('篡改')
+    expect(again.replies.some((r) => r.id === 999)).toBe(false)
+  })
+
   it('replyNotifications 的 total 是全量、items 受 limit 截断', async () => {
     const api = createMockClient()
     const all = await api.replyNotifications(50)

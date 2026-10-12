@@ -64,7 +64,7 @@ export function FeedbackDetail() {
   const confirmTitle = pending === "status" ? "保存反馈状态"
     : pending === "note" ? "保存内部备注" : "发送回复";
   const confirmDesc = pending === "status" ? `将状态改为「${status}」。`
-    : pending === "note" ? `将内部备注保存为：${note || "（空）"}`
+    : pending === "note" ? `将内部备注保存为：${(note || "（空）").slice(0, 60)}`
     : `将回复发送给 ${data.user_login}：${replyBody.trim().slice(0, 60)}`;
 
   return (

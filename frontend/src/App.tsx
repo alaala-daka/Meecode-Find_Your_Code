@@ -25,7 +25,7 @@ export default function App() {
 
   // 管理回复未读数：登录态下 60s 轮询一次（组件只消费计数，不各自起定时器）
   useEffect(() => {
-    if (!user) { useNotificationStore.setState({ count: 0 }); return }  // 登出即清零，防红点残留
+    if (!user) { useNotificationStore.getState().reset(); return }  // 登出即清零并作废在途 refresh，防迟到响应复活红点
     const refresh = useNotificationStore.getState().refresh
     void refresh()
     const timer = setInterval(() => void refresh(), POLL_MS)

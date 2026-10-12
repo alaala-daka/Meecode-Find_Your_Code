@@ -64,4 +64,11 @@ describe("FeedbackInbox", () => {
     renderInbox();
     expect(await screen.findByText("加载失败，请稍后重试。")).toBeInTheDocument();
   });
+
+  it("内容关键词 maxLength=50（对齐服务端 q 上限，防 422 误报加载失败）", async () => {
+    setupFetch();
+    renderInbox();
+    await screen.findByText("希望支持排序");
+    expect(screen.getByRole("textbox", { name: "内容关键词" })).toHaveAttribute("maxlength", "50");
+  });
 });

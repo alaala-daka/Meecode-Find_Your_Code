@@ -79,7 +79,8 @@ export function FeedbackInbox() {
           setPage(1);
         }}
       >
-        <Input value={search} onChange={(e) => setSearch(e.target.value)}
+        {/* maxLength 对齐服务端 q 上限 50，防超长关键词 422 落进「加载失败」误报 */}
+        <Input value={search} onChange={(e) => setSearch(e.target.value)} maxLength={50}
           placeholder="内容关键词" aria-label="内容关键词" className="w-56 border-line" />
         <Button type="submit" variant="outline" className="border-line text-ink-2">筛选</Button>
         <Select value={status} onValueChange={(v) => { setStatus(v); setPage(1); }}>
