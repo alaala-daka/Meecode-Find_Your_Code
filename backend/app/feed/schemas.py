@@ -229,3 +229,39 @@ class FeedbackIn(BaseModel):
 
 class FeedbackOut(BaseModel):
     id: int
+
+
+class FeedbackReply(BaseModel):
+    """用户可见回复。不含 read_at（用户侧不需要「是否已读」语义）。"""
+    id: int
+    body: str
+    author_login: str
+    created_at: int
+
+
+class FeedbackDetailOut(BaseModel):
+    """我的反馈详情。刻意不含 contact/note——仅管理台可见（spec §3.1）。"""
+    id: int
+    category: str
+    body: str
+    status: str
+    created_at: int
+    updated_at: int
+    replies: list[FeedbackReply]
+
+
+class MyFeedbackItem(BaseModel):
+    id: int
+    category: str
+    body_preview: str
+    status: str
+    created_at: int
+    updated_at: int
+    last_reply_preview: str | None = None
+    last_reply_at: int | None = None
+    unread_count: int = 0
+
+
+class MyFeedbackOut(BaseModel):
+    items: list[MyFeedbackItem]
+    total: int

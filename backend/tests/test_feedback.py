@@ -86,3 +86,111 @@ def test_限流429(monkeypatch, conn, client):
                          json={"category": "bug", "body": f"x{i}"}).status_code
              for i in range(7)]
     assert 429 in codes
+
+
+def _mk_feedback(conn, uid, *, body="内容", category="bug", status="pending", note=None,
+                 created_at=NOW):
+    cur = conn.execute(
+        "INSERT INTO feedback (user_id, category, body, contact, status, note,"
+        " created_at, updated_at) VALUES (?,?,?,'c@c.c',?,?,?,?)",
+        (uid, category, body, status, note, created_at, created_at))
+    conn.commit()
+    return cur.lastrowid
+
+
+def _mk_reply(conn, fid, body="回复内容", *, author="boss", read_at=None, created_at=NOW):
+    cur = conn.execute(
+        "INSERT INTO feedback_replies (feedback_id, body, author_login, created_at, read_at)"
+        " VALUES (?,?,?,?,?)", (fid, body, author, created_at, read_at))
+    conn.commit()
+    return cur.lastrowid
+
+
+def test_我的反馈列表项含摘要与未读数(conn, client):
+    uid = _login(conn, client)
+    fid = _mk_feedback(conn, uid, body="x" * 100)
+    _mk_reply(conn, fid, body="r" * 100)                       # 最新回复（NOW）→ 80 字预览断言对象
+    _mk_reply(conn, fid, body="已读", read_at=NOW, created_at=NOW - 10)
+    r = client.get("/api/my/feedback").json()
+    assert r["total"] == 1
+    item = r["items"][0]
+    assert len(item["body_preview"]) == 60
+    assert len(item["last_reply_preview"]) == 80
+    assert item["last_reply_at"] == NOW and item["unread_count"] == 1
+    assert set(item) == {"id", "category", "body_preview", "status", "created_at",
+                         "updated_at", "last_reply_preview", "last_reply_at", "unread_count"}
+
+
+def test_我的反馈倒序分页(conn, client):
+    uid = _login(conn, client)
+    for i in range(5):
+        _mk_feedback(conn, uid, body=f"b{i}")
+    r = client.get("/api/my/feedback", params={"page": 2, "page_size": 2}).json()
+    assert r["total"] == 5 and len(r["items"]) == 2
+    assert [x["id"] for x in r["items"]] == sorted(
+        [x["id"] for x in r["items"]], reverse=True)
+    assert client.get("/api/my/feedback", params={"page_size": 51}).status_code == 422
+    assert client.get("/api/my/feedback").status_code == 200
+
+
+def test_我的反馈不含他人(conn, client):
+    uid = _login(conn, client)
+    _mk_feedback(conn, uid)
+    other = auth.upsert_user(conn, {"id": 999, "login": "other", "avatar_url": ""})
+    _mk_feedback(conn, other)
+    assert client.get("/api/my/feedback").json()["total"] == 1
+
+
+def test_详情置已读且不含contact与note(conn, client):
+    uid = _login(conn, client)
+    fid = _mk_feedback(conn, uid, body="正文", note="内部备注")
+    rid = _mk_reply(conn, fid, body="管理员回复")
+    r = client.get(f"/api/feedback/{fid}")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["body"] == "正文"
+    assert "contact" not in body and "note" not in body
+    assert [x["id"] for x in body["replies"]] == [rid]
+    assert set(body["replies"][0]) == {"id", "body", "author_login", "created_at"}
+    row = conn.execute("SELECT read_at FROM feedback_replies WHERE id=?", (rid,)).fetchone()
+    assert row["read_at"] is not None
+
+
+def test_详情重复访问不覆盖首写read_at(conn, client):
+    uid = _login(conn, client)
+    fid = _mk_feedback(conn, uid)
+    rid = _mk_reply(conn, fid)
+    client.get(f"/api/feedback/{fid}")
+    first = conn.execute("SELECT read_at FROM feedback_replies WHERE id=?",
+                         (rid,)).fetchone()["read_at"]
+    conn.execute("UPDATE feedback_replies SET read_at=12345 WHERE id=?", (rid,))
+    conn.commit()
+    client.get(f"/api/feedback/{fid}")
+    assert conn.execute("SELECT read_at FROM feedback_replies WHERE id=?",
+                        (rid,)).fetchone()["read_at"] == 12345
+
+
+def test_非本人与不存在统一404(conn, client):
+    uid = _login(conn, client)
+    fid = _mk_feedback(conn, uid)
+    other = auth.upsert_user(conn, {"id": 998, "login": "mallory", "avatar_url": ""})
+    _mk_feedback(conn, other, body="他人内容")
+    r1 = client.get(f"/api/feedback/{fid + 1}")
+    client.cookies.set(config.SESSION_COOKIE, auth.sign(other), domain="testserver.local")
+    r2 = client.get(f"/api/feedback/{fid + 2}")   # fid+2：不存在的 id（非本人 = r1）
+    assert r1.status_code == 404 and r2.status_code == 404
+    assert r1.json() == r2.json()
+
+
+def test_详情匿名401(client):
+    assert client.get("/api/feedback/1").status_code == 401
+
+
+def test_置已读失败吞异常(conn, client, monkeypatch):
+    uid = _login(conn, client)
+    fid = _mk_feedback(conn, uid)
+    _mk_reply(conn, fid)
+    import app.feed.routes.feedback as fb
+    monkeypatch.setattr(fb, "_mark_replies_read",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("db down")))
+    assert client.get(f"/api/feedback/{fid}").status_code == 200
