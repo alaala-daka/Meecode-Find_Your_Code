@@ -1,5 +1,5 @@
 // src/api/fixtures.ts —— 确定性数据，测试与开发共用
-import type { RepoCardData, RepoTreeItem, UserProfile } from './types'
+import type { FeedbackDetail, RepoCardData, RepoTreeItem, UserProfile } from './types'
 
 export const CATEGORIES = [
   '开发工具', 'Web 应用', 'AI 与机器学习', '系统与底层',
@@ -47,3 +47,32 @@ export const FIXTURE_FILES: Record<string, string> = {
   'src/main.py': 'from loop import run\n\nif __name__ == "__main__":\n    run()\n',
   'src/loop.py': 'def run():\n    print("agent loop")\n',
 }
+
+// 反馈夹具：一条已处理（含一条未读回复）+ 一条待处理，足够驱动铃铛与列表/详情全态
+export const FIXTURE_FEEDBACK: FeedbackDetail[] = [
+  {
+    id: 1,
+    category: 'bug',
+    body: '仓库详情页在窄屏下文件树会挤成一团。',
+    status: 'done',
+    created_at: Math.floor((now - 3 * DAY) / 1000),
+    updated_at: Math.floor((now - 1 * DAY) / 1000),
+    replies: [
+      {
+        id: 1,
+        body: '已修，感谢反馈！',
+        author_login: 'meecode',
+        created_at: Math.floor((now - 1 * DAY) / 1000),
+      },
+    ],
+  },
+  {
+    id: 2,
+    category: 'suggest',
+    body: '希望首页能按最近更新时间排序。',
+    status: 'pending',
+    created_at: Math.floor((now - 0.2 * DAY) / 1000),
+    updated_at: Math.floor((now - 0.2 * DAY) / 1000),
+    replies: [],
+  },
+]

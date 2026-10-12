@@ -121,6 +121,64 @@ export interface CurrentUser {
   gh_star_authed: boolean   // 是否已授权点星同步
 }
 
+export type FeedbackCategory = 'bug' | 'suggest' | 'other'
+export type FeedbackStatus = 'pending' | 'done' | 'ignored'
+
+export interface FeedbackReply {
+  id: number
+  body: string
+  author_login: string
+  created_at: number  // epoch 秒
+  read_at?: number  // 仅 mock 内部已读标记，真实响应不含
+}
+
+// 我的反馈详情（对齐 GET /api/feedback/{id}；不含 contact/note）
+export interface FeedbackDetail {
+  id: number
+  category: FeedbackCategory
+  body: string
+  status: FeedbackStatus
+  created_at: number
+  updated_at: number
+  replies: FeedbackReply[]
+}
+
+export interface MyFeedbackItem {
+  id: number
+  category: FeedbackCategory
+  body_preview: string
+  status: FeedbackStatus
+  created_at: number
+  updated_at: number
+  last_reply_preview: string | null
+  last_reply_at: number | null
+  unread_count: number
+}
+
+export interface MyFeedbackPage {
+  items: MyFeedbackItem[]
+  total: number
+}
+
+export interface ReplyNotification {
+  feedback_id: number
+  feedback_body_preview: string
+  reply_id: number
+  reply_body_preview: string
+  created_at: number
+}
+
+export interface ReplyNotificationPage {
+  items: ReplyNotification[]
+  total: number
+}
+
+export interface FeedbackPayload {
+  category: FeedbackCategory
+  body: string
+  contact?: string
+}
+
 export interface ApiClient {
   categories(): Promise<string[]>
   feed(category: string | null, page: number): Promise<FeedPage>
@@ -147,4 +205,9 @@ export interface ApiClient {
   loginUrl(): string
   me(): Promise<CurrentUser | null> // GET /api/me：会话引导，未登录返回 null
   logout(): Promise<void>           // POST /api/auth/logout：清除会话 cookie
+  submitFeedback(payload: FeedbackPayload): Promise<{ id: number }>
+  myFeedback(page: number, pageSize?: number): Promise<MyFeedbackPage>
+  feedback(id: number): Promise<FeedbackDetail>
+  replyNotifications(limit?: number): Promise<ReplyNotificationPage>
+  unreadReplyCount(): Promise<{ count: number }> // GET /api/notifications/replies/unread-count：铃铛红点
 }

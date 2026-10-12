@@ -115,4 +115,31 @@ describe('realClient', () => {
       ['/api/comments/7/hide', 'POST'],
     ])
   })
+
+  it('submitFeedback POST /api/feedback 并回 id', async () => {
+    const f = stubFetch({ id: 7 })
+    vi.stubGlobal('fetch', f)
+    await expect(createRealClient().submitFeedback({ category: 'bug', body: '崩了' }))
+      .resolves.toEqual({ id: 7 })
+    expect(f).toHaveBeenCalledWith('/api/feedback', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ category: 'bug', body: '崩了' }),
+    }))
+  })
+
+  it('myFeedback / feedback / replyNotifications / unreadReplyCount 路径正确', async () => {
+    const f = stubFetch({})
+    vi.stubGlobal('fetch', f)
+    const c = createRealClient()
+    await c.myFeedback(2)
+    await c.feedback(7)
+    await c.replyNotifications()
+    await c.unreadReplyCount()
+    expect(f.mock.calls.map((x) => String(x[0]))).toEqual([
+      '/api/my/feedback?page=2&page_size=20',   // page_size 恒随请求下发（默认 20）
+      '/api/feedback/7',
+      '/api/notifications/replies?limit=10',
+      '/api/notifications/replies/unread-count',
+    ])
+  })
 })

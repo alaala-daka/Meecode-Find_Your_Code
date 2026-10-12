@@ -1,10 +1,11 @@
 // src/api/mockClient.ts
 import {
-  CATEGORIES, FIXTURE_FILES, FIXTURE_REPOS, FIXTURE_TREE, FIXTURE_USER,
+  CATEGORIES, FIXTURE_FEEDBACK, FIXTURE_FILES, FIXTURE_REPOS, FIXTURE_TREE, FIXTURE_USER,
 } from './fixtures'
 import type {
-  AiDraftResult, ApiClient, Comment, CommentPage, CurrentUser, FeedPage, InteractKind, InteractResult,
-  MyGithubRepo, RepoCardData, RepoDetail, RepoFile, RepoTreeItem, SearchResult, SubmitPayload, UserProfile,
+  AiDraftResult, ApiClient, Comment, CommentPage, CurrentUser, FeedPage, FeedbackDetail,
+  FeedbackPayload, InteractKind, InteractResult, MyFeedbackPage, MyGithubRepo, ReplyNotificationPage,
+  RepoCardData, RepoDetail, RepoFile, RepoTreeItem, SearchResult, SubmitPayload, UserProfile,
 } from './types'
 
 const PAGE_SIZE = 8
@@ -61,6 +62,7 @@ export function createMockClient(): ApiClient {
     bio: FIXTURE_USER.bio,
     comments: [] as Comment[],
     nextCommentId: 1,
+    feedback: FIXTURE_FEEDBACK.map((f) => ({ ...f, replies: [...f.replies] })),  // 深一层拷贝：detail 置已读不得污染夹具
   }
   return {
     async categories() {
@@ -226,6 +228,59 @@ export function createMockClient(): ApiClient {
     },
     async logout() {
       // mock 无会话状态可清：登出为空操作
+    },
+    async submitFeedback(payload: FeedbackPayload) {
+      const sec = Math.floor(Date.now() / 1000)
+      const id = Math.max(0, ...state.feedback.map((f) => f.id)) + 1
+      state.feedback.unshift({
+        id, category: payload.category, body: payload.body, status: 'pending',
+        created_at: sec, updated_at: sec, replies: [],
+      })
+      return { id }
+    },
+    async myFeedback(page, pageSize = 20): Promise<MyFeedbackPage> {
+      const start = (page - 1) * pageSize
+      return {
+        items: state.feedback.slice(start, start + pageSize).map((f) => {
+          const last = f.replies[f.replies.length - 1] ?? null
+          return {
+            id: f.id,
+            category: f.category,
+            body_preview: f.body.slice(0, 60),
+            status: f.status,
+            created_at: f.created_at,
+            updated_at: f.updated_at,
+            last_reply_preview: last ? last.body.slice(0, 80) : null,
+            last_reply_at: last ? last.created_at : null,
+            unread_count: f.replies.filter((r) => r.read_at === undefined).length,
+          }
+        }),
+        total: state.feedback.length,
+      }
+    },
+    async feedback(id): Promise<FeedbackDetail> {
+      const hit = state.feedback.find((f) => f.id === id)
+      if (!hit) throw new Error('反馈不存在')
+      hit.replies = hit.replies.map((r) => ({ ...r, read_at: Math.floor(Date.now() / 1000) }))
+      return hit
+    },
+    async replyNotifications(limit = 10): Promise<ReplyNotificationPage> {
+      const all = state.feedback
+        .flatMap((f) => f.replies.map((r) => ({
+          feedback_id: f.id,
+          feedback_body_preview: f.body.slice(0, 60),
+          reply_id: r.id,
+          reply_body_preview: r.body.slice(0, 80),
+          created_at: r.created_at,
+        })))
+        .sort((a, b) => b.reply_id - a.reply_id)
+      return { items: all.slice(0, limit), total: all.length }  // total=全量（对齐后端），items 才受 limit 截断
+    },
+    async unreadReplyCount() {
+      return {
+        count: state.feedback.reduce(
+          (n, f) => n + f.replies.filter((r) => r.read_at === undefined).length, 0),
+      }
     },
     async ghStarDisconnect() {
       // mock 无 token 可撤：空操作

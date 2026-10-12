@@ -138,4 +138,29 @@ describe('mockClient', () => {
     expect(await api.interact(1, 'favorite', false, true)).toEqual({ active: false, sync: 'need_auth' })
     expect(await api.interact(1, 'favorite', false)).toEqual({ active: false, sync: 'need_auth' })
   })
+
+  it('submitFeedback 落 pending 并进我的反馈', async () => {
+    const api = createMockClient()
+    const { id } = await api.submitFeedback({ category: 'bug', body: 'x'.repeat(80) })
+    const page = await api.myFeedback(1)
+    expect(page.items[0]).toMatchObject({ id, status: 'pending' })
+    expect(page.items[0].body_preview).toHaveLength(60)
+  })
+
+  it('feedback 置已读后 unreadReplyCount 归零且不污染夹具', async () => {
+    const api = createMockClient()
+    expect(await api.unreadReplyCount()).toEqual({ count: 1 })
+    await api.feedback(1)
+    expect(await api.unreadReplyCount()).toEqual({ count: 0 })
+    expect(await createMockClient().unreadReplyCount()).toEqual({ count: 1 })
+  })
+
+  it('replyNotifications 的 total 是全量、items 受 limit 截断', async () => {
+    const api = createMockClient()
+    const all = await api.replyNotifications(50)
+    const one = await api.replyNotifications(1)
+    expect(one.items).toHaveLength(1)
+    expect(one.total).toBe(all.total)
+    expect(one.items[0].feedback_id).toBe(all.items[0].feedback_id)
+  })
 })

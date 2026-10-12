@@ -1,6 +1,7 @@
 // src/api/realClient.ts —— 真实后端客户端:fetch('/api/...') + cookie 凭证
 import type {
-  AiDraftResult, ApiClient, Comment, CommentPage, CurrentUser, FeedPage, InteractKind, InteractResult, MyGithubRepo,
+  AiDraftResult, ApiClient, Comment, CommentPage, CurrentUser, FeedPage, FeedbackDetail, FeedbackPayload,
+  InteractKind, InteractResult, MyFeedbackPage, MyGithubRepo, ReplyNotificationPage,
   RepoCardData, RepoDetail, RepoFile, RepoTreeItem, SearchResult, SubmitPayload, UserProfile,
 } from './types'
 
@@ -113,6 +114,22 @@ export function createRealClient(): ApiClient {
     },
     async logout() {
       await http('/api/auth/logout', jsonInit('POST'))
+    },
+    async submitFeedback(payload: FeedbackPayload) {
+      return http<{ id: number }>('/api/feedback', jsonInit('POST', payload))
+    },
+    async myFeedback(page, pageSize = 20): Promise<MyFeedbackPage> {
+      const qs = new URLSearchParams({ page: String(page), page_size: String(pageSize) })
+      return http<MyFeedbackPage>(`/api/my/feedback?${qs}`)
+    },
+    async feedback(id): Promise<FeedbackDetail> {
+      return http<FeedbackDetail>(`/api/feedback/${id}`)
+    },
+    async replyNotifications(limit = 10): Promise<ReplyNotificationPage> {
+      return http<ReplyNotificationPage>(`/api/notifications/replies?limit=${limit}`)
+    },
+    async unreadReplyCount() {
+      return http<{ count: number }>('/api/notifications/replies/unread-count')
     },
   }
 }
