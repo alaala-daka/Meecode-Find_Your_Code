@@ -45,8 +45,11 @@ _RATE_RULES: tuple[tuple[str | None, str, str], ...] = (
     ("DELETE", "/api/me/gh-star-auth", "interact"),
     ("POST", "/api/comments", "ugc"),
     ("DELETE", "/api/comments", "ugc"),
+    ("POST", "/api/feedback", "feedback"),
     ("GET", "/api/comments", "browse"),
     ("POST", "/api/repos/", "delist"),
+    # 必须早于 ("GET", "/api/feed", "browse")：后者前缀 "/api/feed" 会匹配 "/api/feedback"
+    ("GET", "/api/feedback", "default"),
     ("GET", "/api/feed", "browse"),
     ("GET", "/api/search", "browse"),
     ("GET", "/api/repos/", "browse"),

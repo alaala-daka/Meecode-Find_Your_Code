@@ -285,3 +285,8 @@ def test_feedback_默认值与约束(conn):
     conn.execute("UPDATE feedback SET status='done' WHERE id=?", (row["id"],))
     assert conn.execute("SELECT status FROM feedback WHERE id=?",
                         (row["id"],)).fetchone()["status"] == "done"
+
+
+def test_feedback桶自动seed进api_policies(conn):
+    row = conn.execute("SELECT * FROM api_policies WHERE route_key='feedback'").fetchone()
+    assert row is not None and row["enabled"] == 1 and row["limit_per_min"] == 5
