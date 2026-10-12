@@ -56,7 +56,7 @@ export function AppLayout() {
   React.useEffect(() => {
     let alive = true;
     const from = new Date().toISOString().slice(0, 10);
-    getLoginEvents({ ok: "0", from, to: from, page: 1, page_size: 1 })
+    getLoginEvents({ ok: "0", from, page: 1, page_size: 1 })
       .then((b) => alive && setFails(b.total ?? 0))
       .catch(() => alive && setFails(0));
     return () => {

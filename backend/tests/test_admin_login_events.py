@@ -49,9 +49,22 @@ def test_时间区间与422(conn, client, admin):
     assert client.get("/api/admin/login-events",
                       params={"from": "bad"}).status_code == 422
     assert client.get("/api/admin/login-events",
+                      params={"to": "bad"}).status_code == 422
+    assert client.get("/api/admin/login-events",
                       params={"ok": "x"}).status_code == 422
     assert client.get("/api/admin/login-events",
                       params={"event": "nope"}).status_code == 422
+
+
+def test_from或to单边可用(conn, client, admin):
+    _seed(conn, login="old", ts=1_699_920_100)  # 2023-11-14
+    _seed(conn, login="new", ts=1_700_006_500)  # 2023-11-15
+    r = client.get("/api/admin/login-events",
+                   params={"from": "2023-11-15"}).json()
+    assert r["total"] == 1 and r["data"][0]["login"] == "new"
+    r = client.get("/api/admin/login-events",
+                   params={"to": "2023-11-14"}).json()
+    assert r["total"] == 1 and r["data"][0]["login"] == "old"
 
 
 def test_ip反查精确匹配并写审计(conn, client, admin):

@@ -63,15 +63,16 @@ def list_login_events(
             raise HTTPException(422, "event 须为 login 或 logout")
         where.append("event=?")
         args.append(event)
-    if from_ or to:
-        if not from_ or not to:
-            raise HTTPException(422, "from/to 须成对提供")
-        f0 = _day(from_, "from")
-        t0 = _day(to, "to")
-        if f0 > t0:
-            raise HTTPException(422, "from 不得晚于 to")
-        where.append("ts>=? AND ts<?")
-        args.extend([f0, t0 + 86400])
+    f0 = _day(from_, "from") if from_ else None
+    t0 = _day(to, "to") if to else None
+    if f0 is not None and t0 is not None and f0 > t0:
+        raise HTTPException(422, "from 不得晚于 to")
+    if f0 is not None:
+        where.append("ts>=?")
+        args.append(f0)
+    if t0 is not None:
+        where.append("ts<?")
+        args.append(t0 + 86400)
     if ip:
         try:
             ip_h = login_ip_hash(ip)
