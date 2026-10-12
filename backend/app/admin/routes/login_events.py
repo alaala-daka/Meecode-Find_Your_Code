@@ -7,10 +7,10 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ...feed import deps
+from ...sqlutil import like_pattern
 from ...traffic import day_bounds_utc, login_ip_hash
 from ..audit import record_audit
 from ..deps import require_admin
-from .users import _like
 
 router = APIRouter()
 
@@ -52,7 +52,7 @@ def list_login_events(
         if not q or len(q) > _Q_MAX:
             raise HTTPException(422, "q 须为 1–50 字符")
         where.append("login LIKE ? ESCAPE '\\'")
-        args.append(_like(q))
+        args.append(like_pattern(q))
     if ok:
         if ok not in ("0", "1"):
             raise HTTPException(422, "ok 须为 0 或 1")

@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from ...feed import deps
+from ...sqlutil import like_pattern
 from ..deps import require_admin
 
 router = APIRouter()
@@ -49,10 +50,6 @@ def _counts(conn: sqlite3.Connection, user_id: int) -> dict:
             "visits": row["visits"] or 0, "comments": n}
 
 
-def _like(q: str) -> str:
-    return "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
-
-
 @router.get("/users")
 def list_users(
     conn: Annotated[sqlite3.Connection, Depends(deps.get_conn)],
@@ -61,8 +58,8 @@ def list_users(
     where, args = ["1=1"], []
     if q:
         where.append("(u.login LIKE ? ESCAPE '\\' OR u.bio LIKE ? ESCAPE '\\')")
-        args.append(_like(q))
-        args.append(_like(q))
+        args.append(like_pattern(q))
+        args.append(like_pattern(q))
     if status == "banned":
         where.append(_status_sql() + "='banned'")
     elif status == "normal":

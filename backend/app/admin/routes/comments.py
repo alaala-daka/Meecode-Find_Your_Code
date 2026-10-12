@@ -9,9 +9,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from ...feed import deps
+from ...sqlutil import like_pattern
 from ..audit import record_audit
 from ..deps import require_admin
-from .users import _like
 
 router = APIRouter()
 
@@ -50,7 +50,7 @@ def list_comments(
     where, args = ["1=1"], []
     if q:
         where.append("c.content LIKE ? ESCAPE '\\'")
-        args.append(_like(q))
+        args.append(like_pattern(q))
     if status in _STATUSES:
         where.append("c.status=?")
         args.append(status)

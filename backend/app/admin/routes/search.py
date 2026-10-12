@@ -7,8 +7,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ...feed import deps
-from ...feed.routes.feed import _fts_escape
-from .users import _like
+from ...sqlutil import fts_escape, like_pattern
 
 router = APIRouter()
 
@@ -18,8 +17,8 @@ _ITEMS = 5
 
 def _capped_count(conn: sqlite3.Connection, tail: str, args: list) -> int:
     return conn.execute(
-        f"SELECT COUNT(*) AS n FROM (SELECT 1 {tail} LIMIT {_COUNT_CAP})",
-        args).fetchone()["n"]
+        f"SELECT COUNT(*) AS n FROM (SELECT 1 {tail} LIMIT ?)",
+        [*args, _COUNT_CAP]).fetchone()["n"]
 
 
 def _repos_search(conn: sqlite3.Connection, term: str, pat: str) -> tuple[list, int]:
@@ -27,10 +26,11 @@ def _repos_search(conn: sqlite3.Connection, term: str, pat: str) -> tuple[list, 
         tail = ("FROM repos_fts f JOIN repos r ON r.id = f.rowid"
                 " WHERE repos_fts MATCH ?")
         try:
+            needle = fts_escape(term)
             items = conn.execute(
                 f"SELECT r.id, r.full_name, r.tagline_zh, r.intro_zh {tail}"
-                f" ORDER BY r.id DESC LIMIT {_ITEMS}", [_fts_escape(term)]).fetchall()
-            return items, _capped_count(conn, tail, [_fts_escape(term)])
+                f" ORDER BY r.id DESC LIMIT ?", [needle, _ITEMS]).fetchall()
+            return items, _capped_count(conn, tail, [needle])
         except sqlite3.OperationalError:
             pass
     tail = ("FROM repos r WHERE r.full_name LIKE ? ESCAPE '\\'"
@@ -38,7 +38,7 @@ def _repos_search(conn: sqlite3.Connection, term: str, pat: str) -> tuple[list, 
     args = [pat, pat, pat]
     items = conn.execute(
         f"SELECT r.id, r.full_name, r.tagline_zh, r.intro_zh {tail}"
-        f" ORDER BY r.id DESC LIMIT {_ITEMS}", args).fetchall()
+        f" ORDER BY r.id DESC LIMIT ?", [*args, _ITEMS]).fetchall()
     return items, _capped_count(conn, tail, args)
 
 
@@ -50,13 +50,13 @@ def global_search(
     term = q.strip()
     if len(term) < 2 or len(term) > 50:
         raise HTTPException(422, "q 须为 2–50 字符")
-    pat = _like(term)
+    pat = like_pattern(term)
 
     u_tail = "FROM users u WHERE u.login LIKE ? ESCAPE '\\' OR u.bio LIKE ? ESCAPE '\\'"
     u_args = [pat, pat]
     u_items = conn.execute(
-        f"SELECT u.id, u.login, u.bio {u_tail} ORDER BY u.id DESC LIMIT {_ITEMS}",
-        u_args).fetchall()
+        f"SELECT u.id, u.login, u.bio {u_tail} ORDER BY u.id DESC LIMIT ?",
+        [*u_args, _ITEMS]).fetchall()
     u_count = _capped_count(conn, u_tail, u_args)
 
     r_items, r_count = _repos_search(conn, term, pat)
@@ -67,7 +67,7 @@ def global_search(
     c_args = [pat]
     c_items = conn.execute(
         f"SELECT c.id, c.content, c.repo_id, u.login AS user_login, c.status {c_tail}"
-        f" ORDER BY c.id DESC LIMIT {_ITEMS}", c_args).fetchall()
+        f" ORDER BY c.id DESC LIMIT ?", [*c_args, _ITEMS]).fetchall()
     c_count = _capped_count(conn, c_tail, c_args)
 
     return {
