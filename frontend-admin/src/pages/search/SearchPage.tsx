@@ -4,7 +4,8 @@ import { Link, useSearchParams } from "react-router";
 import { globalSearch, type SearchResponse } from "@/api/search";
 import { Badge } from "@/components/ui/badge";
 
-const capLabel = (n: number) => (n >= 1001 ? "1000+" : String(n));
+const COUNT_CAP = 1001;
+const capLabel = (n: number) => (n >= COUNT_CAP ? "1000+" : String(n));
 
 function GroupHead({ title, count, to, q }: {
   title: string; count: number; to: string; q: string;
@@ -49,7 +50,7 @@ export function SearchPage() {
   }
 
   return (
-    <section className="space-y-6">
+    <section className="space-y-4">
       <h2 className="font-mono text-lg text-ink">全局搜索：{q}</h2>
       {state === "loading" && <p role="status" className="text-sm text-ink-3">加载中…</p>}
       {state === "error" && <p role="alert" className="text-sm text-danger">搜索失败</p>}
