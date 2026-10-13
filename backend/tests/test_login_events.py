@@ -3,6 +3,7 @@ import pytest
 
 from app import security
 from app.feed import github as feed_github
+from app.feed import star_sync
 
 
 def _rows(conn, event):
@@ -12,6 +13,9 @@ def _rows(conn, event):
 
 def test_callback_成功落_login_ok行(conn, client, monkeypatch):
     monkeypatch.setattr(security, "client_ip", lambda request: "203.0.113.7")
+    # 后台星同步自开文件库连接（backfill_after_auth → db.connect()），与登录落库断言无关；
+    # 打桩隔离，否则干净检出（无存量 meecode.db）会建空库并报 no such table: users
+    monkeypatch.setattr(star_sync, "backfill_after_auth", lambda user_id: None)
     client.cookies.set("oauth_state", "st1", domain="testserver.local")
     resp = client.get("/api/auth/callback", params={"code": "c", "state": "st1"},
                       follow_redirects=False)
