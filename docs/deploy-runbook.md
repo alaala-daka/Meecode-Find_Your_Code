@@ -255,3 +255,7 @@ Environment=ADMIN_LOGINS=<login1>,<login2>
 - [ ] 系统配置页修改 online_window_minutes 保存 → 二次确认 → `/api/admin/online` 的 window_minutes 随之变化
 - [ ] 主站任一页面切换路由后 `SELECT COUNT(*) FROM access_events WHERE method='HIT'` 增长
 - [ ] 仪表盘「本年累计访问/今日访问/当前在线」三卡显示数值而非 `—`
+- [ ] `curl -s -u <basic用户>:<口令> 'https://<域名>/admin/login-events' 深链刷新 200，表格渲染；行内「反查」输入完整 IP 后仅剩同 IP 行`
+- [ ] 管理台顶栏搜索框输入 2 字以上回车 → `/admin/search?q=` 三组分栏显示，各组「查看全部」跳对应列表页且过滤框已预填
+- [ ] 主站顶栏「反馈」→ 提交一条 bug 反馈 → `/admin/feedback` 出现该条（pending 徽章 +1）→ 详情页写内部备注并发送回复 → 主站铃铛出现红点，下拉可见回复 → 点进 `/my/feedback/:id` 后红点消失且该条未读数归零
+- [ ] `curl -s -u <basic用户>:<口令> 'https://<域名>/admin/feedback'` 有响应、深链刷新 200 表格渲染；`/admin/feedback/show/<id>` 详情可见联系方式与回复串

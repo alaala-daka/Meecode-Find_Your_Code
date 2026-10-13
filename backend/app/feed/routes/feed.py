@@ -5,13 +5,13 @@
 """
 from __future__ import annotations
 
-import re
 import sqlite3
 import time
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ... import config
+from ...sqlutil import fts_escape, like_pattern
 from .. import ranking
 from ..cards import to_card, _card_select
 from ..deps import get_conn
@@ -75,17 +75,6 @@ def get_feed(
     return FeedOut(cards=[to_card(r) for r in slice_], has_more=len(ordered) > start + size)
 
 
-def _fts_escape(q: str) -> str:
-    """FTS5 有自己的查询语法:AND/OR/NEAR/引号/星号都会被解析。
-    这里只做字面量匹配,故整串加引号并转义内部引号。"""
-    cleaned = re.sub(r'["]', '""', q.strip())
-    return f'"{cleaned}"' if cleaned else ""
-
-
-def _like_escape(s: str) -> str:
-    return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-
-
 _SEARCH_ORDER = {
     "default": "ORDER BY rank",
     "newest": "ORDER BY r.published_at DESC",
@@ -110,7 +99,7 @@ def search(
 
     if len(term) < 3:
         # FTS5 trigram 至少 3 字符:短词("AI"、"图")回退 LIKE,不再静默空结果
-        pat = f"%{_like_escape(term)}%"
+        pat = like_pattern(term)
         cond = ("r.status != 'delisted' AND (r.full_name LIKE ? ESCAPE '\\'"
                 " OR r.tagline_zh LIKE ? ESCAPE '\\' OR r.topics LIKE ? ESCAPE '\\')")
         total = conn.execute(
@@ -122,7 +111,7 @@ def search(
             (pat, pat, pat, size + 1, offset),
         ).fetchall()
     else:
-        needle = _fts_escape(term)
+        needle = fts_escape(term)
         join = "FROM repos_fts f JOIN repos r ON r.id = f.rowid"
         cond = "repos_fts MATCH ? AND r.status != 'delisted'"
         try:

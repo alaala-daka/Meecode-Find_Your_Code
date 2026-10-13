@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from ...feed import deps
+from ...sqlutil import like_pattern
 from ..audit import record_audit
 from ..deps import require_admin
 
@@ -43,10 +44,13 @@ def _row_out(r: sqlite3.Row) -> dict:
 @router.get("/comments")
 def list_comments(
     conn: Annotated[sqlite3.Connection, Depends(deps.get_conn)],
-    status: str = "", repo_id: int | None = None,
+    q: str = "", status: str = "", repo_id: int | None = None,
     page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100),
 ) -> dict:
     where, args = ["1=1"], []
+    if q:
+        where.append("c.content LIKE ? ESCAPE '\\'")
+        args.append(like_pattern(q))
     if status in _STATUSES:
         where.append("c.status=?")
         args.append(status)

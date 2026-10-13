@@ -5,7 +5,7 @@ dist/
 .mimocode/
 
 # 本地笔记/密钥，不进仓库
-feedback/
+/feedback/
 desktop.ini
 docs/demo-script.md
 

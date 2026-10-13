@@ -21,6 +21,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { useQPrefill } from "@/hooks/useQPrefill";
 
 const PAGE_SIZE = 10;
 
@@ -51,6 +52,11 @@ export function UserList() {
   const [q, setQ] = React.useState("");
   const [status, setStatus] = React.useState("all");
   const [page, setPage] = React.useState(1);
+
+  useQPrefill((urlQ) => {
+    setSearch(urlQ);
+    setQ(urlQ);
+  });
 
   const filters: CrudFilter[] = React.useMemo(() => {
     const list: CrudFilter[] = [];

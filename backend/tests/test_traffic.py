@@ -449,6 +449,22 @@ def test_aggregate_yesterday_prunes_old_rows(conn):
     assert conn.execute("SELECT COUNT(*) AS n FROM access_events").fetchone()["n"] == 1
 
 
+def test_aggregate_yesterday_prunes_old_login_fails(conn):
+    from app.admin.jobs import traffic_agg
+
+    for login, ok, ts in (("old-fail", 0, NOW - 181 * 86400),
+                          ("old-ok", 1, NOW - 181 * 86400),
+                          ("fresh-fail", 0, NOW - 86400 + 10)):
+        conn.execute(
+            "INSERT INTO login_events (ts, user_id, login, ip_hash, event, ok)"
+            " VALUES (?,?,?,?,?,?)", (ts, 1, login, "", "login", ok))
+    conn.commit()
+    out = traffic_agg.aggregate_yesterday(conn, now=NOW)
+    assert out["pruned_login_fails"] == 1
+    rows = {r["login"] for r in conn.execute("SELECT login FROM login_events")}
+    assert rows == {"old-ok", "fresh-fail"}
+
+
 def test_aggregate_yesterday_idempotent(conn):
     from app.admin.jobs import traffic_agg
 
@@ -541,3 +557,22 @@ def test_year_pv_agrees_with_year_view(conn):
         _insert(conn, start + i + 1, "HIT", path="/", ip="a")
     assert (traffic.year_pv(conn, year, now)
             == traffic.year_view(conn, year, now)["summary"]["year_pv"])
+
+
+def test_login_ip_hash_独立标签且与访问哈希不可联表():
+    from app import traffic
+    a = traffic.login_ip_hash("1.2.3.4")
+    assert len(a) == 32
+    assert a != traffic.ip_hash("1.2.3.4")
+
+
+def test_login_ip_hash_ipv6归一化():
+    from app import traffic
+    assert traffic.login_ip_hash("::1") == traffic.login_ip_hash("0:0:0:0:0:0:0:1")
+
+
+def test_login_ip_hash_非法IP抛错():
+    import pytest
+    from app import traffic
+    with pytest.raises(ValueError):
+        traffic.login_ip_hash("not-an-ip")

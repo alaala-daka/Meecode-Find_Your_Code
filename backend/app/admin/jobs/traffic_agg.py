@@ -1,4 +1,4 @@
-"""夜间聚合：昨日 access_events → traffic_daily，清理 30 天前明细（spec §2.5）。
+"""夜间聚合：昨日 access_events → traffic_daily，清理 30 天前明细与 180 天前失败登录行（spec §2.5 / 三期 §2.1）。
 
 昨日口径 = gmtime(now-86400) 的 UTC 日；cron 每日 00:05（deploy-runbook.md）。
 手动触发：python -m app.admin.jobs.traffic_agg
@@ -30,12 +30,20 @@ def prune_access_events(conn: sqlite3.Connection, *, now: int | None = None) -> 
     return cur.rowcount
 
 
+def prune_login_fails(conn: sqlite3.Connection, *, now: int | None = None) -> int:
+    cutoff = int(now if now is not None else time.time()) - traffic.LOGIN_FAIL_RETENTION_DAYS * 86400
+    cur = conn.execute("DELETE FROM login_events WHERE ok=0 AND ts < ?", (cutoff,))
+    conn.commit()
+    return cur.rowcount
+
+
 def aggregate_yesterday(conn: sqlite3.Connection, *, now: int | None = None) -> dict:
     now = int(now if now is not None else time.time())
     yesterday = time.strftime("%Y-%m-%d", time.gmtime(now - 86400))
     stats = aggregate_date(conn, yesterday)
     pruned = prune_access_events(conn, now=now)
-    return {**stats, "pruned": pruned}
+    pruned_fails = prune_login_fails(conn, now=now)
+    return {**stats, "pruned": pruned, "pruned_login_fails": pruned_fails}
 
 
 def main() -> None:

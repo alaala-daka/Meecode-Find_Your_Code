@@ -1,6 +1,6 @@
 // src/utils/format.test.ts
 import { describe, expect, it } from 'vitest'
-import { formatCount, formatTime } from './format'
+import { formatCount, formatEpoch, formatTime } from './format'
 
 const NOW = Date.UTC(2026, 7, 25, 12, 0, 0)
 
@@ -23,4 +23,9 @@ describe('formatCount', () => {
     expect(formatCount(31000)).toBe('3.1万')
     expect(formatCount(20000)).toBe('2万')
   })
+})
+
+it('formatEpoch 把 epoch 秒转相对时间', () => {
+  const now = Date.UTC(2026, 9, 12, 12, 0, 0)
+  expect(formatEpoch(Math.floor((now - 3 * 3600 * 1000) / 1000), now)).toBe('3 小时前')
 })

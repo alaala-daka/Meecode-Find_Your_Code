@@ -17,3 +17,8 @@ export function formatCount(n: number): string {
   if (n >= 10000) return `${(n / 10000).toFixed(1).replace(/\.0$/, '')}万`
   return String(n)
 }
+
+/** epoch 秒 → 相对时间（后端反馈/评论时间戳口径，与 formatTime 同风格） */
+export function formatEpoch(epochSec: number, nowMs: number = Date.now()): string {
+  return formatTime(new Date(epochSec * 1000).toISOString(), nowMs)
+}

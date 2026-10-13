@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class ScreeningResult(BaseModel):
@@ -194,3 +194,87 @@ class CommentVerdict(BaseModel):
     """LLM 评论合规判定输出（spec 决策 8）。"""
     is_compliant: bool
     reason: str = ""
+
+
+class FeedbackIn(BaseModel):
+    """提交反馈。body/contact 一律先 strip 再判空与计长，纯空白视为非法（spec §3.2）。"""
+    model_config = ConfigDict(extra="forbid")
+    category: Literal["bug", "suggest", "other"]
+    body: str
+    contact: str | None = None
+
+    @field_validator("body")
+    @classmethod
+    def _check_body(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("反馈内容不能为空")
+        if len(v) > 500:
+            raise ValueError("反馈内容过长（上限 500 字符）")
+        return v
+
+    @field_validator("contact")
+    @classmethod
+    def _check_contact(cls, v: str | None) -> str | None:
+        """spec §3.2：strip 后纯空白视为非法；「没填」请直接不传该键（主站表单即如此）。"""
+        if v is None:
+            return None
+        v = v.strip()
+        if not v:
+            raise ValueError("联系方式不能留空（不填请省略该字段）")
+        if len(v) > 100:
+            raise ValueError("联系方式过长（上限 100 字符）")
+        return v
+
+
+class FeedbackOut(BaseModel):
+    id: int
+
+
+class FeedbackReply(BaseModel):
+    """用户可见回复。不含 read_at（用户侧不需要「是否已读」语义）。"""
+    id: int
+    body: str
+    author_login: str
+    created_at: int
+
+
+class FeedbackDetailOut(BaseModel):
+    """我的反馈详情。刻意不含 contact/note——仅管理台可见（spec §3.1）。"""
+    id: int
+    category: str
+    body: str
+    status: str
+    created_at: int
+    updated_at: int
+    replies: list[FeedbackReply]
+
+
+class MyFeedbackItem(BaseModel):
+    id: int
+    category: str
+    body_preview: str
+    status: str
+    created_at: int
+    updated_at: int
+    last_reply_preview: str | None = None
+    last_reply_at: int | None = None
+    unread_count: int = 0
+
+
+class MyFeedbackOut(BaseModel):
+    items: list[MyFeedbackItem]
+    total: int
+
+
+class ReplyNotification(BaseModel):
+    feedback_id: int
+    feedback_body_preview: str
+    reply_id: int
+    reply_body_preview: str
+    created_at: int
+
+
+class ReplyNotificationsOut(BaseModel):
+    items: list[ReplyNotification]
+    total: int

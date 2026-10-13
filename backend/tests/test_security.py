@@ -371,3 +371,31 @@ def test_ensure_token_key_warns_when_unset(monkeypatch, caplog):
         security.ensure_token_key()
     assert any("TOKEN_ENC_KEY" in r.message and "生产请配置" in r.message
                for r in caplog.records)
+
+
+# ---------- 管理面板三期 3B feedback 限流桶（spec 2026-10-12） ----------
+
+def test_feedback提交落独立桶():
+    from app import security
+    assert security.bucket_for("POST", "/api/feedback") == "feedback"
+
+
+def test_feedback读取不被feed前缀规则截胡():
+    """GET /api/feed 规则排在前面会把 /api/feedback/{id} 吃进 browse 桶。"""
+    from app import security
+    assert security.bucket_for("GET", "/api/feedback") == "default"
+    assert security.bucket_for("GET", "/api/feedback/7") == "default"
+    assert security.bucket_for("GET", "/api/my/feedback") == "default"
+    assert security.bucket_for("GET", "/api/notifications/replies") == "default"
+
+
+def test_feedback桶默认值5且非保护桶():
+    from app import config, security
+    assert config.RATE_LIMITS["feedback"] == 5
+    assert "feedback" not in security.PROTECTED_BUCKETS
+
+
+def test_feedback桶可被策略停用():
+    from app import security
+    security.policies.set("feedback", False, 5)
+    assert security.policies.get("feedback")[0] is False

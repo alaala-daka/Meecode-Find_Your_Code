@@ -25,6 +25,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { useQPrefill } from "@/hooks/useQPrefill";
 import { formatTime } from "@/pages/users/UserList";
 import { RepoEdit } from "./RepoEdit";
 
@@ -54,6 +55,11 @@ export function RepoList() {
   const [pending, setPending] = React.useState<{ row: RepoRow; action: RepoAction } | null>(null);
   const [editing, setEditing] = React.useState<RepoRow | null>(null);
   const [actionError, setActionError] = React.useState<string | null>(null);
+
+  useQPrefill((urlQ) => {
+    setSearch(urlQ);
+    setQ(urlQ);
+  });
 
   const filters: CrudFilter[] = React.useMemo(() => {
     const list: CrudFilter[] = [];

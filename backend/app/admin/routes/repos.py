@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from ...feed import deps
+from ...sqlutil import like_pattern
 from ..audit import record_audit
 from ..deps import require_admin
 
@@ -22,10 +23,6 @@ TRANSITIONS = {
 }
 
 _STATUSES = ("published", "pending_claim", "delisted")
-
-
-def _like(q: str) -> str:
-    return "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
 
 
 def _row_out(r: sqlite3.Row) -> dict:
@@ -47,8 +44,9 @@ def list_repos(
 ) -> dict:
     where, args = ["1=1"], []
     if q:
-        where.append("full_name LIKE ? ESCAPE '\\'")
-        args.append(_like(q))
+        where.append("(full_name LIKE ? ESCAPE '\\' OR tagline_zh LIKE ? ESCAPE '\\'"
+                     " OR intro_zh LIKE ? ESCAPE '\\')")
+        args.extend([like_pattern(q)] * 3)
     if status in _STATUSES:
         where.append("status=?")
         args.append(status)

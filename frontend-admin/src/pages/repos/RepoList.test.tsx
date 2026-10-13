@@ -78,9 +78,9 @@ const setupFetch = (fail?: { urlSuffix: string; status: number; detail: string; 
   return calls;
 };
 
-const renderList = () =>
+const renderList = (entry = "/repos") =>
   render(
-    <MemoryRouter initialEntries={["/repos"]}>
+    <MemoryRouter initialEntries={[entry]}>
       <Refine
         dataProvider={dataProvider}
         resources={[{ name: "repos", list: "/repos" }]}
@@ -262,5 +262,18 @@ describe("RepoList · 筛选与搜索", () => {
         calls.some((c) => c.method === "GET" && c.url.includes("status=delisted")),
       ).toBe(true);
     });
+  });
+});
+
+describe("RepoList · URL 预填", () => {
+  it("URL ?q= 预填过滤", async () => {
+    const calls = setupFetch();
+    renderList("/repos?q=预填词");
+    expect(screen.getByDisplayValue("预填词")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        calls.some((c) => c.method === "GET" && decodeURIComponent(c.url).includes("q=预填词")),
+      ).toBe(true),
+    );
   });
 });

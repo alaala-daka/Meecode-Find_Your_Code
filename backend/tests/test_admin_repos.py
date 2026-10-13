@@ -95,3 +95,27 @@ def test_repo_list_shape_and_status_values(conn, client, admin):
     assert row["id"] == rid and row["github_id"] == 100 and row["status"] == "published"
     for s in ("published", "pending_claim", "delisted"):
         assert client.get(f"/api/admin/repos?status={s}").status_code == 200
+
+
+def test_q列集通配符转义(conn, client, admin):
+    conn.execute(
+        "INSERT INTO repos (github_id, full_name, owner_login, language, source, status,"
+        " tagline_zh, intro_zh) VALUES (102, 'demo/wide', 'demo', 'Python', 'submitted',"
+        " 'published', '90%好评', '描述')")
+    conn.execute(
+        "INSERT INTO repos (github_id, full_name, owner_login, language, source, status,"
+        " tagline_zh, intro_zh) VALUES (103, 'demo/other', 'demo', 'Python', 'submitted',"
+        " 'published', '好评 90 分', '描述')")
+    conn.commit()
+    body = client.get("/api/admin/repos?q=0%25").json()  # q="0%" 仅命中 tagline 字面 "0%"
+    assert [r["full_name"] for r in body["data"]] == ["demo/wide"]
+
+
+def test_q列集与搜索组对齐(conn, client, admin):
+    conn.execute(
+        "INSERT INTO repos (github_id, full_name, owner_login, language, stars, source,"
+        " status, tagline_zh, intro_zh) VALUES (?,?,?,?,?,?,?,?,?)",
+        (902, "o/wide", "o", "py", 1, "submitted", "published", "扩展检索", "描述体"))
+    conn.commit()
+    assert client.get("/api/admin/repos", params={"q": "扩展检索"}).json()["total"] == 1
+    assert client.get("/api/admin/repos", params={"q": "描述体"}).json()["total"] == 1

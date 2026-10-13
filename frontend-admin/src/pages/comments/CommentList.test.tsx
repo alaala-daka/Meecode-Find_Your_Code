@@ -135,9 +135,9 @@ const setupFetch = (options: SetupOptions = {}) => {
   return calls;
 };
 
-const renderList = () =>
+const renderList = (entry = "/comments") =>
   render(
-    <MemoryRouter initialEntries={["/comments"]}>
+    <MemoryRouter initialEntries={[entry]}>
       <Refine dataProvider={dataProvider} resources={[{ name: "comments", list: "/comments" }]}>
         <CommentList />
       </Refine>
@@ -324,7 +324,7 @@ describe("CommentList · UGC 纯文本（F8）", () => {
 });
 
 describe("CommentList · 筛选", () => {
-  it("状态选择 + 仓库 ID → GET /api/admin/comments?status=&repo_id=", async () => {
+  it("状态选择 + 仓库 ID + 内容关键词 → GET /api/admin/comments?status=&repo_id=&q=", async () => {
     const calls = setupFetch();
     renderList();
     await screen.findByText("评论内容 A");
@@ -336,9 +336,33 @@ describe("CommentList · 筛选", () => {
     });
 
     await userEvent.type(screen.getByLabelText("仓库 ID"), "3");
+    await userEvent.type(screen.getByLabelText("内容关键词"), "预填");
     await userEvent.click(screen.getByRole("button", { name: "筛选" }));
     await waitFor(() => {
-      expect(calls.some((c) => c.method === "GET" && c.url.includes("repo_id=3"))).toBe(true);
+      expect(
+        calls.some(
+          (c) =>
+            c.method === "GET" &&
+            c.url.includes("status=hidden") &&
+            c.url.includes("repo_id=3") &&
+            decodeURIComponent(c.url).includes("q=预填"),
+        ),
+      ).toBe(true);
     });
+  });
+});
+
+describe("CommentList · URL 预填", () => {
+  it("URL ?q= 预填过滤", async () => {
+    const calls = setupFetch();
+    renderList("/comments?q=预填词");
+    expect(screen.getByDisplayValue("预填词")).toBeInTheDocument();
+    expect(screen.getByLabelText("仓库 ID")).toHaveValue(null);
+    await waitFor(() =>
+      expect(
+        calls.some((c) => c.method === "GET" && decodeURIComponent(c.url).includes("q=预填词")),
+      ).toBe(true),
+    );
+    expect(calls.some((c) => c.url.includes("repo_id="))).toBe(false);
   });
 });

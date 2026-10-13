@@ -14,6 +14,8 @@ AUDIT_ACTIONS = frozenset({
     "repo.publish", "repo.delist", "repo.restore", "repo.edit",
     "comment.hide", "comment.restore", "comment.delete", "comment.bulk_hide",
     "api_policy.update", "config.update",
+    "login_events.ip_lookup",
+    "feedback.status", "feedback.note", "feedback.reply",
 })
 
 

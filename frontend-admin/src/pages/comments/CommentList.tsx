@@ -30,6 +30,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { useQPrefill } from "@/hooks/useQPrefill";
 import { formatTime } from "@/pages/users/UserList";
 
 const PAGE_SIZE = 10;
@@ -74,6 +75,8 @@ export function CommentList() {
   const [status, setStatus] = React.useState("all");
   const [repoSearch, setRepoSearch] = React.useState("");
   const [repoId, setRepoId] = React.useState("");
+  const [search, setSearch] = React.useState("");
+  const [q, setQ] = React.useState("");
   const [page, setPage] = React.useState(1);
   const [selected, setSelected] = React.useState<Set<number>>(new Set());
   const [pending, setPending] = React.useState<{ row: CommentRow; action: CommentRowAction } | null>(
@@ -84,12 +87,18 @@ export function CommentList() {
   const [bulkResult, setBulkResult] = React.useState<BulkHideResult | null>(null);
   const [stats, setStats] = React.useState<CommentStats | null>(null);
 
+  useQPrefill((urlQ) => {
+    setSearch(urlQ);
+    setQ(urlQ);
+  });
+
   const filters: CrudFilter[] = React.useMemo(() => {
     const list: CrudFilter[] = [];
+    if (q) list.push({ field: "q", operator: "contains", value: q });
     if (status !== "all") list.push({ field: "status", operator: "eq", value: status });
     if (repoId) list.push({ field: "repo_id", operator: "eq", value: repoId });
     return list;
-  }, [status, repoId]);
+  }, [q, status, repoId]);
 
   const { result, query } = useList<CommentRow>({
     resource: "comments",
@@ -209,6 +218,7 @@ export function CommentList() {
           e.preventDefault();
           setPage(1);
           setRepoId(repoSearch.trim());
+          setQ(search.trim());
         }}
       >
         <Input
@@ -218,6 +228,13 @@ export function CommentList() {
           placeholder="仓库 ID"
           aria-label="仓库 ID"
           className="w-28 border-line"
+        />
+        <Input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="内容关键词"
+          aria-label="内容关键词"
+          className="w-56 border-line"
         />
         <Button type="submit" variant="outline" className="border-line text-ink-2">
           筛选

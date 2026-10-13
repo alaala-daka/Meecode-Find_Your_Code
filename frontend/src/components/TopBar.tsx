@@ -1,9 +1,16 @@
 // src/components/TopBar.tsx —— 纸面墨线顶栏：logo（觅码 + 亮橙 Meecode，2026-08 新版圆头放大镜标志）+ 胶囊导航 + 线框搜索（未登录触达收藏/投稿/历史先弹登录）
 import { useEffect, useState } from 'react'
 import { Link, NavLink, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
+import { api } from '../api/client'
+import type { ReplyNotification } from '../api/types'
 import { useAuthStore } from '../store/authStore'
+import { useNotificationStore } from '../store/notificationStore'
+import { formatTime } from '../utils/format'
 import Avatar from './Avatar'
+import FeedbackEntry from './FeedbackEntry'
 import LoginModal from './LoginModal'
+import './CategoryBar.css'   // 复用 .cat-more-menu / .cat-more-item（铃铛下拉；跨组件复用类名显式引其定义文件）
+import './SiteFooter.css'    // 复用 .footer-cta（铃铛底部「查看全部反馈」文字链）
 import './TopBar.css'
 
 export default function TopBar() {
@@ -13,6 +20,9 @@ export default function TopBar() {
   const [params] = useSearchParams()
   const location = useLocation()
   const user = useAuthStore((s) => s.user)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [notes, setNotes] = useState<ReplyNotification[]>([])
+  const unread = useNotificationStore((s) => s.count)
 
   // 搜索结果页顶栏保留查询词；其余页不随 URL 回写
   useEffect(() => {
@@ -32,6 +42,34 @@ export default function TopBar() {
   function goHistory() {
     if (user) navigate(`/user/${user.login}?tab=history`)
     else setLoginOpen(true)
+  }
+
+  // 「更多」式下拉：点外或 Esc 关闭（CategoryBar.tsx:21-35 同款）
+  useEffect(() => {
+    if (!menuOpen) return
+    function onDoc(e: MouseEvent) {
+      if (!(e.target as HTMLElement).closest('.bell-wrap')) setMenuOpen(false)
+    }
+    function onKey(e: KeyboardEvent) { if (e.key === 'Escape') setMenuOpen(false) }
+    document.addEventListener('click', onDoc)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('click', onDoc)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [menuOpen])
+
+  async function openBell() {
+    if (!user) { setLoginOpen(true); return }   // UI 约束 §1.8：未登录点铃铛弹登录框（goHistory 同款）
+    const next = !menuOpen
+    setMenuOpen(next)
+    if (!next) return
+    try {
+      const r = await api.replyNotifications(10)
+      setNotes(r.items)
+    } catch {
+      setNotes([])
+    }
   }
 
   return (
@@ -84,6 +122,51 @@ export default function TopBar() {
               <polyline points="10,5.5 10,10 13.5,12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </button>
+          <div className="bell-wrap">
+            <button
+              type="button"
+              className="icon-btn"
+              aria-label="反馈回复通知"
+              aria-expanded={menuOpen}
+              aria-haspopup="menu"
+              onClick={() => void openBell()}
+            >
+              <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">
+                <path
+                  d="M10 3a4.5 4.5 0 0 1 4.5 4.5V11l1.5 2.5H4L5.5 11V7.5A4.5 4.5 0 0 1 10 3z"
+                  fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinejoin="round"
+                />
+                <path d="M8 16a2 2 0 0 0 4 0" fill="none" stroke="currentColor"
+                  strokeWidth={1.6} strokeLinecap="round" />
+              </svg>
+              {unread > 0 && <span className="bell-dot" aria-label={`${unread} 条未读回复`} />}
+            </button>
+            {menuOpen && (
+              <div className="cat-more-menu bell-menu" role="menu">
+                {notes.length === 0 && <p className="bell-empty">暂无回复</p>}
+                {notes.map((n) => (
+                  <Link
+                    key={n.reply_id}
+                    to={`/my/feedback/${n.feedback_id}`}
+                    className="cat-more-item"
+                    role="menuitem"
+                    onClick={() => setMenuOpen(false)}
+                  >
+                    <span className="bell-note-preview">{n.reply_body_preview}</span>
+                    <span className="bell-note-time">{formatTime(new Date(n.created_at * 1000).toISOString())}</span>
+                  </Link>
+                ))}
+                <Link
+                  to="/my/feedback"
+                  className="footer-cta bell-all"   // 底部文字链沿 .footer-cta（UI 约束 §1.13）
+                  onClick={() => setMenuOpen(false)}
+                >
+                  查看全部反馈 →
+                </Link>
+              </div>
+            )}
+          </div>
+          <FeedbackEntry variant="icon" />
           <button className="btn btn-primary btn-submit" onClick={goSubmit}>+ 推广我的仓库</button>
           {user ? (
             <Link className="avatar-link" to={`/user/${user.login}`} aria-label="个人主页">

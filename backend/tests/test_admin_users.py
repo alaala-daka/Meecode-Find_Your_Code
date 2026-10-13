@@ -90,3 +90,21 @@ def test_ban_revokes_sessions_and_unban_clears(conn, client, admin):
     row = conn.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
     assert row["ban_comment_until"] is None and row["ban_submit_until"] is None
     assert row["ban_note"] == ""
+
+
+def test_q列集通配符转义(conn, client, admin):
+    uid = auth.upsert_user(conn, {"id": 12, "login": "carol", "avatar_url": "https://a/x"})
+    conn.execute("UPDATE users SET bio=? WHERE id=?", ("100%靠谱", uid))
+    uid = auth.upsert_user(conn, {"id": 13, "login": "dave", "avatar_url": "https://a/x"})
+    conn.execute("UPDATE users SET bio=? WHERE id=?", ("靠谱 100 分", uid))
+    conn.commit()
+    body = client.get("/api/admin/users?q=0%25").json()  # q="0%" 仅命中 bio 字面 "0%"
+    assert [u["login"] for u in body["data"]] == ["carol"]
+
+
+def test_q列集与搜索组对齐(conn, client, admin):
+    uid = auth.upsert_user(conn, {"id": 901, "login": "u1", "avatar_url": "https://a/x"})
+    conn.execute("UPDATE users SET bio=? WHERE id=?", ("野生产品经理", uid))
+    conn.commit()
+    r = client.get("/api/admin/users", params={"q": "产品经理"}).json()
+    assert r["total"] == 1
