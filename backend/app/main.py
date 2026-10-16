@@ -12,7 +12,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
-from . import config, gh, security, traffic
+from . import config, gh, llm_usage, security, traffic
 from .admin import routes as admin_routes
 from .agent import prompts
 from .agent.graph import run_elaborate, run_expand, run_repo_topic, run_rewrite
@@ -46,6 +46,7 @@ async def lifespan(_app: FastAPI):
     finally:
         conn.close()
     traffic.writer.bind(db.connect)  # init_db 完成后绑定，fail-fast 语义不变
+    llm_usage.bind(db.connect)  # 3C：LLM 用量记账写库工厂（fail-swallow，绝不阻塞主调用）
     traffic.ip_hash("0.0.0.0")  # 预热 PBKDF2 密钥派生：免首个真实请求在事件循环上同步付 200k 轮次
     security.bind_policy_source(db.connect)
     security.policies.maybe_refresh(db.connect)  # 同步预热：消除冷启动开关失效窗口
