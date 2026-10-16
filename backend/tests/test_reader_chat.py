@@ -3,7 +3,7 @@ import json
 
 from fastapi.testclient import TestClient
 
-from app import config, llm
+from app import config, llm, llm_usage
 from app.agent import websearch
 from app.main import app
 
@@ -156,6 +156,7 @@ def test_chat_stream_tool_loop(monkeypatch):
 
     events = list(llm.chat_stream_events(
         system="sys", messages=[{"role": "user", "content": "有什么实验证据?"}],
+        route=llm_usage.ROUTE_READER_CHAT,
         llm=None, tavily_key="tvly-test",
     ))
     kinds = [e["type"] for e in events]
@@ -183,7 +184,8 @@ def test_chat_stream_forces_final_text_round(monkeypatch):
     monkeypatch.setattr(websearch, "web_search", lambda q, k, max_results=5: [])
 
     events = list(llm.chat_stream_events(
-        system="sys", messages=[{"role": "user", "content": "q"}], llm=None, tavily_key="tvly-test",
+        system="sys", messages=[{"role": "user", "content": "q"}],
+        route=llm_usage.ROUTE_READER_CHAT, llm=None, tavily_key="tvly-test",
     ))
     assert len(calls) == llm.MAX_TOOL_ROUNDS + 1
     assert "tools" not in calls[-1]  # 末轮强制无工具

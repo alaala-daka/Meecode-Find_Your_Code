@@ -172,6 +172,7 @@ def create_repo_root(req: RepoRootRequest) -> RepoRootResponse:
             settings=Settings(),
             llm=req.llm,
             repo_context=repo,
+            route=llm_usage.ROUTE_REPO_ROOT,
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
@@ -212,6 +213,7 @@ def expand(req: ExpandRequest) -> ExpandResponse:
             settings=req.settings,
             llm=req.llm,
             repo_context=_require_session(req.session_id).get("repo_context"),
+            route=llm_usage.ROUTE_EXPAND,
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
@@ -296,6 +298,7 @@ def reader_chat(req: ChatRequest) -> StreamingResponse:
         events = chat_stream_events(
             system=prompts.READER_CHAT_SYSTEM,
             messages=[{"role": "user", "content": context}, *history],
+            route=llm_usage.ROUTE_READER_CHAT,
             llm=req.llm,
             tavily_key=tavily_key,
         )

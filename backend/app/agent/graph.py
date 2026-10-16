@@ -10,7 +10,7 @@ from typing import Any, Optional, TypedDict
 
 from langgraph.graph import END, StateGraph
 
-from .. import config
+from .. import config, llm_usage
 from ..llm import chat_json
 from ..schemas import (
     ChildSpec,
@@ -33,6 +33,7 @@ class AgentState(TypedDict, total=False):
     depth: int
     settings: Settings
     llm: LLMOverride
+    route: str
     # 中间/输出
     topic: str
     children: list[ChildSpec]
@@ -52,6 +53,7 @@ def rewrite_node(state: AgentState) -> dict[str, Any]:
         prompts.REWRITE_SYSTEM,
         prompts.REWRITE_USER.format(raw_input=state["raw_input"]),
         RewriteResult,
+        route=llm_usage.ROUTE_ROOTS,
         llm=state.get("llm"),
     )
     return {"topic": result.topic.strip()}
@@ -82,6 +84,7 @@ def decompose_node(state: AgentState) -> dict[str, Any]:
         )
         + prompts.repo_block(state.get("repo_context")),
         DecomposeResult,
+        route=state["route"],
         llm=state.get("llm"),
     )
     children = sorted(result.children, key=lambda c: c.relevance, reverse=True)
@@ -106,6 +109,7 @@ def relate_node(state: AgentState) -> dict[str, Any]:
         )
         + prompts.repo_block(state.get("repo_context")),
         RelateResult,
+        route=state["route"],
         llm=state.get("llm"),
     )
     return {"edges": result.edges}
@@ -143,6 +147,7 @@ def run_expand(
     settings: Settings,
     llm: LLMOverride | None = None,
     repo_context: Optional[dict] = None,
+    route: str = llm_usage.ROUTE_EXPAND,
 ) -> tuple[list[ChildSpec], list[EdgeDescription], Optional[str]]:
     state = _expand_graph.invoke(
         {
@@ -152,6 +157,7 @@ def run_expand(
             "settings": settings,
             "llm": llm,
             "repo_context": repo_context,
+            "route": route,
         }
     )
     return state.get("children") or [], state.get("edges") or [], state.get("refused")
@@ -176,6 +182,7 @@ def run_elaborate(
         )
         + prompts.repo_block(repo_context),
         ElaborateResult,
+        route=llm_usage.ROUTE_NODES_DETAIL,
         llm=llm,
     )
     return result.detail.strip()
@@ -193,6 +200,7 @@ def run_repo_topic(
             full_name=full_name, description=description or "(无)", readme=readme or "(无)"
         ),
         RewriteResult,
+        route=llm_usage.ROUTE_REPO_ROOT,
         llm=llm,
     )
     return result.topic.strip()
