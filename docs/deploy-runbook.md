@@ -259,3 +259,4 @@ Environment=ADMIN_LOGINS=<login1>,<login2>
 - [ ] 管理台顶栏搜索框输入 2 字以上回车 → `/admin/search?q=` 三组分栏显示，各组「查看全部」跳对应列表页且过滤框已预填
 - [ ] 主站顶栏「反馈」→ 提交一条 bug 反馈 → `/admin/feedback` 出现该条（pending 徽章 +1）→ 详情页写内部备注并发送回复 → 主站铃铛出现红点，下拉可见回复 → 点进 `/my/feedback/:id` 后红点消失且该条未读数归零
 - [ ] `curl -s -u <basic用户>:<口令> 'https://<域名>/admin/feedback'` 有响应、深链刷新 200 表格渲染；`/admin/feedback/show/<id>` 详情可见联系方式与回复串
+- [ ] 触发一次真实 LLM 调用（如 `/repo/1` 解读或伴读）→ `/admin/llm-usage` 汇总卡与按日图数字随之增长、模型分列表出现该模型；概览「本月 LLM 调用」小卡同步 +1
