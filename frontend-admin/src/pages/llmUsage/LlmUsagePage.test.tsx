@@ -58,9 +58,23 @@ describe("LlmUsagePage", () => {
     const calls = setupFetch();
     render(<LlmUsagePage />);
     await screen.findByText("模型分布");
+    const parseRange = (url: string) =>
+      /llm\/stats\?from=(\d{4}-\d{2}-\d{2})&to=(\d{4}-\d{2}-\d{2})/.exec(url);
+    const initialFrom = parseRange(calls[0].url)?.[1];
+    expect(initialFrom).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    const before = calls.length;
     fireEvent.click(screen.getByRole("button", { name: "近 30 日" }));
     await waitFor(() => {
-      expect(calls.some((c) => /llm\/stats\?from=\d{4}-\d{2}-\d{2}&to=\d{4}-\d{2}-\d{2}/.test(c.url))).toBe(true);
+      const hit = calls.slice(before).some((c) => {
+        const m = parseRange(c.url);
+        // 点击后新增请求：from ≠ 初次 from，且 from/to 为 30 日窗口（跨度 29 天）
+        return (
+          m !== null &&
+          m[1] !== initialFrom &&
+          Date.parse(m[2]) - Date.parse(m[1]) === 29 * 86_400_000
+        );
+      });
+      expect(hit).toBe(true);
     });
   });
 
