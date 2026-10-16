@@ -211,6 +211,20 @@ CREATE TABLE IF NOT EXISTS feedback_replies (
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_feedback_replies_fb ON feedback_replies(feedback_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_feedback_replies_read ON feedback_replies(read_at)")
+    conn.execute("""
+CREATE TABLE IF NOT EXISTS llm_usage (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts INTEGER NOT NULL,
+  route TEXT NOT NULL,
+  repo_id INTEGER,
+  model TEXT NOT NULL,
+  prompt_tokens INTEGER NOT NULL DEFAULT 0,
+  completion_tokens INTEGER NOT NULL DEFAULT 0,
+  ok INTEGER NOT NULL CHECK(ok IN (0,1)),
+  latency_ms INTEGER NOT NULL DEFAULT 0
+)""")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_llm_usage_ts ON llm_usage(ts)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_llm_usage_repo ON llm_usage(repo_id)")
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(users)")}
     if "session_epoch" not in cols:
         conn.execute("ALTER TABLE users ADD COLUMN session_epoch INTEGER NOT NULL DEFAULT 0")
