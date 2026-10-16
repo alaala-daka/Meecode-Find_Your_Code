@@ -256,6 +256,7 @@ def test_预审落行带repo_id(conn, usage_db, monkeypatch):
 
 
 # ---------- Task 6：统计聚合 ----------
+import calendar
 import time
 
 
@@ -331,3 +332,18 @@ def test_month_stats只计当月(conn):
     _insert(conn, ts=now - 400 * 86400, p=100, c=100)  # 上年同日：不计
     m = llm_usage.month_stats(conn)
     assert m == {"calls": 1, "prompt_tokens": 4, "completion_tokens": 6}
+
+
+def test_month_stats上界至今含端点(conn):
+    day = 86400
+    now = int(time.time())
+    month_start = calendar.timegm(
+        time.strptime(time.strftime("%Y-%m-01", time.gmtime(now)), "%Y-%m-%d"))
+    mid = month_start + 14 * day + 12 * 3600  # 当月 15 日 12:00 UTC：确定同月、距月界 ≥13 天
+    _insert(conn, ts=mid, p=1, c=2)
+    _insert(conn, ts=mid + 3600, p=4, c=8)  # 同月但晚于上界：不计
+    out = llm_usage.month_stats(conn, now=mid)
+    assert out == {"calls": 1, "prompt_tokens": 1, "completion_tokens": 2}
+    # 上界含入（<=）：now 恰为第二行的 ts
+    out2 = llm_usage.month_stats(conn, now=mid + 3600)
+    assert out2 == {"calls": 2, "prompt_tokens": 5, "completion_tokens": 10}

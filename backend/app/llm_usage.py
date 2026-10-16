@@ -134,8 +134,9 @@ def month_stats(conn: sqlite3.Connection, now: int | None = None) -> dict:
         time.strptime(time.strftime("%Y-%m-01", time.gmtime(now)), "%Y-%m-%d"))
     row = conn.execute(
         "SELECT COUNT(*) AS calls, SUM(prompt_tokens) AS prompt_tokens,"
-        " SUM(completion_tokens) AS completion_tokens FROM llm_usage WHERE ts>=?",
-        (month_start,),
+        " SUM(completion_tokens) AS completion_tokens FROM llm_usage"
+        " WHERE ts>=? AND ts<=?",
+        (month_start, now),
     ).fetchone()
     return {
         "calls": row["calls"] or 0,
