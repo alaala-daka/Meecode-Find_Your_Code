@@ -15,6 +15,7 @@ type MenuItem = { label: string; to: string; badge?: "loginFails" | "feedbackPen
 const MENU: MenuItem[] = [
   { label: "仪表盘", to: "/" },
   { label: "站点流量", to: "/traffic" },
+  { label: "LLM 用量", to: "/llm-usage" },
   { label: "用户管理", to: "/users" },
   { label: "仓库管理", to: "/repos" },
   { label: "评论管理", to: "/comments" },
