@@ -79,8 +79,9 @@ def test_overview_shape_includes_phase2_fields(conn, client, admin):
     body = client.get("/api/admin/overview").json()
     assert set(body) == {"total_users", "new_users_today", "total_repos",
                          "published_repos", "delisted_repos", "pending_comments",
-                         "online", "today_pv", "year_pv"}
-    assert all(type(v) is int for v in body.values())
+                         "online", "today_pv", "year_pv", "llm_month"}
+    assert all(type(v) is int for k, v in body.items() if k != "llm_month")
+    assert body["llm_month"] == {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0}
 
 
 def test_overview_counts_breakdown(conn, client, admin):
@@ -94,7 +95,19 @@ def test_overview_counts_breakdown(conn, client, admin):
     body = client.get("/api/admin/overview").json()
     assert body == {"total_users": 3, "new_users_today": 2, "total_repos": 3,
                     "published_repos": 1, "delisted_repos": 1, "pending_comments": 1,
-                    "online": 0, "today_pv": 0, "year_pv": 0}
+                    "online": 0, "today_pv": 0, "year_pv": 0,
+                    "llm_month": {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0}}
+
+
+def test_overview_llm_month聚合失败省略键(conn, client, admin, monkeypatch):
+    from app import llm_usage
+
+    def boom(*a, **kw):
+        raise RuntimeError("agg down")
+
+    monkeypatch.setattr(llm_usage, "month_stats", boom)
+    body = client.get("/api/admin/overview").json()
+    assert "llm_month" not in body
 
 
 def test_audit_logs_row_shape_and_ts_desc(conn, client, admin):
