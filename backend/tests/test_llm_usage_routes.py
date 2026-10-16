@@ -15,7 +15,7 @@ def graph_calls(monkeypatch):
 
     def fake_chat_json(*args, **kwargs):
         calls.append(kwargs)
-        return MagicMock(topic="t", children=[], edges=[])
+        return MagicMock(topic="t", children=[MagicMock(title="c")], edges=[])
 
     monkeypatch.setattr(agent_graph, "chat_json", fake_chat_json)
     monkeypatch.setattr(config, "LLM_MOCK", False)
@@ -23,20 +23,32 @@ def graph_calls(monkeypatch):
 
 
 def test_graph五调用点route归属(graph_calls):
+    base = len(graph_calls)
     agent_graph.run_rewrite("输入")
+    assert len(graph_calls) == base + 1  # rewrite_node 一次
     assert graph_calls[-1]["route"] == llm_usage.ROUTE_ROOTS
 
+    base = len(graph_calls)
     agent_graph.run_expand("父", ["父"], 0, Settings())
+    assert len(graph_calls) == base + 2  # decompose + relate 各触发一次
+    assert all(c["route"] == llm_usage.ROUTE_EXPAND for c in graph_calls[base:])
     assert graph_calls[-1]["route"] == llm_usage.ROUTE_EXPAND
 
+    base = len(graph_calls)
     agent_graph.run_expand("父", ["父"], 0, Settings(),
                            route=llm_usage.ROUTE_REPO_ROOT)
+    assert len(graph_calls) == base + 2  # decompose + relate 各触发一次
+    assert all(c["route"] == llm_usage.ROUTE_REPO_ROOT for c in graph_calls[base:])
     assert graph_calls[-1]["route"] == llm_usage.ROUTE_REPO_ROOT
 
+    base = len(graph_calls)
     agent_graph.run_elaborate("n", ["n"], "b")
+    assert len(graph_calls) == base + 1  # run_elaborate 一次
     assert graph_calls[-1]["route"] == llm_usage.ROUTE_NODES_DETAIL
 
+    base = len(graph_calls)
     agent_graph.run_repo_topic("a/b", "d", "r")
+    assert len(graph_calls) == base + 1  # run_repo_topic 一次
     assert graph_calls[-1]["route"] == llm_usage.ROUTE_REPO_ROOT
 
 

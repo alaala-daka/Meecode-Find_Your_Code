@@ -191,7 +191,7 @@ def test_crawl_once精筛记账route归属(conn, monkeypatch):
     _stub_pipeline(monkeypatch, n_repos=2)
     monkeypatch.setattr(screening, "screen_repo", spy)  # 覆盖 _stub_pipeline 的替换（后者生效）
     crawl.crawl_once(conn, now=NOW)
-    assert seen and all(r == llm_usage.ROUTE_CRAWL_SCREEN for r, _ in seen)
+    assert seen and all((r, ri) == (llm_usage.ROUTE_CRAWL_SCREEN, None) for r, ri in seen)
 
 
 def test_rescreen补筛记账route与repo_id归属(conn, monkeypatch):
