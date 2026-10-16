@@ -13,7 +13,7 @@ import logging
 import sqlite3
 import time
 
-from ... import config
+from ... import config, llm_usage
 from .. import db, github, ranking, screening
 from ..schemas import ScreeningResult
 
@@ -68,7 +68,8 @@ def crawl_once(conn: sqlite3.Connection, *, now: int | None = None) -> dict:
     candidates: list[tuple[float, dict, str, ScreeningResult]] = []
     for _score, repo, readme, tree in topk:
         try:
-            result = screening.screen_repo(repo["full_name"], readme, tree)
+            result = screening.screen_repo(repo["full_name"], readme, tree,
+                                           route=llm_usage.ROUTE_CRAWL_SCREEN)
         except Exception as exc:  # LLM 故障:跳过,下轮重试
             stats["skipped"] += 1
             log.warning("%s 精筛失败,跳过:%s", repo["full_name"], exc)
@@ -109,7 +110,9 @@ def rescreen_pending(
     for row in rows:
         try:
             tree = github.get_tree(row["full_name"], row["default_branch"])
-            result = screening.screen_repo(row["full_name"], row["readme_md"], tree)
+            result = screening.screen_repo(row["full_name"], row["readme_md"], tree,
+                                           route=llm_usage.ROUTE_CRAWL_SCREEN,
+                                           repo_id=row["id"])
         except Exception as exc:
             log.warning("[rescreen] %s 失败,下轮重试:%s", row["full_name"], exc)
             continue

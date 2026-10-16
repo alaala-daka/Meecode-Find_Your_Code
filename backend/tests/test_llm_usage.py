@@ -194,3 +194,62 @@ def test_流式断言stream_options开启usage(usage_db, monkeypatch):
     list(llm.chat_stream_events(
         system="s", messages=[], route=llm_usage.ROUTE_READER_CHAT))
     assert comp.kwargs["stream_options"] == {"include_usage": True}
+
+
+# ---------- Task 4：feed 域埋点 ----------
+from app.feed import llm as feed_llm
+from app.feed.schemas import CommentVerdict
+
+
+class _FeedCompletions:
+    def __init__(self, resp):
+        self._resp = resp
+
+    def create(self, **kwargs):
+        self.kwargs = kwargs
+        return self._resp
+
+
+def _feed_resp():
+    msg = type("Msg", (), {"content": '{"is_compliant": true, "reason": ""}'})()
+    choice = type("Choice", (), {"message": msg})()
+    u = type("Usage", (), {"prompt_tokens": 11, "completion_tokens": 2})()
+    return type("Resp", (), {"choices": [choice], "usage": u})()
+
+
+def _install_feed(monkeypatch, completions):
+    fake = type("Fake", (), {"chat": type("Chat", (), {"completions": completions})()})()
+    monkeypatch.setattr(feed_llm, "_client", fake)
+    monkeypatch.setattr(feed_llm.config, "LLM_MOCK", False)
+    monkeypatch.setattr(feed_llm.config, "LLM_API_KEY", "k")
+    monkeypatch.setattr(feed_llm.config, "LLM_MODEL", "m2")
+
+
+def test_feed_chat_json落行(usage_db, monkeypatch):
+    _install_feed(monkeypatch, _FeedCompletions(_feed_resp()))
+    out = feed_llm.chat_json(system="s", user="u", model=CommentVerdict,
+                             route=llm_usage.ROUTE_SUBMIT_SCREEN)
+    assert out.is_compliant is True
+    (row,) = _rows(usage_db)
+    assert (row["route"], row["repo_id"], row["model"], row["ok"]) == ("submit-screen", None, "m2", 1)
+    assert (row["prompt_tokens"], row["completion_tokens"]) == (11, 2)
+
+
+def test_预审落行带repo_id(conn, usage_db, monkeypatch):
+    from app.feed import auth, moderation
+
+    _install_feed(monkeypatch, _FeedCompletions(_feed_resp()))
+    uid = auth.upsert_user(conn, {"id": 1, "login": "u", "avatar_url": "https://a/u"})
+    conn.execute(
+        "INSERT INTO repos (id, github_id, full_name, owner_login, source, status)"
+        " VALUES (42, 42, 'a/b', 'a', 'submitted', 'published')")
+    conn.execute(
+        "INSERT INTO comments (repo_id, user_id, parent_id, content, status, screened)"
+        " VALUES (42, ?, NULL, 'hi', 'pending', 0)", (uid,))
+    conn.commit()
+    cid = conn.execute("SELECT id FROM comments").fetchone()["id"]
+
+    moderation.moderate_comment(conn, cid)
+
+    (row,) = _rows(usage_db)
+    assert (row["route"], row["repo_id"]) == ("comment-moderate", 42)

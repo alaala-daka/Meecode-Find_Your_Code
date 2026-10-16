@@ -130,7 +130,7 @@ def test_llm_only_for_topk(monkeypatch, conn):
     monkeypatch.setattr(github, "get_user", lambda *a: {"followers": 0})
     calls: list[str] = []
 
-    def fake_screen(full_name, readme, tree):
+    def fake_screen(full_name, readme, tree, **kw):
         calls.append(full_name)
         return ScreeningResult(is_real_project=True, category="开发工具",
                                tagline_zh="t", why_zh="w", quality=4)

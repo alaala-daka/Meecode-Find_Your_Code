@@ -5,12 +5,13 @@
 from __future__ import annotations
 
 import json
+import time
 from typing import Type, TypeVar
 
 from openai import OpenAI
 from pydantic import BaseModel
 
-from .. import config
+from .. import config, llm_usage
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -38,8 +39,12 @@ def _strip_code_fence(text: str) -> str:
     return t
 
 
-def chat_json(*, system: str, user: str, model: Type[T]) -> T:
-    """请求 LLM 输出 JSON 并用 Pydantic 校验；失败回填错误重试一次。"""
+def chat_json(*, system: str, user: str, model: Type[T], route: str,
+              repo_id: int | None = None) -> T:
+    """请求 LLM 输出 JSON 并用 Pydantic 校验；失败回填错误重试一次。
+
+    每次 create 落一行 llm_usage（口径同 app/llm.chat_json）。
+    """
     if not config.llm_configured():
         raise RuntimeError("LLM 未配置：请在 backend/.env 填入 LLM_API_KEY")
 
@@ -49,6 +54,8 @@ def chat_json(*, system: str, user: str, model: Type[T]) -> T:
     text = ""
 
     for _attempt in range(2):
+        t0 = time.monotonic()
+        prompt = completion = 0
         try:
             resp = client.chat.completions.create(
                 model=config.LLM_MODEL,
@@ -56,14 +63,27 @@ def chat_json(*, system: str, user: str, model: Type[T]) -> T:
                 temperature=config.LLM_TEMPERATURE,
                 response_format={"type": "json_object"},
             )
+            usage = getattr(resp, "usage", None)
+            prompt = int(getattr(usage, "prompt_tokens", 0) or 0)
+            completion = int(getattr(usage, "completion_tokens", 0) or 0)
             text = resp.choices[0].message.content or ""
-            return model.model_validate(json.loads(_strip_code_fence(text)))
+            result = model.model_validate(json.loads(_strip_code_fence(text)))
         except Exception as exc:
+            llm_usage.record_usage(
+                route=route, repo_id=repo_id, model=config.LLM_MODEL,
+                prompt_tokens=prompt, completion_tokens=completion,
+                ok=0, latency_ms=int((time.monotonic() - t0) * 1000))
             last_error = exc
             messages.append({"role": "assistant", "content": text})
             messages.append({
                 "role": "user",
                 "content": f"上一次输出无法解析或不符合要求：{exc}。请只输出符合要求的 JSON。",
             })
+        else:
+            llm_usage.record_usage(
+                route=route, repo_id=repo_id, model=config.LLM_MODEL,
+                prompt_tokens=prompt, completion_tokens=completion,
+                ok=1, latency_ms=int((time.monotonic() - t0) * 1000))
+            return result
 
     raise RuntimeError(f"LLM 输出连续两次不符合要求：{last_error}")
