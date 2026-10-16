@@ -77,3 +77,68 @@ def record_usage(*, route: str, repo_id: int | None, model: str,
     except Exception:
         failures += 1
         log.exception("llm_usage 记账失败（fail-swallow, route=%s）", route)
+
+
+def stats(conn: sqlite3.Connection, from_date: str, to_date: str) -> dict:
+    """三组聚合（§4.3）：daily 逐日补零、models 按 calls 降序、repos_top 按 tokens 降序取 10。"""
+    f0, _ = traffic.day_bounds_utc(from_date)
+    _, t1 = traffic.day_bounds_utc(to_date)
+    rows = conn.execute(
+        "SELECT date(ts, 'unixepoch') AS date, COUNT(*) AS calls,"
+        " SUM(prompt_tokens) AS prompt_tokens,"
+        " SUM(completion_tokens) AS completion_tokens,"
+        " SUM(CASE WHEN ok=0 THEN 1 ELSE 0 END) AS errors,"
+        " CAST(ROUND(AVG(latency_ms)) AS INTEGER) AS avg_latency_ms"
+        " FROM llm_usage WHERE ts>=? AND ts<? GROUP BY date ORDER BY date",
+        (f0, t1),
+    ).fetchall()
+    by_date = {r["date"]: r for r in rows}
+    daily = []
+    for i in range((t1 - f0) // 86400):
+        date_str = time.strftime("%Y-%m-%d", time.gmtime(f0 + i * 86400))
+        r = by_date.get(date_str)
+        daily.append({
+            "date": date_str,
+            "calls": r["calls"] if r else 0,
+            "prompt_tokens": (r["prompt_tokens"] or 0) if r else 0,
+            "completion_tokens": (r["completion_tokens"] or 0) if r else 0,
+            "errors": (r["errors"] or 0) if r else 0,
+            "avg_latency_ms": (r["avg_latency_ms"] or 0) if r else 0,
+        })
+    models = [
+        {"model": r["model"], "calls": r["calls"], "tokens": r["tokens"] or 0}
+        for r in conn.execute(
+            "SELECT model, COUNT(*) AS calls,"
+            " SUM(prompt_tokens + completion_tokens) AS tokens"
+            " FROM llm_usage WHERE ts>=? AND ts<?"
+            " GROUP BY model ORDER BY calls DESC, model ASC", (f0, t1))
+    ]
+    repos_top = [
+        {"repo_id": r["repo_id"], "name": r["name"],
+         "calls": r["calls"], "tokens": r["tokens"] or 0}
+        for r in conn.execute(
+            "SELECT u.repo_id AS repo_id,"
+            " COALESCE(r.full_name, '仓库 #' || u.repo_id) AS name,"
+            " COUNT(*) AS calls, SUM(u.prompt_tokens + u.completion_tokens) AS tokens"
+            " FROM llm_usage u LEFT JOIN repos r ON r.id = u.repo_id"
+            " WHERE u.ts>=? AND u.ts<? AND u.repo_id IS NOT NULL"
+            " GROUP BY u.repo_id ORDER BY tokens DESC, calls DESC LIMIT 10", (f0, t1))
+    ]
+    return {"daily": daily, "models": models, "repos_top": repos_top}
+
+
+def month_stats(conn: sqlite3.Connection, now: int | None = None) -> dict:
+    """当月 1 日 00:00 UTC 至今（§4.3 概览 llm_month）。"""
+    now = int(now if now is not None else time.time())
+    month_start = calendar.timegm(
+        time.strptime(time.strftime("%Y-%m-01", time.gmtime(now)), "%Y-%m-%d"))
+    row = conn.execute(
+        "SELECT COUNT(*) AS calls, SUM(prompt_tokens) AS prompt_tokens,"
+        " SUM(completion_tokens) AS completion_tokens FROM llm_usage WHERE ts>=?",
+        (month_start,),
+    ).fetchone()
+    return {
+        "calls": row["calls"] or 0,
+        "prompt_tokens": row["prompt_tokens"] or 0,
+        "completion_tokens": row["completion_tokens"] or 0,
+    }

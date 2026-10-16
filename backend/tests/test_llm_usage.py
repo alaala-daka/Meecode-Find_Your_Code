@@ -253,3 +253,81 @@ def test_预审落行带repo_id(conn, usage_db, monkeypatch):
 
     (row,) = _rows(usage_db)
     assert (row["route"], row["repo_id"]) == ("comment-moderate", 42)
+
+
+# ---------- Task 6：统计聚合 ----------
+import time
+
+
+def _insert(conn, *, ts, route="roots", repo_id=None, model="m1",
+            p=0, c=0, ok=1, lat=0):
+    conn.execute(
+        "INSERT INTO llm_usage (ts, route, repo_id, model, prompt_tokens,"
+        " completion_tokens, ok, latency_ms) VALUES (?,?,?,?,?,?,?,?)",
+        (ts, route, repo_id, model, p, c, ok, lat))
+    conn.commit()
+
+
+def test_daily逐日补零升序(conn):
+    day = 86400
+    base = int(time.time()) // day * day - 5 * day  # 5 天前的 UTC 零点
+    _insert(conn, ts=base + 3600, p=10, c=5, ok=1, lat=100)
+    _insert(conn, ts=base + 3 * day, p=1, c=1, ok=0, lat=301)
+
+    out = llm_usage.stats(conn, time.strftime("%Y-%m-%d", time.gmtime(base)),
+                          time.strftime("%Y-%m-%d", time.gmtime(base + 4 * day)))
+    (d1, d2, d3, d4, d5) = out["daily"]
+    assert [d["date"] for d in out["daily"]] == sorted(d["date"] for d in out["daily"])
+    assert len(out["daily"]) == 5
+    assert (d1["calls"], d1["prompt_tokens"], d1["completion_tokens"], d1["errors"]) == (1, 10, 5, 0)
+    assert d1["avg_latency_ms"] == 100
+    assert (d2["calls"], d2["avg_latency_ms"]) == (0, 0)  # 补零行
+    assert (d4["calls"], d4["errors"]) == (1, 1)
+    assert d4["avg_latency_ms"] == 301
+
+
+def test_avg_latency含失败行且四舍五入(conn):
+    day = 86400
+    base = int(time.time()) // day * day
+    _insert(conn, ts=base + 10, ok=1, lat=100)
+    _insert(conn, ts=base + 20, ok=0, lat=301)
+    out = llm_usage.stats(conn, time.strftime("%Y-%m-%d", time.gmtime(base)),
+                          time.strftime("%Y-%m-%d", time.gmtime(base)))
+    assert out["daily"][0]["avg_latency_ms"] == 201  # (100+301)/2=200.5 → 201
+
+
+def test_models按calls降序且tokens为和(conn):
+    now = int(time.time())
+    _insert(conn, ts=now, model="a", p=1, c=1)
+    _insert(conn, ts=now, model="a", p=2, c=2)
+    _insert(conn, ts=now, model="b", p=5, c=5)
+    today = time.strftime("%Y-%m-%d", time.gmtime(now))
+    out = llm_usage.stats(conn, today, today)
+    assert out["models"] == [
+        {"model": "a", "calls": 2, "tokens": 6},
+        {"model": "b", "calls": 1, "tokens": 10}]
+
+
+def test_repos_top只收repo_id非空行并coalesce名称(conn):
+    now = int(time.time())
+    conn.execute(
+        "INSERT INTO repos (id, github_id, full_name, owner_login, source, status)"
+        " VALUES (7, 7, 'a/b', 'a', 'submitted', 'published')")
+    conn.commit()
+    _insert(conn, ts=now, repo_id=7, p=3, c=3)
+    _insert(conn, ts=now, repo_id=8, p=9, c=9)   # 无对应 repos 行
+    _insert(conn, ts=now, repo_id=None, p=99, c=99)  # 不进 Top
+    today = time.strftime("%Y-%m-%d", time.gmtime(now))
+    out = llm_usage.stats(conn, today, today)
+    top = out["repos_top"]
+    assert [r["repo_id"] for r in top] == [8, 7]           # tokens 9+9 > 3+3
+    assert top[0]["name"] == "仓库 #8" and top[1]["name"] == "a/b"
+    assert all(r["tokens"] > 0 for r in top)
+
+
+def test_month_stats只计当月(conn):
+    now = int(time.time())
+    _insert(conn, ts=now, p=4, c=6)
+    _insert(conn, ts=now - 400 * 86400, p=100, c=100)  # 上年同日：不计
+    m = llm_usage.month_stats(conn)
+    assert m == {"calls": 1, "prompt_tokens": 4, "completion_tokens": 6}
