@@ -176,3 +176,44 @@ def test_rescreen_llm_failure_keeps_pending(conn, monkeypatch):
     monkeypatch.setattr(screening, "screen_repo", boom)
     assert crawl.rescreen_pending(conn) == 0
     assert conn.execute("SELECT screened FROM repos WHERE id = 1").fetchone()["screened"] == 0
+
+
+def test_crawl_once精筛记账route归属(conn, monkeypatch):
+    from app import llm_usage
+
+    seen: list[tuple] = []
+
+    def spy(*a, **kw):
+        seen.append((kw.get("route"), kw.get("repo_id")))
+        return ScreeningResult(is_real_project=True, category="其他",
+                               tagline_zh="x", why_zh="y", quality=3)
+
+    _stub_pipeline(monkeypatch, n_repos=2)
+    monkeypatch.setattr(screening, "screen_repo", spy)  # 覆盖 _stub_pipeline 的替换（后者生效）
+    crawl.crawl_once(conn, now=NOW)
+    assert seen and all(r == llm_usage.ROUTE_CRAWL_SCREEN for r, _ in seen)
+
+
+def test_rescreen补筛记账route与repo_id归属(conn, monkeypatch):
+    from app import llm_usage
+
+    seen: list[tuple] = []
+
+    def spy(*a, **kw):
+        seen.append((kw.get("route"), kw.get("repo_id")))
+        return ScreeningResult(is_real_project=True, category="数据处理",
+                               tagline_zh="x", why_zh="w", quality=5)
+
+    conn.execute(
+        "INSERT INTO repos (github_id, full_name, owner_login, source, status, tagline_zh,"
+        " intro_zh, quality, screened, readme_md, default_branch, category, published_at)"
+        " VALUES (1, 'a/b', 'a', 'submitted', 'published', '作者卖点', '作者介绍', 3, 0,"
+        " 'r' * 600, 'main', '其他', 1756000000)")
+    conn.commit()
+    rid = conn.execute("SELECT id FROM repos").fetchone()["id"]
+    monkeypatch.setattr(github, "get_tree", lambda *a, **k: [
+        {"path": f"f{i}.py", "type": "blob", "size": 1} for i in range(6)])
+    monkeypatch.setattr(screening, "screen_repo", spy)
+
+    assert crawl.rescreen_pending(conn) == 1
+    assert seen == [(llm_usage.ROUTE_CRAWL_SCREEN, rid)]
