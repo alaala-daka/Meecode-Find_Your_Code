@@ -12,6 +12,14 @@ export type Overview = {
   online?: number;
   today_pv?: number;
   year_pv?: number;
+  /** 3C：当月 LLM 调用（聚合失败后端省键 → 缺键显「—」） */
+  llm_month?: LlmMonth;
+};
+
+export type LlmMonth = {
+  calls: number;
+  prompt_tokens: number;
+  completion_tokens: number;
 };
 
 const API_URL = "/api/admin";
