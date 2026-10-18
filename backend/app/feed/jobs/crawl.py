@@ -89,6 +89,7 @@ def crawl_once(conn: sqlite3.Connection, *, now: int | None = None) -> dict:
         upsert_crawled(conn, repo, readme, result, now)
         stats["inserted"] += 1
 
+    conn.commit()  # 入库写锁须在补筛 LLM 调用前释放，记账使用独立连接
     rescreen_pending(conn, now=now)
     conn.commit()
     return stats
@@ -100,6 +101,7 @@ def rescreen_pending(
     """补筛 screened=0(投稿降级/精筛失败遗留):只补质量分,绝不覆盖作者文案。
 
     投稿不受准入约束,故 is_real_project=False 也只是继续挂中性分,不下架。
+    每条补筛提交，避免跨下一次 LLM 调用持有写锁。
     """
     limit = limit if limit is not None else config.CRAWL_RESCREEN_LIMIT
     rows = conn.execute(
@@ -124,6 +126,7 @@ def rescreen_pending(
             " WHERE id = ?",
             (result.quality, result.category, row["id"]),
         )
+        conn.commit()
         done += 1
     return done
 
@@ -158,10 +161,13 @@ def upsert_crawled(
 
 def main() -> None:
     conn = db.connect()
-    db.init_db(conn)
-    stats = crawl_once(conn)
-    log.info("采集完成:%s", stats)
-    conn.close()
+    try:
+        db.init_db(conn)
+        llm_usage.bind(lambda: db.connect(timeout=0))
+        stats = crawl_once(conn)
+        log.info("采集完成:%s", stats)
+    finally:
+        conn.close()
 
 
 if __name__ == "__main__":

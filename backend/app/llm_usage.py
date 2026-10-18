@@ -42,7 +42,7 @@ failures = 0
 
 
 def bind(factory: Callable[[], sqlite3.Connection] | None) -> None:
-    """绑定写库连接工厂（lifespan 绑 db.connect）；None = 丢弃（测试缺省）。"""
+    """Web/任务入口绑定零锁等待连接工厂；None = 丢弃（测试缺省）。"""
     global _factory
     _factory = factory
 
@@ -64,6 +64,7 @@ def record_usage(*, route: str, repo_id: int | None, model: str,
     try:
         conn = _factory()
         try:
+            conn.execute("PRAGMA busy_timeout = 0")  # 观测写不排队等待业务写锁
             conn.execute(
                 "INSERT INTO llm_usage (ts, route, repo_id, model, prompt_tokens,"
                 " completion_tokens, ok, latency_ms) VALUES (?,?,?,?,?,?,?,?)",

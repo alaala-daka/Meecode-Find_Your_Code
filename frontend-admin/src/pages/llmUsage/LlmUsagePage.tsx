@@ -10,6 +10,9 @@ import {
 const EMPTY = "—";
 
 type Range = { key: string; label: string; days: number };
+type LoadResult =
+  | { rangeKey: string; status: "ready"; data: LlmStats }
+  | { rangeKey: string; status: "error"; message: string };
 
 const RANGES: Range[] = [
   { key: "7d", label: "近 7 日", days: 7 },
@@ -22,23 +25,21 @@ const utcDay = (offsetDays: number): string =>
 
 export function LlmUsagePage() {
   const [range, setRange] = React.useState<Range>(RANGES[0]);
-  const [data, setData] = React.useState<LlmStats | null>(null);
-  const [error, setError] = React.useState<string | null>(null);
-  const [loading, setLoading] = React.useState(false);
+  const [result, setResult] = React.useState<LoadResult | null>(null);
+  const current = result?.rangeKey === range.key ? result : null;
+  const data = current?.status === "ready" ? current.data : null;
+  const error = current?.status === "error" ? current.message : null;
+  const loading = current === null;
 
   React.useEffect(() => {
     let alive = true;
-    setLoading(true);
-    setError(null);
+    setResult(null);
     void getLlmStats(utcDay(range.days - 1), utcDay(0))
       .then((resp) => {
-        if (alive) setData(resp);
+        if (alive) setResult({ rangeKey: range.key, status: "ready", data: resp });
       })
       .catch((e: Error) => {
-        if (alive) setError(e.message);
-      })
-      .finally(() => {
-        if (alive) setLoading(false);
+        if (alive) setResult({ rangeKey: range.key, status: "error", message: e.message || "加载失败" });
       });
     return () => {
       alive = false;
@@ -75,12 +76,12 @@ export function LlmUsagePage() {
       </header>
 
       {error && <p role="alert" className="text-sm text-danger">{error}</p>}
-      {loading && <p className="font-mono text-sm text-ink-3">加载中…</p>}
+      {loading && <p role="status" className="font-mono text-sm text-ink-3">加载中…</p>}
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         {([
-          { label: "区间调用数", value: String(calls) },
-          { label: "tokens 合计", value: String(tokens) },
+          { label: "区间调用数", value: data ? String(calls) : EMPTY },
+          { label: "tokens 合计", value: data ? String(tokens) : EMPTY },
           { label: "失败率", value: calls > 0 ? `${((errors / calls) * 100).toFixed(1)}%` : EMPTY },
           { label: "平均耗时", value: latency !== null ? `${latency} ms` : EMPTY },
         ]).map(({ label, value }) => (
@@ -116,9 +117,11 @@ export function LlmUsagePage() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {(data?.models ?? []).length === 0 && (
+            {(loading || error || data?.models.length === 0) && (
               <TableRow>
-                <TableCell colSpan={3} className="py-8 text-center text-ink-3">暂无模型调用。</TableCell>
+                <TableCell colSpan={3} className={`py-8 text-center ${error ? "text-danger" : "text-ink-3"}`}>
+                  {loading ? "加载中…" : error ? "加载失败，请切换区间重试。" : "暂无模型调用。"}
+                </TableCell>
               </TableRow>
             )}
             {(data?.models ?? []).map((m) => (
@@ -143,9 +146,11 @@ export function LlmUsagePage() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {(data?.repos_top ?? []).length === 0 && (
+            {(loading || error || data?.repos_top.length === 0) && (
               <TableRow>
-                <TableCell colSpan={3} className="py-8 text-center text-ink-3">暂无仓库消耗。</TableCell>
+                <TableCell colSpan={3} className={`py-8 text-center ${error ? "text-danger" : "text-ink-3"}`}>
+                  {loading ? "加载中…" : error ? "加载失败，请切换区间重试。" : "暂无仓库消耗。"}
+                </TableCell>
               </TableRow>
             )}
             {(data?.repos_top ?? []).map((r) => (

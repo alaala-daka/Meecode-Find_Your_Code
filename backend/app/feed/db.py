@@ -157,15 +157,18 @@ CREATE TABLE IF NOT EXISTS api_policies (
 """
 
 
-def connect(path: str | None = None) -> sqlite3.Connection:
-    """建立连接。WAL 让读写不互斥；外键约束默认关闭，需显式打开。"""
+def connect(path: str | None = None, *, timeout: float = 5.0) -> sqlite3.Connection:
+    """建立连接。业务写默认等锁 5 秒；观测连接可传 timeout=0 立即失败。"""
     target = path or config.DB_PATH
-    conn = sqlite3.connect(target, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute("PRAGMA busy_timeout = 5000")  # 写锁竞争时等 5s,而不是立刻 OperationalError
-    if target != ":memory:":
-        conn.execute("PRAGMA journal_mode = WAL")
+    conn = sqlite3.connect(target, check_same_thread=False, timeout=timeout)
+    try:
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
+        if target != ":memory:":
+            conn.execute("PRAGMA journal_mode = WAL")
+    except Exception:
+        conn.close()
+        raise
     return conn
 
 

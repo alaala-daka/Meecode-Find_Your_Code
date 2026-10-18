@@ -70,6 +70,27 @@ def test_写库异常吞掉并计failures(usage_db, monkeypatch):
     assert llm_usage.failures == before + 1
 
 
+def test_写锁竞争立即返回且释放后恢复(usage_db):
+    import time
+
+    locked = db.connect(usage_db)
+    try:
+        locked.execute("INSERT INTO llm_usage (ts, route, model, ok) VALUES (1,'roots','held',1)")
+        started = time.monotonic()
+        _seed_kw()
+        elapsed = time.monotonic() - started
+        assert elapsed < 1, f"观测写入等待了 {elapsed:.2f}s"
+        assert llm_usage.failures == 1
+        assert _rows(usage_db) == []
+    finally:
+        locked.rollback()
+        locked.close()
+
+    _seed_kw()
+    assert len(_rows(usage_db)) == 1
+    assert llm_usage.failures == 1
+
+
 def test_未绑定连接工厂丢弃不抛():
     llm_usage.reset()
     _seed_kw()  # 不得抛出、不落行（无库可写）

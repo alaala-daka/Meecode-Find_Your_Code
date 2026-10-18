@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { LlmUsagePage } from "./LlmUsagePage";
@@ -34,7 +34,7 @@ describe("LlmUsagePage", () => {
   it("汇总卡按日汇总（失败率=errors/calls、均耗时按 calls 加权）", async () => {
     setupFetch();
     render(<LlmUsagePage />);
-    await screen.findByText("模型分布");
+    await screen.findByText("gpt-4o");
     const callsCard = within(card("区间调用数"));
     expect(callsCard.getByText("3")).toBeInTheDocument();
     const tokensCard = within(card("tokens 合计"));
@@ -81,7 +81,9 @@ describe("LlmUsagePage", () => {
   it("零调用时失败率与均耗时显 —", async () => {
     setupFetch({ daily: [DAILY[1]], models: [], repos_top: [] });
     render(<LlmUsagePage />);
-    await screen.findByText("失败率");
+    await screen.findByText("暂无模型调用。");
+    expect(within(card("区间调用数")).getByText("0")).toBeInTheDocument();
+    expect(within(card("tokens 合计")).getByText("0")).toBeInTheDocument();
     expect(within(card("失败率")).getByText("—")).toBeInTheDocument();
     expect(within(card("平均耗时")).getByText("—")).toBeInTheDocument();
     expect(screen.getByText("暂无模型调用。")).toBeInTheDocument();
@@ -93,5 +95,56 @@ describe("LlmUsagePage", () => {
     render(<LlmUsagePage />);
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("离线");
+    expect(within(card("区间调用数")).getByText("—")).toBeInTheDocument();
+    expect(within(card("tokens 合计")).getByText("—")).toBeInTheDocument();
+    expect(screen.queryByText("暂无模型调用。")).not.toBeInTheDocument();
+    expect(screen.queryByText("暂无仓库消耗。")).not.toBeInTheDocument();
+    expect(screen.getAllByRole("cell", { name: "加载失败，请切换区间重试。" })).toHaveLength(2);
+  });
+
+  it("首次加载期间显示未知值和表格加载行", () => {
+    vi.spyOn(globalThis, "fetch").mockReturnValue(new Promise<Response>(() => {}));
+    render(<LlmUsagePage />);
+    expect(within(card("区间调用数")).getByText("—")).toBeInTheDocument();
+    expect(within(card("tokens 合计")).getByText("—")).toBeInTheDocument();
+    expect(screen.getAllByRole("cell", { name: "加载中…" })).toHaveLength(2);
+    expect(screen.queryByText("暂无模型调用。")).not.toBeInTheDocument();
+  });
+
+  it("新区间加载和失败时清除旧结果，并可切换到另一区间恢复", async () => {
+    let rejectNext!: (reason: Error) => void;
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response(JSON.stringify(STATS)))
+      .mockImplementationOnce(() => new Promise<Response>((_resolve, reject) => { rejectNext = reject; }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ daily: [DAILY[1]], models: [], repos_top: [] })));
+    render(<LlmUsagePage />);
+    await screen.findByText("gpt-4o");
+    fireEvent.click(screen.getByRole("button", { name: "近 30 日" }));
+    expect(within(card("区间调用数")).getByText("—")).toBeInTheDocument();
+    expect(screen.queryByText("gpt-4o")).not.toBeInTheDocument();
+    expect(screen.queryByText("a/b")).not.toBeInTheDocument();
+    expect(document.querySelector(".recharts-wrapper")).toBeNull();
+    expect(screen.getAllByRole("cell", { name: "加载中…" })).toHaveLength(2);
+    await act(async () => { rejectNext(new Error("离线")); });
+    expect(await screen.findByRole("alert")).toHaveTextContent("离线");
+    expect(within(card("tokens 合计")).getByText("—")).toBeInTheDocument();
+    expect(screen.queryByText("暂无模型调用。")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "近 90 日" }));
+    await screen.findByText("暂无模型调用。");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(within(card("区间调用数")).getByText("0")).toBeInTheDocument();
+  });
+
+  it("迟到的旧区间响应不覆盖当前结果", async () => {
+    let resolveOld!: (response: Response) => void;
+    vi.spyOn(globalThis, "fetch")
+      .mockImplementationOnce(() => new Promise<Response>((resolve) => { resolveOld = resolve; }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ daily: [DAILY[1]], models: [], repos_top: [] })));
+    render(<LlmUsagePage />);
+    fireEvent.click(screen.getByRole("button", { name: "近 30 日" }));
+    await screen.findByText("暂无模型调用。");
+    await act(async () => { resolveOld(new Response(JSON.stringify(STATS))); });
+    expect(screen.queryByText("gpt-4o")).not.toBeInTheDocument();
+    expect(within(card("区间调用数")).getByText("0")).toBeInTheDocument();
   });
 });
