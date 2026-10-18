@@ -47,6 +47,16 @@ describe('SubmitPage', () => {
     expect(next).toBeEnabled()
   })
 
+  it('步2 卡片预览是静态卡：无链接、不参与跳转', async () => {
+    useAuthStore.setState({ user: FIXTURE_USER })
+    renderPage()
+    await userEvent.click((await screen.findAllByLabelText(/mini-agent/))[0])
+    await userEvent.click(screen.getByRole('button', { name: '下一步' }))
+    const preview = screen.getByText('卡片预览').parentElement as HTMLElement
+    expect(preview.querySelector('.repo-card')).toHaveClass('repo-card--static')
+    expect(preview.querySelectorAll('a')).toHaveLength(0)
+  })
+
   it('步3 发布成功', async () => {
     useAuthStore.setState({ user: FIXTURE_USER })
     renderPage()

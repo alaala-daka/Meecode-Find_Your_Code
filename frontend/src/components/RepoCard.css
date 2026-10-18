@@ -12,6 +12,7 @@
 @media (min-width: 1040px) { .repo-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 
 .repo-card {
+  position: relative; /* stretched link 的包含块：标题链接的 ::after 以此铺满整卡 */
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -25,6 +26,23 @@
   border-color: var(--line-strong);
   box-shadow: var(--shadow-hover);
   transform: translateY(-1px);
+}
+
+/* 整卡可点：标题链接的伪元素铺满卡片，点击卡片任意位置（含空白、tagline、元信息）即进入仓库。
+   仍是原生 <Link> 的命中区，故中键/Ctrl/Shift 点击的新标签页语义一并保留；
+   卡内若出现按钮等交互元素，需 position: relative; z-index: 1 让它浮在覆盖层之上 */
+.repo-card-title a::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius-lg);
+}
+
+/* 静态卡（投稿页预览）：不参与跳转，去掉悬停抬升与可点暗示 */
+.repo-card--static:hover {
+  border-color: var(--line);
+  box-shadow: none;
+  transform: none;
 }
 
 .repo-card-top {
