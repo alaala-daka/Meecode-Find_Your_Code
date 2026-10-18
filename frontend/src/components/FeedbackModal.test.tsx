@@ -24,6 +24,16 @@ describe('FeedbackModal', () => {
     expect(screen.getByText('0/100')).toBeInTheDocument()
   })
 
+  it('浮层 portal 到 body：不被顶栏 backdrop-filter 含块截留（回归）', () => {
+    render(
+      <div data-testid="host" style={{ backdropFilter: 'blur(8px)' }}>
+        <FeedbackModal open onClose={() => {}} />
+      </div>,
+    )
+    // 不 portal 时 .fb-mask 会落在顶栏子树内，fixed 的 inset:0 只铺满顶栏条，弹窗被顶出屏幕
+    expect(screen.getByRole('dialog').closest('[data-testid="host"]')).toBeNull()
+  })
+
   it('提交成功回调并关闭', async () => {
     const { api } = await import('../api/client')
     vi.spyOn(api, 'submitFeedback').mockResolvedValue({ id: 3 })

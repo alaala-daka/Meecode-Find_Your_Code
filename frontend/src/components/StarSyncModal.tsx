@@ -1,6 +1,7 @@
 // src/components/StarSyncModal.tsx —— 撤星确认弹窗（spec 2026-09-28 §4.4）：双按钮选择
 import { useEffect, useRef } from 'react'
 import Button from './Button'
+import Portal from './Portal'
 import './StarSyncModal.css'
 
 interface Props {
@@ -37,16 +38,18 @@ export default function StarSyncModal({ open, onConfirmAuth, onLocalOnly, onClos
   }, [open, onClose])
   if (!open) return null
   return (
-    <div className="star-modal-mask" onClick={onClose}>
-      <div className="star-modal" role="dialog" aria-modal="true"
-           aria-label="取消收藏将同步取消 GitHub 星" ref={modalRef}
-           onClick={(e) => e.stopPropagation()}>
-        <p className="star-modal-title">取消收藏将同步取消 GitHub 星</p>
-        <p className="star-modal-tip">该仓库的 GitHub 星（含你手动点的）将一并取消。选择仅本地则保留 GitHub 星。</p>
-        <Button onClick={onConfirmAuth}>授权并同步取消</Button>
-        <button className="star-modal-local" onClick={onLocalOnly}>仅取消本地收藏</button>
-        <button className="star-modal-close" aria-label="关闭" onClick={onClose}>✕</button>
+    <Portal>
+      <div className="star-modal-mask" onClick={onClose}>
+        <div className="star-modal" role="dialog" aria-modal="true"
+             aria-label="取消收藏将同步取消 GitHub 星" ref={modalRef}
+             onClick={(e) => e.stopPropagation()}>
+          <p className="star-modal-title">取消收藏将同步取消 GitHub 星</p>
+          <p className="star-modal-tip">该仓库的 GitHub 星（含你手动点的）将一并取消。选择仅本地则保留 GitHub 星。</p>
+          <Button onClick={onConfirmAuth}>授权并同步取消</Button>
+          <button className="star-modal-local" onClick={onLocalOnly}>仅取消本地收藏</button>
+          <button className="star-modal-close" aria-label="关闭" onClick={onClose}>✕</button>
+        </div>
       </div>
-    </div>
+    </Portal>
   )
 }

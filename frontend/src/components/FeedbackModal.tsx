@@ -6,6 +6,7 @@ import type { FeedbackCategory } from '../api/types'
 import { useAuthStore } from '../store/authStore'
 import Button from './Button'
 import LoginModal from './LoginModal'
+import Portal from './Portal'
 import './CategoryBar.css'   // 复用 .cat-pill 胶囊（SubmitPage.tsx:12 先例）
 import './FeedbackModal.css'
 
@@ -85,7 +86,7 @@ export function FeedbackModal({ open, onClose, onSubmitted }: {
   }
 
   return (
-    <>
+    <Portal>
       <div className="fb-mask" onClick={onClose}>
         <div
           className="fb-panel"
@@ -155,7 +156,7 @@ export function FeedbackModal({ open, onClose, onSubmitted }: {
           <button className="fb-close" aria-label="关闭反馈弹层" onClick={onClose}>✕</button>
         </div>
       </div>
-    </>
+    </Portal>
   )
 }
 
