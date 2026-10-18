@@ -200,7 +200,8 @@ export default function SubmitPage() {
             </div>
             <div className="edit-preview">
               <p className="preview-label">卡片预览</p>
-              {previewCard && <RepoCard data={previewCard} />}
+              {/* 预览卡是静态展示：id 为占位 0，不渲染链接、不参与跳转 */}
+              {previewCard && <RepoCard data={previewCard} interactive={false} />}
             </div>
           </section>
         )}
