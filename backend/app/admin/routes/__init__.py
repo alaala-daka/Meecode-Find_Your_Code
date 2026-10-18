@@ -2,7 +2,7 @@
 from fastapi import APIRouter, Depends
 
 from ..deps import require_admin
-from . import (audit, comments, config as config_page, feedback,
+from . import (audit, comments, config as config_page, feedback, llm,
                login_events as login_events_routes,
                overview, policies, repos, search, traffic as traffic_routes, users)
 
@@ -25,3 +25,4 @@ router.include_router(config_page.router)
 router.include_router(login_events_routes.router)
 router.include_router(search.router)
 router.include_router(feedback.router)
+router.include_router(llm.router)

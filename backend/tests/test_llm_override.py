@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 
-from app import llm
+from app import llm, llm_usage
 from app.schemas import LLMOverride, RewriteResult
 
 
@@ -55,7 +55,7 @@ def env(monkeypatch):
 
 
 def test_default_uses_env(env):
-    out = llm.chat_json("sys", "user", RewriteResult)
+    out = llm.chat_json("sys", "user", RewriteResult, route=llm_usage.ROUTE_ROOTS)
     assert out.topic == "测试主题"
     assert _FakeOpenAI.instances[0].base_url == "https://env.example.com"
     assert _FakeOpenAI.instances[0].api_key == "env-key"
@@ -64,19 +64,19 @@ def test_default_uses_env(env):
 
 def test_full_override_per_request(env):
     ov = LLMOverride(base_url="https://custom.example.com", api_key="sk-custom", model="custom-llm")
-    llm.chat_json("sys", "user", RewriteResult, llm=ov)
+    llm.chat_json("sys", "user", RewriteResult, route=llm_usage.ROUTE_ROOTS, llm=ov)
     assert _FakeOpenAI.instances[0].base_url == "https://custom.example.com"
     assert _FakeOpenAI.instances[0].api_key == "sk-custom"
     assert env["create_kwargs"]["model"] == "custom-llm"
 
-    llm.chat_json("sys", "user", RewriteResult, llm=ov)
+    llm.chat_json("sys", "user", RewriteResult, route=llm_usage.ROUTE_ROOTS, llm=ov)
     assert len(_FakeOpenAI.instances) == 1  # 同参数命中缓存
 
 
 def test_blank_fields_fall_back_to_env(env):
     """空白字段(设置区没填)必须回落 env,不能拿去建客户端。"""
     ov = LLMOverride(base_url="  ", api_key="", model="  custom-llm ")
-    llm.chat_json("sys", "user", RewriteResult, llm=ov)
+    llm.chat_json("sys", "user", RewriteResult, route=llm_usage.ROUTE_ROOTS, llm=ov)
     assert _FakeOpenAI.instances[0].base_url == "https://env.example.com"
     assert _FakeOpenAI.instances[0].api_key == "env-key"
     assert env["create_kwargs"]["model"] == "custom-llm"
@@ -86,11 +86,11 @@ def test_unconfigured_raises(monkeypatch):
     monkeypatch.setattr(llm.config, "LLM_MOCK", False)
     monkeypatch.setattr(llm.config, "LLM_API_KEY", "")
     with pytest.raises(RuntimeError, match="LLM 未配置"):
-        llm.chat_json("sys", "user", RewriteResult)
+        llm.chat_json("sys", "user", RewriteResult, route=llm_usage.ROUTE_ROOTS)
     # 请求级 api_key 可脱离 env 解锁
     monkeypatch.setattr(llm, "OpenAI", lambda base_url=None, api_key=None: _FakeOpenAI(base_url, api_key, {}))
     monkeypatch.setattr(llm.config, "LLM_BASE_URL", "https://env.example.com")
-    llm.chat_json("sys", "user", RewriteResult, llm=LLMOverride(api_key="sk-only"))
+    llm.chat_json("sys", "user", RewriteResult, route=llm_usage.ROUTE_ROOTS, llm=LLMOverride(api_key="sk-only"))
 
 
 def test_client_cache_is_capped(env, monkeypatch):

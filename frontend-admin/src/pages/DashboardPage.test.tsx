@@ -95,7 +95,7 @@ describe("DashboardPage · 空数据容错", () => {
 });
 
 describe("DashboardPage · 卡片构成", () => {
-  it("共 9 张实况卡，全部静置无影", async () => {
+  it("共 10 张卡（9 实况 + 1 LLM 小卡），全部静置无影", async () => {
     setupFetch(FULL);
     const { container } = render(<DashboardPage />);
     await cardScope("注册总数").findByText("42");
@@ -106,7 +106,7 @@ describe("DashboardPage · 卡片构成", () => {
     expect(screen.queryByText("二期")).toBeNull();
 
     const cards = container.querySelectorAll("div.rounded-lg");
-    expect(cards).toHaveLength(9);
+    expect(cards).toHaveLength(10);
     for (const card of cards) {
       expect(card.classList.contains("shadow")).toBe(false);
     }
@@ -124,6 +124,34 @@ describe("DashboardPage · 数据拉取", () => {
     expect(calls[0].method).toBe("GET");
     expect(calls[0].credentials).toBe("include");
     expect(calls[0].body).toBeUndefined();
+  });
+});
+
+describe("DashboardPage · 本月 LLM 调用小卡", () => {
+  it("本月 LLM 调用小卡渲染 calls 与 tokens 合计", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      new Response(JSON.stringify({
+        total_users: 1, new_users_today: 0, total_repos: 0, published_repos: 0,
+        delisted_repos: 0, pending_comments: 0, online: 0, today_pv: 0, year_pv: 0,
+        llm_month: { calls: 12, prompt_tokens: 300, completion_tokens: 120 },
+      }), { status: 200 }));
+    render(<DashboardPage />);
+    const scope = (await screen.findByText("本月 LLM 调用"))
+      .closest<HTMLDivElement>("div.rounded-lg")!;
+    expect(within(scope).getByText("12")).toBeInTheDocument();
+    expect(scope.textContent).toContain("420");
+  });
+
+  it("缺 llm_month 键显 —（fail-open 省键容错）", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      new Response(JSON.stringify({
+        total_users: 1, new_users_today: 0, total_repos: 0, published_repos: 0,
+        delisted_repos: 0, pending_comments: 0, online: 0, today_pv: 0, year_pv: 0,
+      }), { status: 200 }));
+    render(<DashboardPage />);
+    const scope = (await screen.findByText("本月 LLM 调用"))
+      .closest<HTMLDivElement>("div.rounded-lg")!;
+    expect(within(scope).getAllByText("—")).toHaveLength(2);
   });
 });
 

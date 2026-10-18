@@ -522,3 +522,31 @@ def test_moderate_pending_error_leaves_for_next_round(conn, client, login, monke
     assert job.moderate_pending(conn, now=NOW + 400) == 1
     row = conn.execute("SELECT status, screened FROM comments WHERE id=?", (cid,)).fetchone()
     assert row["screened"] == 1 and row["status"] == "visible"
+
+
+def test_预审记账route与repo_id归属(conn, monkeypatch):
+    from app import config as app_config, llm_usage
+    from app.feed import auth, llm as feed_llm, moderation
+    from app.feed.schemas import CommentVerdict
+
+    seen: dict = {}
+
+    def fake(**kw):
+        seen.update(kw)
+        return CommentVerdict(is_compliant=True, reason="")
+
+    monkeypatch.setattr(app_config, "LLM_MOCK", False)
+    monkeypatch.setattr(feed_llm, "chat_json", fake)
+    uid = auth.upsert_user(conn, {"id": 1, "login": "u", "avatar_url": "https://a/u"})
+    conn.execute(
+        "INSERT INTO repos (id, github_id, full_name, owner_login, source, status)"
+        " VALUES (55, 55, 'a/b', 'a', 'submitted', 'published')")
+    conn.execute(
+        "INSERT INTO comments (repo_id, user_id, parent_id, content, status, screened)"
+        " VALUES (55, ?, NULL, 'hi', 'pending', 0)", (uid,))
+    conn.commit()
+    cid = conn.execute("SELECT id FROM comments").fetchone()["id"]
+
+    moderation.moderate_comment(conn, cid)
+    assert seen["route"] == llm_usage.ROUTE_COMMENT_MODERATE
+    assert seen["repo_id"] == 55

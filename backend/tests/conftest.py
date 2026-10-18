@@ -76,6 +76,15 @@ def _reset_access_writer():
 
 
 @pytest.fixture(autouse=True)
+def _reset_llm_usage():
+    from app import llm_usage
+
+    llm_usage.reset()
+    yield
+    llm_usage.reset()
+
+
+@pytest.fixture(autouse=True)
 def _reset_policy_cache():
     from app import security
     security.policies.reset()

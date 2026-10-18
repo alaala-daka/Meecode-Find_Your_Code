@@ -4,7 +4,7 @@ from fastapi.testclient import TestClient
 
 from app.feed import auth, deps, github, screening
 from app.feed.schemas import ScreeningResult
-from app import config
+from app import config, llm_usage
 from app.main import app
 
 NOW = 1_700_000_000
@@ -308,3 +308,20 @@ def test_ai_draft_has_suggested_category(client, login, monkeypatch):
                                                         tagline_zh="t", why_zh="w", quality=4))
     body = client.post("/api/ai-draft", json={"github_id": 7}).json()
     assert body["suggested_category"] == "数据处理"
+
+
+def test_screen_repo记账route归属_submit与ai_draft(client, login, monkeypatch):
+    from app.feed import screening
+    from app.feed.schemas import ScreeningResult
+
+    seen: list[str] = []
+
+    def spy(*a, **kw):
+        seen.append(kw.get("route"))
+        return ScreeningResult(is_real_project=True, category="其他",
+                               tagline_zh="x", why_zh="y", quality=3)
+
+    monkeypatch.setattr(screening, "screen_repo", spy)
+    client.post("/api/submit", json=payload())
+    client.post("/api/ai-draft", json={"github_id": 90001})
+    assert seen == [llm_usage.ROUTE_SUBMIT_SCREEN, llm_usage.ROUTE_AI_DRAFT]

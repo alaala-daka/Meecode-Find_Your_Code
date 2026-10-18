@@ -157,15 +157,18 @@ CREATE TABLE IF NOT EXISTS api_policies (
 """
 
 
-def connect(path: str | None = None) -> sqlite3.Connection:
-    """建立连接。WAL 让读写不互斥；外键约束默认关闭，需显式打开。"""
+def connect(path: str | None = None, *, timeout: float = 5.0) -> sqlite3.Connection:
+    """建立连接。业务写默认等锁 5 秒；观测连接可传 timeout=0 立即失败。"""
     target = path or config.DB_PATH
-    conn = sqlite3.connect(target, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute("PRAGMA busy_timeout = 5000")  # 写锁竞争时等 5s,而不是立刻 OperationalError
-    if target != ":memory:":
-        conn.execute("PRAGMA journal_mode = WAL")
+    conn = sqlite3.connect(target, check_same_thread=False, timeout=timeout)
+    try:
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
+        if target != ":memory:":
+            conn.execute("PRAGMA journal_mode = WAL")
+    except Exception:
+        conn.close()
+        raise
     return conn
 
 
@@ -211,6 +214,20 @@ CREATE TABLE IF NOT EXISTS feedback_replies (
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_feedback_replies_fb ON feedback_replies(feedback_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_feedback_replies_read ON feedback_replies(read_at)")
+    conn.execute("""
+CREATE TABLE IF NOT EXISTS llm_usage (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts INTEGER NOT NULL,
+  route TEXT NOT NULL,
+  repo_id INTEGER,
+  model TEXT NOT NULL,
+  prompt_tokens INTEGER NOT NULL DEFAULT 0,
+  completion_tokens INTEGER NOT NULL DEFAULT 0,
+  ok INTEGER NOT NULL CHECK(ok IN (0,1)),
+  latency_ms INTEGER NOT NULL DEFAULT 0
+)""")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_llm_usage_ts ON llm_usage(ts)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_llm_usage_repo ON llm_usage(repo_id)")
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(users)")}
     if "session_epoch" not in cols:
         conn.execute("ALTER TABLE users ADD COLUMN session_epoch INTEGER NOT NULL DEFAULT 0")

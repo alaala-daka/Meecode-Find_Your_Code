@@ -12,7 +12,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
-from . import config, gh, security, traffic
+from . import config, gh, llm_usage, security, traffic
 from .admin import routes as admin_routes
 from .agent import prompts
 from .agent.graph import run_elaborate, run_expand, run_repo_topic, run_rewrite
@@ -46,6 +46,7 @@ async def lifespan(_app: FastAPI):
     finally:
         conn.close()
     traffic.writer.bind(db.connect)  # init_db 完成后绑定，fail-fast 语义不变
+    llm_usage.bind(lambda: db.connect(timeout=0))  # 观测写遇锁立即失败，不拖慢 LLM 调用
     traffic.ip_hash("0.0.0.0")  # 预热 PBKDF2 密钥派生：免首个真实请求在事件循环上同步付 200k 轮次
     security.bind_policy_source(db.connect)
     security.policies.maybe_refresh(db.connect)  # 同步预热：消除冷启动开关失效窗口
@@ -171,6 +172,7 @@ def create_repo_root(req: RepoRootRequest) -> RepoRootResponse:
             settings=Settings(),
             llm=req.llm,
             repo_context=repo,
+            route=llm_usage.ROUTE_REPO_ROOT,
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
@@ -211,6 +213,7 @@ def expand(req: ExpandRequest) -> ExpandResponse:
             settings=req.settings,
             llm=req.llm,
             repo_context=_require_session(req.session_id).get("repo_context"),
+            route=llm_usage.ROUTE_EXPAND,
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
@@ -295,6 +298,7 @@ def reader_chat(req: ChatRequest) -> StreamingResponse:
         events = chat_stream_events(
             system=prompts.READER_CHAT_SYSTEM,
             messages=[{"role": "user", "content": context}, *history],
+            route=llm_usage.ROUTE_READER_CHAT,
             llm=req.llm,
             tavily_key=tavily_key,
         )

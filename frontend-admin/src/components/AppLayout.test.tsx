@@ -82,4 +82,12 @@ describe("AppLayout · 菜单", () => {
     expect(link).toHaveAttribute("href", "/feedback");
     expect(await screen.findByText("4")).toBeInTheDocument();
   });
+
+  it("LLM 用量菜单项", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+      new Response(JSON.stringify({ data: [], total: 0 }), { status: 200 }));
+    render(<MemoryRouter><AppLayout /></MemoryRouter>);
+    const link = await screen.findByRole("link", { name: /LLM 用量/ });
+    expect(link).toHaveAttribute("href", "/llm-usage");
+  });
 });

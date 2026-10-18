@@ -1,7 +1,7 @@
 """筛选管道：规则粗筛用固定 fixture，LLM 精筛走 mock。不打真实网络。"""
 import pytest
 
-from app import config
+from app import config, llm_usage
 from app.feed import screening
 
 DAY = 86400
@@ -105,7 +105,8 @@ def test_rejects_blacklisted_topic():
 
 def test_screen_repo_mock_returns_valid_result(monkeypatch):
     monkeypatch.setattr(config, "LLM_MOCK", True)
-    r = screening.screen_repo("demo/agent-runtime", LONG_README, tree(8))
+    r = screening.screen_repo("demo/agent-runtime", LONG_README, tree(8),
+                              route=llm_usage.ROUTE_SUBMIT_SCREEN)
     assert r.is_real_project is True
     assert r.category in config.CATEGORIES
     assert 1 <= r.quality <= 5
@@ -120,7 +121,8 @@ def test_screen_repo_clamps_out_of_range_quality(monkeypatch):
                         lambda **kw: schemas.ScreeningResult(
                             is_real_project=True, category="其他",
                             tagline_zh="x", why_zh="y", quality=99))
-    assert screening.screen_repo("a/b", LONG_README, tree(8)).quality == 5
+    assert screening.screen_repo("a/b", LONG_README, tree(8),
+                                 route=llm_usage.ROUTE_SUBMIT_SCREEN).quality == 5
 
 
 def test_screen_repo_unknown_category_falls_back(monkeypatch):
@@ -130,4 +132,5 @@ def test_screen_repo_unknown_category_falls_back(monkeypatch):
                         lambda **kw: schemas.ScreeningResult(
                             is_real_project=True, category="编造的分类",
                             tagline_zh="x", why_zh="y", quality=4))
-    assert screening.screen_repo("a/b", LONG_README, tree(8)).category == "其他"
+    assert screening.screen_repo("a/b", LONG_README, tree(8),
+                                 route=llm_usage.ROUTE_SUBMIT_SCREEN).category == "其他"

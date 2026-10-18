@@ -13,7 +13,7 @@ import time
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from ... import config
+from ... import config, llm_usage
 from .. import auth, github, screening
 from ..cards import to_card, _card_select
 from ..deps import get_conn
@@ -114,7 +114,8 @@ def submit(
     # 精筛只影响排序，不作准入；失败取中性分并标记待补齐
     quality, screened = config.NEUTRAL_QUALITY, 0
     try:
-        result = screening.screen_repo(gh["full_name"], readme, tree)
+        result = screening.screen_repo(gh["full_name"], readme, tree,
+                                       route=llm_usage.ROUTE_SUBMIT_SCREEN)
         quality, screened = result.quality, 1
     except Exception as exc:
         log.warning("[submit] %s 精筛失败，取中性分继续发布：%s", gh["full_name"], exc)
@@ -197,7 +198,8 @@ def ai_draft(
         readme = github.get_readme(gh["full_name"], interactive=True)
         tree = github.get_tree(gh["full_name"], gh.get("default_branch", "main"),
                                interactive=True)
-        result = screening.screen_repo(gh["full_name"], readme, tree)
+        result = screening.screen_repo(gh["full_name"], readme, tree,
+                                       route=llm_usage.ROUTE_AI_DRAFT)
     except Exception as exc:
         log.warning("[ai-draft] %s 草稿生成失败：%s", gh["full_name"], exc)
         return DraftResult()

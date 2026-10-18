@@ -290,3 +290,22 @@ def test_feedback_默认值与约束(conn):
 def test_feedback桶自动seed进api_policies(conn):
     row = conn.execute("SELECT * FROM api_policies WHERE route_key='feedback'").fetchone()
     assert row is not None and row["enabled"] == 1 and row["limit_per_min"] == 5
+
+
+# ---------- 管理面板三期 3C LLM 用量记账（spec 2026-10-13） ----------
+def test_llm_usage表与索引(conn):
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(llm_usage)")}
+    assert cols == {"id", "ts", "route", "repo_id", "model",
+                    "prompt_tokens", "completion_tokens", "ok", "latency_ms"}
+    idx = {r["name"] for r in conn.execute("PRAGMA index_list(llm_usage)")}
+    assert {"idx_llm_usage_ts", "idx_llm_usage_repo"} <= idx
+
+
+def test_llm_usage_ok取值约束(conn):
+    import sqlite3
+
+    import pytest
+
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            "INSERT INTO llm_usage (ts, route, model, ok) VALUES (1,'roots','m',2)")

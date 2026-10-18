@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import sqlite3
 
-from .. import config
+from .. import config, llm_usage
 from . import db, llm, mock
 from .schemas import CommentVerdict
 
@@ -42,7 +42,7 @@ def moderate_comment(conn: sqlite3.Connection, comment_id: int) -> None:
     「未通过审核」与「作者/管理隐藏」。
     """
     row = conn.execute(
-        "SELECT id, content, status FROM comments WHERE id = ?", (comment_id,)
+        "SELECT id, content, status, repo_id FROM comments WHERE id = ?", (comment_id,)
     ).fetchone()
     if row is None or row["status"] == "deleted":
         return
@@ -53,6 +53,8 @@ def moderate_comment(conn: sqlite3.Connection, comment_id: int) -> None:
             system=MODERATE_SYSTEM,
             user=MODERATE_USER.format(content=row["content"][:2000]),
             model=CommentVerdict,
+            route=llm_usage.ROUTE_COMMENT_MODERATE,
+            repo_id=row["repo_id"],
         )
     if verdict.is_compliant:
         status, reason = "visible", ""

@@ -2,14 +2,17 @@
 """管理台概览计数：6 项实况 + 二期观测三字段（spec 2026-10-09 §3）。"""
 from __future__ import annotations
 
+import logging
 import sqlite3
 import time
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
 
-from ... import traffic
+from ... import llm_usage, traffic
 from ...feed import deps
+
+log = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -22,7 +25,7 @@ def _count(conn: sqlite3.Connection, sql: str) -> int:
 def overview(conn: Annotated[sqlite3.Connection, Depends(deps.get_conn)]) -> dict:
     now = int(time.time())
     year = time.gmtime(now).tm_year
-    return {
+    out = {
         "total_users": _count(conn, "SELECT COUNT(*) AS n FROM users"),
         "new_users_today": _count(
             conn,
@@ -39,3 +42,8 @@ def overview(conn: Annotated[sqlite3.Connection, Depends(deps.get_conn)]) -> dic
         "today_pv": traffic.day_stats(conn, traffic.today_utc(now))["pv"],
         "year_pv": traffic.year_pv(conn, year, now),
     }
+    try:
+        out["llm_month"] = llm_usage.month_stats(conn)
+    except Exception:  # fail-open：聚合失败省略该键，前端显「—」（spec §4.3）
+        log.exception("llm_month 聚合失败（省略键）")
+    return out

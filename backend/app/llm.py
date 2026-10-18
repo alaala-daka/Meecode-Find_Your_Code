@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import json
+import time
 from typing import Iterator, Type, TypeVar
 
 from openai import OpenAI
 
-from . import config
+from . import config, llm_usage
 from .schemas import BaseModel, LLMOverride
 
 T = TypeVar("T", bound=BaseModel)
@@ -44,10 +45,16 @@ def chat_json(
     user: str,
     model: Type[T],
     *,
+    route: str,
+    repo_id: int | None = None,
     temperature: float | None = None,
     llm: LLMOverride | None = None,
 ) -> T:
-    """请求 LLM 输出 JSON,并用 Pydantic 模型校验;失败时把错误回填重试一次。"""
+    """请求 LLM 输出 JSON,并用 Pydantic 模型校验;失败时把错误回填重试一次。
+
+    每次 create 落一行 llm_usage:成功 ok=1;解析/校验失败 attempt ok=0 且 tokens
+    记 resp.usage 实得值(成本已发生);HTTP/网络异常 ok=0、tokens 0。
+    """
     if not _configured(llm):
         raise RuntimeError("LLM 未配置:请在 backend/.env 填入 LLM_API_KEY,或在设置区填写自定义模型")
 
@@ -59,6 +66,8 @@ def chat_json(
     last_error: Exception | None = None
 
     for attempt in range(2):
+        t0 = time.monotonic()
+        prompt = completion = 0
         try:
             resp = client.chat.completions.create(
                 model=model_name,
@@ -66,9 +75,16 @@ def chat_json(
                 temperature=config.LLM_TEMPERATURE if temperature is None else temperature,
                 response_format={"type": "json_object"},
             )
+            usage = getattr(resp, "usage", None)
+            prompt = int(getattr(usage, "prompt_tokens", 0) or 0)
+            completion = int(getattr(usage, "completion_tokens", 0) or 0)
             text = resp.choices[0].message.content or ""
-            return model.model_validate(json.loads(_strip_code_fence(text)))
+            result = model.model_validate(json.loads(_strip_code_fence(text)))
         except Exception as exc:  # JSON 解析或 schema 校验失败 → 回填重试
+            llm_usage.record_usage(
+                route=route, repo_id=repo_id, model=model_name,
+                prompt_tokens=prompt, completion_tokens=completion,
+                ok=0, latency_ms=int((time.monotonic() - t0) * 1000))
             last_error = exc
             messages.append({"role": "assistant", "content": locals().get("text", "")})
             messages.append(
@@ -77,6 +93,12 @@ def chat_json(
                     "content": f"上一次输出无法解析或不符合要求:{exc}。请只输出符合要求的 JSON,不要输出任何其他内容。",
                 }
             )
+        else:
+            llm_usage.record_usage(
+                route=route, repo_id=repo_id, model=model_name,
+                prompt_tokens=prompt, completion_tokens=completion,
+                ok=1, latency_ms=int((time.monotonic() - t0) * 1000))
+            return result
 
     raise RuntimeError(f"LLM 输出连续两次不符合要求:{last_error}")
 
@@ -103,6 +125,8 @@ def chat_stream_events(
     *,
     system: str,
     messages: list[dict],
+    route: str,
+    repo_id: int | None = None,
     llm: LLMOverride | None = None,
     tavily_key: str | None = None,
     temperature: float | None = None,
@@ -124,38 +148,56 @@ def chat_stream_events(
             "model": model_name,
             "messages": convo,
             "stream": True,
+            "stream_options": {"include_usage": True},  # 流式 usage 仅随末 chunk 上报（§4.2）
             "temperature": config.LLM_TEMPERATURE if temperature is None else temperature,
         }
         if use_tools:
             kwargs["tools"] = use_tools
-        stream = client.chat.completions.create(**kwargs)
+        t0 = time.monotonic()
+        prompt = completion = 0
+        ok = 0
+        try:
+            stream = client.chat.completions.create(**kwargs)
 
-        content_parts: list[str] = []
-        tool_calls: dict[int, dict] = {}  # index -> {id, name, arguments}
-        finish: str | None = None
+            content_parts: list[str] = []
+            tool_calls: dict[int, dict] = {}  # index -> {id, name, arguments}
+            finish: str | None = None
 
-        for chunk in stream:
-            if not chunk.choices:
-                continue
-            choice = chunk.choices[0]
-            delta = choice.delta
-            if delta is None:
-                continue
-            if delta.content:
-                content_parts.append(delta.content)
-                yield {"type": "delta", "text": delta.content}  # 立即透出(含工具轮前导语)
-            if delta.tool_calls:
-                for tc in delta.tool_calls:
-                    slot = tool_calls.setdefault(tc.index, {"id": "", "name": "", "arguments": ""})
-                    if tc.id:
-                        slot["id"] = tc.id
-                    if tc.function:
-                        if tc.function.name:
-                            slot["name"] += tc.function.name
-                        if tc.function.arguments:
-                            slot["arguments"] += tc.function.arguments
-            if choice.finish_reason:
-                finish = choice.finish_reason
+            for chunk in stream:
+                usage = getattr(chunk, "usage", None)  # usage chunk choices 为空,先于过滤捕获
+                if usage is not None:
+                    prompt = int(getattr(usage, "prompt_tokens", 0) or 0)
+                    completion = int(getattr(usage, "completion_tokens", 0) or 0)
+                if not chunk.choices:
+                    continue
+                choice = chunk.choices[0]
+                delta = choice.delta
+                if delta is None:
+                    continue
+                if delta.content:
+                    content_parts.append(delta.content)
+                    yield {"type": "delta", "text": delta.content}  # 立即透出(含工具轮前导语)
+                if delta.tool_calls:
+                    for tc in delta.tool_calls:
+                        slot = tool_calls.setdefault(tc.index, {"id": "", "name": "", "arguments": ""})
+                        if tc.id:
+                            slot["id"] = tc.id
+                        if tc.function:
+                            if tc.function.name:
+                                slot["name"] += tc.function.name
+                            if tc.function.arguments:
+                                slot["arguments"] += tc.function.arguments
+                if choice.finish_reason:
+                    finish = choice.finish_reason
+            ok = 1  # 流正常走完
+        except GeneratorExit:
+            ok = 1  # 客户端断流:调用已成功返流、成本已发生,计 ok(§4.2)
+            raise
+        finally:
+            llm_usage.record_usage(
+                route=route, repo_id=repo_id, model=model_name,
+                prompt_tokens=prompt, completion_tokens=completion,
+                ok=ok, latency_ms=int((time.monotonic() - t0) * 1000))
 
         if finish == "tool_calls" and tool_calls and use_tools:
             convo.append(

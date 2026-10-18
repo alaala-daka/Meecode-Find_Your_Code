@@ -91,7 +91,8 @@ def passes_rules(
     return True, ""
 
 
-def screen_repo(full_name: str, readme: str, tree: list[dict]) -> ScreeningResult:
+def screen_repo(full_name: str, readme: str, tree: list[dict], *,
+                route: str, repo_id: int | None = None) -> ScreeningResult:
     """LLM 精筛。越界 quality 夹到 1..5，未知分类回落「其他」。"""
     if config.LLM_MOCK:
         result = ScreeningResult.model_validate(mock.mock_screening(full_name))
@@ -101,6 +102,8 @@ def screen_repo(full_name: str, readme: str, tree: list[dict]) -> ScreeningResul
             system=SCREEN_SYSTEM.format(categories="、".join(config.CATEGORIES)),
             user=SCREEN_USER.format(full_name=full_name, readme=readme[:4000], tree=paths),
             model=ScreeningResult,
+            route=route,
+            repo_id=repo_id,
         )
     result.quality = max(1, min(5, result.quality))
     if result.category not in config.CATEGORIES:

@@ -11,6 +11,7 @@ import { ConfigPage } from "@/pages/config/ConfigPage";
 import { DashboardPage } from "@/pages/DashboardPage";
 import { FeedbackDetail } from "@/pages/feedback/FeedbackDetail";
 import { FeedbackInbox } from "@/pages/feedback/FeedbackInbox";
+import { LlmUsagePage } from "@/pages/llmUsage/LlmUsagePage";
 import { LoginDeniedPage } from "@/pages/LoginDeniedPage";
 import { LoginEventsPage } from "@/pages/loginEvents/LoginEventsPage";
 import { ApiPoliciesPage } from "@/pages/policies/ApiPoliciesPage";
@@ -94,6 +95,7 @@ export default function App() {
             <Route element={<AppLayout />}>
               <Route index element={<DashboardPage />} />
               <Route path="/traffic" element={<TrafficPage />} />
+              <Route path="/llm-usage" element={<LlmUsagePage />} />
               <Route path="/users" element={<UserList />} />
               <Route path="/users/show/:id" element={<UserShow />} />
               <Route path="/repos" element={<RepoList />} />
