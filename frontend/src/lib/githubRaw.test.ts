@@ -1,6 +1,6 @@
 // src/lib/githubRaw.test.ts
 import { describe, expect, it } from 'vitest'
-import { blobUrl, encodePath, rawUrlFor } from './githubRaw'
+import { blobUrl, decodePath, encodePath, rawUrlFor } from './githubRaw'
 
 describe('githubRaw', () => {
   it('encodePath 分段编码中文与空格', () => {
@@ -17,13 +17,14 @@ describe('githubRaw', () => {
       .toBe('https://github.com/owner/repo/blob/main/src/%E4%B8%BB%20%E7%A8%8B%E5%BA%8F.py')
   })
 
-  // remark/react-markdown 会把链接 href 预编码，encodePath 必须幂等，否则二次转义（% → %25）
-  it('encodePath 对已编码路径幂等（markdown 预编码场景）', () => {
-    const encoded = 'docs/%E4%BD%BF%E7%94%A8%E8%AF%B4%E6%98%8E.md'
-    expect(encodePath(encoded)).toBe(encoded)
+  // encodePath 是纯编码：字面转义序列按字面量处理（文件真名 'a%20b.png' ≠ 'a b.png'）
+  it('encodePath 纯语义：字面 %20 不解读，编码为 %2520', () => {
+    expect(encodePath('a%20b.png')).toBe('a%2520b.png')
   })
 
-  it('encodePath 容忍非法转义序列（字面量 %）', () => {
-    expect(encodePath('折扣100%.png')).toBe('%E6%8A%98%E6%89%A3100%25.png')
+  // react-markdown 会把 markdown 链接 href 预编码；归一由 decodePath 在 ReadmeSection 边界做
+  it('decodePath 归一：预编码解码回字面量，非法转义回退原段', () => {
+    expect(decodePath('docs/%E4%BD%BF%E7%94%A8%E8%AF%B4%E6%98%8E.md')).toBe('docs/使用说明.md')
+    expect(decodePath('a%20b%.png')).toBe('a%20b%.png')
   })
 })

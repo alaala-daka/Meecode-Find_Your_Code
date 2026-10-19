@@ -8,7 +8,7 @@ import type { Components } from 'react-markdown'
 import type { RepoTreeItem } from '../api/types'
 import { api } from '../api/client'
 import { sanitizeSchema } from '../lib/sanitizeSchema'
-import { blobUrl, rawUrlFor } from '../lib/githubRaw'
+import { blobUrl, decodePath, rawUrlFor } from '../lib/githubRaw'
 import './ReadmeSection.css'
 
 const README_RE = /^readme(\.(md|markdown|txt))?$/i
@@ -20,10 +20,12 @@ function findReadme(tree: RepoTreeItem[]): string | null {
 
 // repo 内相对路径 → 可达的 GitHub URL；返回 null 表示不可外链（页内锚点等）
 // asset → raw 直链；link → GitHub canonical 深链（blob/<ref>/<path>，与 CodeView 一致）
+// react-markdown 会把 markdown 链接的 href 预编码，此处 decodePath 归一后再交给 helper 重编码，
+// 避免二次转义（% → %25）；保证未编码的输入（API 路径等）不经此函数，直接交给 encodePath。
 function resolveUrl(url: string, fullName: string, ref: string, kind: 'asset' | 'link'): string | null {
   if (/^(https?:|mailto:)/i.test(url)) return url
   if (url.startsWith('#')) return null
-  const clean = url.replace(/^(?:\.?\/)+/, '')
+  const clean = decodePath(url.replace(/^(?:\.?\/)+/, ''))
   return kind === 'asset'
     ? rawUrlFor(fullName, ref, clean)
     : blobUrl(`https://github.com/${fullName}`, ref, clean)
