@@ -1,5 +1,6 @@
 // src/components/CodeView.tsx —— 规范 §7.3：等宽 13px + 行号，纯文本；超大文件截断
 import type { RepoFile } from '../api/types'
+import { blobUrl } from '../lib/githubRaw'
 import './CodeView.css'
 
 const MAX_LINES = 2000
@@ -11,7 +12,7 @@ export default function CodeView({ file, githubUrl, defaultBranch = 'main' }: { 
     <div className="code-view">
       <div className="code-head">
         <span className="code-path">{file.path}</span>
-        <a className="code-gh-link" href={`${githubUrl}/blob/${defaultBranch}/${file.path}`} target="_blank" rel="noreferrer">
+        <a className="code-gh-link" href={blobUrl(githubUrl, defaultBranch, file.path)} target="_blank" rel="noreferrer">
           在 GitHub 查看 ↗
         </a>
       </div>

@@ -84,6 +84,16 @@ def test_tree_returns_nested_items(client, repo_id):
     assert any(c["path"] == "src/main.ts" for c in src["children"])
 
 
+def test_tree_items_carry_size(client, repo_id):
+    """图片大小护栏依赖 tree 透传 size（spec 2026-10-19 §3.4）。"""
+    items = client.get(f"/api/repos/{repo_id}/tree").json()
+    readme = next(i for i in items if i["path"] == "README.md")
+    assert readme["size"] == 2048
+    src = next(i for i in items if i["path"] == "src")
+    assert src["children"][0]["path"] == "src/main.ts"
+    assert src["children"][0]["size"] == 1200
+
+
 def test_file_returns_content(client, repo_id):
     body = client.get(f"/api/repos/{repo_id}/files", params={"path": "src/main.ts"}).json()
     assert body["path"] == "src/main.ts"
@@ -120,22 +130,24 @@ def test_tree_502_when_github_fails(client, repo_id, monkeypatch):
 
 
 def test_binary_file_is_not_dumped(client, repo_id, monkeypatch):
-    """图片等二进制不该塞进 JSON：422 是确定性结果，前端提示去 GitHub 查看。"""
+    """图片等二进制不该塞进 JSON：422 是确定性结果，detail 携带机器可读 code。"""
     monkeypatch.setattr(config, "GITHUB_MOCK", False)
     monkeypatch.setattr(github, "get_file", lambda *a, **kw: "\x00\x01\x02binary")
     resp = client.get(f"/api/repos/{repo_id}/files", params={"path": "logo.png"})
     assert resp.status_code == 422
-    assert "二进制" in resp.json()["detail"]
+    detail = resp.json()["detail"]
+    assert detail["code"] == "binary"
+    assert "二进制" in detail["message"]
 
 
 def test_oversized_file_is_rejected(client, repo_id, monkeypatch):
-    """超大文件不再截断直出：422 提示去 GitHub 看完整内容。"""
+    """超大文件不截断直出：422 拒绝并给出 code=too_large（前端出「文件过大」文案）。"""
     monkeypatch.setattr(config, "GITHUB_MOCK", False)
     monkeypatch.setattr(
         github, "get_file", lambda *a, **kw: "x" * (config.MAX_FILE_CHARS + 10))
     resp = client.get(f"/api/repos/{repo_id}/files", params={"path": "big.log"})
     assert resp.status_code == 422
-    assert "截断" in resp.json()["detail"]
+    assert resp.json()["detail"]["code"] == "too_large"
 
 
 def test_repo_detail_frontend_shape(client_and_conn):
@@ -207,7 +219,7 @@ def test_tree_nested_and_types(monkeypatch, client_and_conn):
         {"path": "src/main.py", "type": "blob", "size": 5},
     ])
     items = client.get("/api/repos/1/tree").json()
-    assert items[0] == {"name": "README.md", "path": "README.md", "type": "file"}
+    assert items[0] == {"name": "README.md", "path": "README.md", "type": "file", "size": 10}
     src = next(i for i in items if i["path"] == "src")
     assert src["type"] == "dir" and src["children"][0]["path"] == "src/main.py"
 

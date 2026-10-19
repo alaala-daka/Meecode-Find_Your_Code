@@ -2,7 +2,8 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes, useSearchParams } from 'react-router-dom'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { ApiError } from '../api/errors'
 import { FIXTURE_USER } from '../api/fixtures'
 import type { CurrentUser } from '../api/types'
 import { useAuthStore } from '../store/authStore'
@@ -33,6 +34,8 @@ describe('RepoPage', () => {
     if (!r3.favorited) await api.interact(3, 'favorite', true, false)
     if (r5.favorited) await api.interact(5, 'favorite', false, false)
   })
+
+  afterEach(() => vi.restoreAllMocks())
 
   it('信息头：仓库名、卖点、元信息与去 GitHub', async () => {
     renderAt('/repo/1')
@@ -302,5 +305,56 @@ describe('RepoPage', () => {
     expect(screen.getByRole('button', { name: '收藏' })).not.toHaveClass('is-on')
     expect(Number(screen.getByRole('button', { name: '收藏' }).textContent)).toBe(before - 1)  // 卸载前自洽
     vi.unstubAllGlobals()
+  })
+
+  it('图片文件走 raw 直链预览，不请求 /files 文本接口', async () => {
+    const { api } = await import('../api/client')
+    const spy = vi.spyOn(api, 'repoFile')
+    const detail = await api.repo(1)
+    renderAt('/repo/1')
+    await screen.findAllByText('README.md')
+    await userEvent.click(screen.getByRole('button', { name: /assets/ }))
+    await userEvent.click(screen.getAllByText('logo.png')[0])
+    // Avatar 的 span[role=img] 也在页面上：按可访问名（alt=path）锁定预览图
+    expect(await screen.findByRole('img', { name: 'assets/logo.png' })).toHaveAttribute(
+      'src',
+      `https://raw.githubusercontent.com/${detail.full_name}/${detail.default_branch}/assets/logo.png`)
+    expect(spy).not.toHaveBeenCalledWith(1, 'assets/logo.png')
+  })
+
+  it('超 5MB 图片：不渲染 img，提示「文件过大（6.0 MB）」', async () => {
+    renderAt('/repo/1')
+    await screen.findAllByText('README.md')
+    await userEvent.click(screen.getByRole('button', { name: /assets/ }))
+    await userEvent.click(screen.getAllByText('huge.png')[0])
+    expect(await screen.findByText(/文件过大（6\.0 MB）/)).toBeInTheDocument()
+    expect(screen.queryByRole('img', { name: 'assets/huge.png' })).not.toBeInTheDocument()
+  })
+
+  it('二进制/不支持格式：提示「该文件格式不支持预览，去 GitHub 查看」', async () => {
+    const { api } = await import('../api/client')
+    vi.spyOn(api, 'repoFile').mockImplementation((_id, path) =>
+      path === 'src/main.py'
+        ? Promise.reject(new ApiError('该文件为二进制，请到 GitHub 查看', 422, 'binary'))
+        : Promise.resolve({ path, content: 'x' }))
+    renderAt('/repo/1')
+    await screen.findAllByText('README.md')
+    await userEvent.click(screen.getByRole('button', { name: /src/ }))
+    await userEvent.click(screen.getAllByText('main.py')[0])
+    expect(await screen.findByText(/该文件格式不支持预览/)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: '去 GitHub 查看 ↗' })).toBeInTheDocument()
+  })
+
+  it('网络/未知异常：维持「文件预览失败，去 GitHub 查看」', async () => {
+    const { api } = await import('../api/client')
+    vi.spyOn(api, 'repoFile').mockImplementation((_id, path) =>
+      path === 'src/main.py'
+        ? Promise.reject(new TypeError('offline'))
+        : Promise.resolve({ path, content: 'x' }))
+    renderAt('/repo/1')
+    await screen.findAllByText('README.md')
+    await userEvent.click(screen.getByRole('button', { name: /src/ }))
+    await userEvent.click(screen.getAllByText('main.py')[0])
+    expect(await screen.findByText(/文件预览失败/)).toBeInTheDocument()
   })
 })

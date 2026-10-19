@@ -1,5 +1,6 @@
 // src/api/mockClient.test.ts
 import { describe, expect, it } from 'vitest'
+import { ApiError } from './errors'
 import { createMockClient } from './mockClient'
 
 describe('mockClient', () => {
@@ -178,5 +179,15 @@ describe('mockClient', () => {
     expect(one.items).toHaveLength(1)
     expect(one.total).toBe(all.total)
     expect(one.items[0].feedback_id).toBe(all.items[0].feedback_id)
+  })
+
+  it('repoFile 对 mock 二进制/超大路径抛结构化 ApiError', async () => {
+    const c = createMockClient()
+    const binary = await c.repoFile(1, 'docs/report.pdf').catch((e) => e)
+    expect(binary).toBeInstanceOf(ApiError)
+    expect(binary.status).toBe(422)
+    expect(binary.code).toBe('binary')
+    const big = await c.repoFile(1, 'big.log').catch((e) => e)
+    expect(big.code).toBe('too_large')
   })
 })

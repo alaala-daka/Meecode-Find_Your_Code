@@ -1,4 +1,5 @@
 // src/api/mockClient.ts
+import { ApiError } from './errors'
 import {
   CATEGORIES, FIXTURE_FEEDBACK, FIXTURE_FILES, FIXTURE_REPOS, FIXTURE_TREE, FIXTURE_USER,
 } from './fixtures'
@@ -101,6 +102,9 @@ export function createMockClient(): ApiClient {
       return FIXTURE_TREE
     },
     async repoFile(_id, path): Promise<RepoFile> {
+      // mock 世界的二进制/超大拒绝（与后端 /files 422 同构），供错误文案开发态验证
+      if (path === 'docs/report.pdf') throw new ApiError('该文件为二进制，请到 GitHub 查看', 422, 'binary')
+      if (path === 'big.log') throw new ApiError('文件过大，请到 GitHub 查看', 422, 'too_large')
       const content = FIXTURE_FILES[path]
       if (content === undefined) throw new Error('文件不存在')
       return { path, content }

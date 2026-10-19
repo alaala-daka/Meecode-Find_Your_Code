@@ -1,4 +1,5 @@
 // src/api/realClient.ts —— 真实后端客户端:fetch('/api/...') + cookie 凭证
+import { ApiError } from './errors'
 import type {
   AiDraftResult, ApiClient, Comment, CommentPage, CurrentUser, FeedPage, FeedbackDetail, FeedbackPayload,
   InteractKind, InteractResult, MyFeedbackPage, MyGithubRepo, ReplyNotificationPage,
@@ -9,11 +10,16 @@ async function http<T>(path: string, init?: RequestInit): Promise<T> {
   const resp = await fetch(path, { credentials: 'include', ...init })
   if (!resp.ok) {
     let detail = `HTTP ${resp.status}`
+    let code = ''
     try {
       const body = await resp.json()
       if (body && typeof body.detail === 'string') detail = body.detail
+      else if (body && body.detail && typeof body.detail === 'object') {
+        detail = String(body.detail.message ?? detail)
+        code = String(body.detail.code ?? '')
+      }
     } catch { /* 非 JSON 错误体,保留状态码文案 */ }
-    throw new Error(detail)
+    throw new ApiError(detail, resp.status, code)
   }
   return resp.json() as Promise<T>
 }

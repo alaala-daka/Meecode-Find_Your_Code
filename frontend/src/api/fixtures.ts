@@ -36,10 +36,19 @@ export const FIXTURE_USER: UserProfile = {
 
 export const FIXTURE_TREE: RepoTreeItem[] = [
   { name: 'README.md', path: 'README.md', type: 'file' },
+  { name: 'assets', path: 'assets', type: 'dir', size: 0, children: [
+    { name: 'logo.png', path: 'assets/logo.png', type: 'file', size: 4096 },
+    { name: 'logo.svg', path: 'assets/logo.svg', type: 'file', size: 800 },
+    { name: 'huge.png', path: 'assets/huge.png', type: 'file', size: 6 * 1024 * 1024 },
+  ] },
   { name: 'src', path: 'src', type: 'dir', children: [
     { name: 'main.py', path: 'src/main.py', type: 'file' },
     { name: 'loop.py', path: 'src/loop.py', type: 'file' },
   ] },
+  { name: 'docs', path: 'docs', type: 'dir', size: 0, children: [
+    { name: 'report.pdf', path: 'docs/report.pdf', type: 'file', size: 500_000 },
+  ] },
+  { name: 'big.log', path: 'big.log', type: 'file', size: 250_000 },
 ]
 
 export const FIXTURE_FILES: Record<string, string> = {

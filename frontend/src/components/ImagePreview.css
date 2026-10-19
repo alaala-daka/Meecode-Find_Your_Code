@@ -1,0 +1,12 @@
+/* src/components/ImagePreview.css —— 图片预览：棋盘格底衬透明图，max-width 约束布局 */
+.image-stage {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  /* 棋盘格：透明 PNG/GIF/WebP 可辨边界 */
+  background: repeating-conic-gradient(var(--tint) 0% 25%, var(--paper) 0% 50%) 0 0 / 16px 16px;
+}
+.image-stage img { max-width: 100%; height: auto; display: block; }
+.image-fallback { padding: 24px 16px; font-size: 13px; color: var(--ink-3); }
