@@ -8,8 +8,9 @@ export function encodePath(p: string): string {
 
 /**
  * 路径分段解码（预编码归一）：'docs/%E4%BD%BF%E7%94%A8%E8%AF%B4%E6%98%8E.md' → 'docs/使用说明.md'。
- * 仅供边界处归一 react-markdown 预编码的 href（见 ReadmeSection.resolveUrl）；
- * 保证未编码的输入（API 路径、raw HTML src）不要经过本函数，直接交给 encodePath。
+ * markdown/HTML 的 href/src 由 ReadmeSection.resolveUrl 在边界统一经本函数归一
+ * （含 rehype-raw 注入的 raw HTML src）；API/文件树等字面路径不要经过本函数，直接交给 encodePath。
+ * 已知边角：raw HTML 引用的字面 `%XX` 文件名会被归一误解（markdown 里写 `%2520` 可正确表达）。
  * 非法转义序列（如字面量 '%'）解码抛错时回退原段。
  */
 export function decodePath(p: string): string {
