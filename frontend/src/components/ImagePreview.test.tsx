@@ -30,6 +30,16 @@ describe('ImagePreview', () => {
     expect(screen.queryByRole('img')).not.toBeInTheDocument()
   })
 
+  it('切换 path 后失败态复位，对新图片重新尝试加载', () => {
+    const { rerender } = render(<ImagePreview path="assets/a.png" {...BASE} size={800} />)
+    fireEvent.error(screen.getByRole('img'))
+    expect(screen.getByText(/图片加载失败/)).toBeInTheDocument()
+    rerender(<ImagePreview path="assets/b.png" {...BASE} size={800} />)
+    const img = screen.getByRole('img')
+    expect(img).toHaveAttribute('src', 'https://raw.githubusercontent.com/owner/repo/main/assets/b.png')
+    expect(screen.queryByText(/图片加载失败/)).not.toBeInTheDocument()
+  })
+
   it('超过 5MB 不渲染 img，直接提示文件过大', () => {
     render(<ImagePreview path="assets/huge.png" {...BASE} size={6 * 1024 * 1024} />)
     expect(screen.queryByRole('img')).not.toBeInTheDocument()

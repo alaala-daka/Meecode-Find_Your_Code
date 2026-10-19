@@ -17,9 +17,10 @@ export default function ImagePreview({ path, fullName, defaultBranch, githubUrl,
   githubUrl: string
   size?: number
 }) {
-  const [failed, setFailed] = useState(false)
+  const [failedPath, setFailedPath] = useState<string | null>(null)
   const bytes = size ?? 0
   const tooLarge = bytes > MAX_IMAGE_BYTES
+  const failed = failedPath === path // 失败态绑定 path：切换图片即复位，不跨 path 残留
   const ghLink = blobUrl(githubUrl, defaultBranch, path)
   return (
     <div className="code-view image-preview">
@@ -37,7 +38,7 @@ export default function ImagePreview({ path, fullName, defaultBranch, githubUrl,
         </p>
       ) : (
         <div className="image-stage">
-          <img src={rawUrlFor(fullName, defaultBranch, path)} alt={path} loading="lazy" onError={() => setFailed(true)} />
+          <img src={rawUrlFor(fullName, defaultBranch, path)} alt={path} loading="lazy" onError={() => setFailedPath(path)} />
         </div>
       )}
     </div>
