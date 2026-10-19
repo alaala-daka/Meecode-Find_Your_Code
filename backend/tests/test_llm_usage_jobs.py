@@ -65,6 +65,7 @@ def test_crawl入口精筛和多条补筛全部记账(job_db, monkeypatch):
 
     crawl.main()  # 不经过 Web lifespan，不在测试中预先 bind
 
+    assert llm_usage.flush_for_test(job_db) == 3  # 缓冲语义：显式冲刷后落库
     rows = job_db.execute("SELECT * FROM llm_usage ORDER BY id").fetchall()
     assert len(calls) == len(rows) == 3
     assert rows[0]["repo_id"] is None
@@ -99,6 +100,7 @@ def test_moderate入口逐条提交记账且失败回滚(job_db, monkeypatch, fa
     monkeypatch.setattr(moderate, "moderate_comment", verdict)
     moderate.main()
 
+    assert llm_usage.flush_for_test(job_db) == (1 if fail_first else 2)  # 缓冲语义：显式冲刷后落库
     rows = job_db.execute("SELECT * FROM llm_usage ORDER BY id").fetchall()
     assert len(calls) == len(rows) == (1 if fail_first else 2)
     assert all(r["route"] == "comment-moderate" and r["repo_id"] == rid for r in rows)

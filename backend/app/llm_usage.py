@@ -3,7 +3,9 @@
 
 每次 `completions.create` 落一行 llm_usage（多轮工具调用的每轮各记一行；SDK 内部
 max_retries 不可见不计）。tokens 以 provider 上报的 usage 为准——未上报或真零均记 0
-且统计不区分，不做本地估算。写库 INSERT + 吞异常，绝不阻塞主调用（量小不做缓冲）；
+且统计不区分，不做本地估算。写侧「内存缓冲 + 守护线程批量落库」（照 traffic.AccessWriter
+的 single-flight + fail-swallow + 有界缓冲，但用独立守护线程，不占 asyncio.to_thread
+默认执行器），record_usage 全路径吞异常，绝不阻塞调用方（含 async finally）；
 LLM_MOCK 不落行。route 取值收敛于本模块常量登记（ROUTES），测试断言枚举与调用点一致。
 """
 from __future__ import annotations
@@ -11,6 +13,7 @@ from __future__ import annotations
 import calendar
 import logging
 import sqlite3
+import threading
 import time
 from typing import Callable
 
@@ -37,7 +40,15 @@ ROUTES = frozenset({
 
 _MODEL_MAX = 100  # BYOK 可自填模型名，超长截断入库
 
+BUFFER_MAX = 10_000  # 硬上限：满则丢新行计 failures（防内存 DoS）
+FLUSH_ROWS = 200  # 达 200 行触发后台冲刷
+FLUSH_SECONDS = 30.0  # 距上次冲刷超 30s 触发后台冲刷
+
 _factory: Callable[[], sqlite3.Connection] | None = None
+_lock = threading.Lock()
+_buf: list[tuple[int, str, int | None, str, int, int, int, int]] = []
+_flush_scheduled = False  # single-flight：防 record 洪峰刷出线程风暴与并发写连接
+_last_flush = time.time()
 failures = 0
 
 
@@ -48,36 +59,102 @@ def bind(factory: Callable[[], sqlite3.Connection] | None) -> None:
 
 
 def reset() -> None:
-    """测试隔离：解绑 + 失败计数清零。"""
-    global _factory, failures
-    _factory = None
-    failures = 0
+    """测试隔离：解绑 + 清空缓冲/调度标志 + 失败计数清零。"""
+    global _factory, _flush_scheduled, _last_flush, failures
+    with _lock:
+        _factory = None
+        _buf.clear()
+        _flush_scheduled = False
+        _last_flush = time.time()
+        failures = 0
 
 
 def record_usage(*, route: str, repo_id: int | None, model: str,
                  prompt_tokens: int, completion_tokens: int,
                  ok: int, latency_ms: int) -> None:
-    """落一行。全路径吞异常（fail-swallow），绝不让记账把主调用打挂。"""
-    global failures
+    """入内存缓冲，由守护线程批量落库。全路径吞异常（fail-swallow），
+    绝不让记账把主调用打挂、绝不阻塞调用方（含 async finally）。"""
+    global failures, _flush_scheduled
     if config.LLM_MOCK or _factory is None:
         return
     try:
-        conn = _factory()
-        try:
-            conn.execute("PRAGMA busy_timeout = 0")  # 观测写不排队等待业务写锁
-            conn.execute(
-                "INSERT INTO llm_usage (ts, route, repo_id, model, prompt_tokens,"
-                " completion_tokens, ok, latency_ms) VALUES (?,?,?,?,?,?,?,?)",
-                (int(time.time()), route, repo_id, (model or "")[:_MODEL_MAX],
-                 max(0, int(prompt_tokens or 0)), max(0, int(completion_tokens or 0)),
-                 1 if ok else 0, max(0, int(latency_ms or 0))),
-            )
-            conn.commit()
-        finally:
-            conn.close()
+        row = (int(time.time()), route, repo_id, (model or "")[:_MODEL_MAX],
+               max(0, int(prompt_tokens or 0)), max(0, int(completion_tokens or 0)),
+               1 if ok else 0, max(0, int(latency_ms or 0)))
+        with _lock:
+            if len(_buf) >= BUFFER_MAX:
+                failures += 1  # 满额丢新行：宁失真不炸内存
+                return
+            _buf.append(row)
+            due = (len(_buf) >= FLUSH_ROWS
+                   or time.time() - _last_flush >= FLUSH_SECONDS)
+            spawn = due and not _flush_scheduled
+            if spawn:
+                _flush_scheduled = True
+        if spawn:
+            try:
+                threading.Thread(target=_flush_auto, daemon=True).start()
+            except Exception:
+                with _lock:
+                    _flush_scheduled = False  # 起线程失败须解除 single-flight，防永久停摆
+                    failures += 1
+                log.exception("llm_usage flush 线程启动失败（fail-swallow）")
     except Exception:
-        failures += 1
+        with _lock:
+            failures += 1
         log.exception("llm_usage 记账失败（fail-swallow, route=%s）", route)
+
+
+def _flush_auto() -> None:
+    """守护线程冲刷：自开连接、用完即关；异常全吞（fail-swallow）。"""
+    global _flush_scheduled, failures
+    try:
+        if _factory is None:
+            with _lock:
+                _flush_scheduled = False
+            return
+        try:
+            conn = _factory()
+        except Exception:
+            with _lock:
+                failures += 1
+                _flush_scheduled = False
+            return
+        try:
+            flush_for_test(conn)
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+    except Exception:
+        with _lock:
+            _flush_scheduled = False  # 兜底解除 single-flight，防永久停摆
+        log.exception("llm_usage 后台 flush 异常（fail-swallow）")
+
+
+def flush_for_test(conn: sqlite3.Connection) -> int:
+    """冲刷缓冲批量落库，返回写入行数；测试与后台守护线程共用，写失败吞异常计 failures。"""
+    global _flush_scheduled, _last_flush, failures
+    with _lock:
+        rows = _buf[:]
+        _buf.clear()
+        _flush_scheduled = False  # single-flight 解除
+        _last_flush = time.time()
+    if not rows:
+        return 0
+    try:
+        conn.execute("PRAGMA busy_timeout = 0")  # 观测写不排队等待业务写锁
+        conn.executemany(
+            "INSERT INTO llm_usage (ts, route, repo_id, model, prompt_tokens,"
+            " completion_tokens, ok, latency_ms) VALUES (?,?,?,?,?,?,?,?)", rows)
+        conn.commit()
+    except Exception:
+        with _lock:
+            failures += 1
+        log.exception("llm_usage flush 写失败（fail-swallow）")
+        return 0
+    return len(rows)
 
 
 def stats(conn: sqlite3.Connection, from_date: str, to_date: str) -> dict:
