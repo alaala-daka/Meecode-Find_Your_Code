@@ -2,9 +2,13 @@
 觅码仓库解读专用;失败一律抛 GitHubFetchError(message 面向用户直接展示)。"""
 from __future__ import annotations
 
+import logging
+
 import httpx
 
 from . import config
+
+logger = logging.getLogger(__name__)
 
 GITHUB_API = "https://api.github.com"
 README_MAX_CHARS = 4000
@@ -69,7 +73,7 @@ async def fetch_repo_context(
             base_url=GITHUB_API,
             headers=headers,
             timeout=TIMEOUT_SECONDS,
-            follow_redirects=True,
+            follow_redirects=False,
             transport=transport,
         ) as client:
             meta_resp = await client.get(f"/repos/{full_name}")
@@ -99,7 +103,8 @@ async def fetch_repo_context(
             if lang_resp.status_code == 200:
                 languages_text = _summarize_languages(lang_resp.json())
     except httpx.HTTPError as exc:
-        raise GitHubFetchError(f"GitHub 连接失败:{exc}") from exc
+        logger.warning("GitHub 连接失败: %s", exc)  # F6:原始异常只落日志,不出网
+        raise GitHubFetchError("GitHub 连接失败") from exc
 
     return {
         "full_name": full_name,
