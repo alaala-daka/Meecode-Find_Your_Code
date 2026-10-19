@@ -81,6 +81,7 @@ export interface RepoTreeItem {
   name: string
   path: string
   type: 'file' | 'dir'
+  size?: number  // 字节数（dir 恒 0）；mock 旧数据可缺省
   children?: RepoTreeItem[]
 }
 

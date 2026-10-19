@@ -1,5 +1,6 @@
 // src/api/realClient.test.ts —— 用 stub fetch 验证 URL/方法/凭证与错误透传
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { ApiError } from './errors'
 import { createRealClient } from './realClient'
 
 function stubFetch(body: unknown, ok = true, status = 200) {
@@ -141,5 +142,25 @@ describe('realClient', () => {
       '/api/notifications/replies?limit=10',
       '/api/notifications/replies/unread-count',
     ])
+  })
+
+  it('对象型 detail 透出 code（/files 422 结构化错误）', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ detail: { code: 'binary', message: '该文件为二进制，请到 GitHub 查看' } }),
+        { status: 422 })))
+    const err = await createRealClient().repoFile(1, 'logo.png').catch((e) => e)
+    expect(err).toBeInstanceOf(ApiError)
+    expect(err.status).toBe(422)
+    expect(err.code).toBe('binary')
+    expect(err.message).toBe('该文件为二进制，请到 GitHub 查看')
+  })
+
+  it('字符串 detail 仍透出 message，code 为空串', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ detail: '未知分类:xx' }), { status: 422 })))
+    const err = await createRealClient().feed('xx', 1).catch((e) => e)
+    expect(err).toBeInstanceOf(ApiError)
+    expect(err.code).toBe('')
+    expect(err.message).toBe('未知分类:xx')
   })
 })
