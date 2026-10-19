@@ -73,6 +73,7 @@ class TreeItem(BaseModel):
     path: str
     type: str  # 'file' | 'dir'
     children: list["TreeItem"] = Field(default_factory=list)
+    size: int = 0  # 文件字节数；dir 恒 0（图片大小护栏用）
 
 
 class RepoFileOut(BaseModel):

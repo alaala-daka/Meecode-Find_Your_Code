@@ -111,7 +111,7 @@ def _to_frontend_tree(rows: list[dict]) -> list[dict]:
     index: dict[str, dict] = {}
     for e in rows:
         node = {"name": e["path"].rsplit("/", 1)[-1], "path": e["path"],
-                "type": "file" if e["type"] == "blob" else "dir"}
+                "type": "file" if e["type"] == "blob" else "dir", "size": e.get("size", 0)}
         if node["type"] == "dir":
             node["children"] = []
         index[e["path"]] = node

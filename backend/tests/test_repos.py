@@ -84,6 +84,16 @@ def test_tree_returns_nested_items(client, repo_id):
     assert any(c["path"] == "src/main.ts" for c in src["children"])
 
 
+def test_tree_items_carry_size(client, repo_id):
+    """图片大小护栏依赖 tree 透传 size（spec 2026-10-19 §3.4）。"""
+    items = client.get(f"/api/repos/{repo_id}/tree").json()
+    readme = next(i for i in items if i["path"] == "README.md")
+    assert readme["size"] == 2048
+    src = next(i for i in items if i["path"] == "src")
+    assert src["children"][0]["path"] == "src/main.ts"
+    assert src["children"][0]["size"] == 1200
+
+
 def test_file_returns_content(client, repo_id):
     body = client.get(f"/api/repos/{repo_id}/files", params={"path": "src/main.ts"}).json()
     assert body["path"] == "src/main.ts"
@@ -207,7 +217,7 @@ def test_tree_nested_and_types(monkeypatch, client_and_conn):
         {"path": "src/main.py", "type": "blob", "size": 5},
     ])
     items = client.get("/api/repos/1/tree").json()
-    assert items[0] == {"name": "README.md", "path": "README.md", "type": "file"}
+    assert items[0] == {"name": "README.md", "path": "README.md", "type": "file", "size": 10}
     src = next(i for i in items if i["path"] == "src")
     assert src["type"] == "dir" and src["children"][0]["path"] == "src/main.py"
 
