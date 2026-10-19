@@ -130,22 +130,24 @@ def test_tree_502_when_github_fails(client, repo_id, monkeypatch):
 
 
 def test_binary_file_is_not_dumped(client, repo_id, monkeypatch):
-    """图片等二进制不该塞进 JSON：422 是确定性结果，前端提示去 GitHub 查看。"""
+    """图片等二进制不该塞进 JSON：422 是确定性结果，detail 携带机器可读 code。"""
     monkeypatch.setattr(config, "GITHUB_MOCK", False)
     monkeypatch.setattr(github, "get_file", lambda *a, **kw: "\x00\x01\x02binary")
     resp = client.get(f"/api/repos/{repo_id}/files", params={"path": "logo.png"})
     assert resp.status_code == 422
-    assert "二进制" in resp.json()["detail"]
+    detail = resp.json()["detail"]
+    assert detail["code"] == "binary"
+    assert "二进制" in detail["message"]
 
 
 def test_oversized_file_is_rejected(client, repo_id, monkeypatch):
-    """超大文件不再截断直出：422 提示去 GitHub 看完整内容。"""
+    """超大文件不截断直出：422 拒绝并给出 code=too_large（前端出「文件过大」文案）。"""
     monkeypatch.setattr(config, "GITHUB_MOCK", False)
     monkeypatch.setattr(
         github, "get_file", lambda *a, **kw: "x" * (config.MAX_FILE_CHARS + 10))
     resp = client.get(f"/api/repos/{repo_id}/files", params={"path": "big.log"})
     assert resp.status_code == 422
-    assert "截断" in resp.json()["detail"]
+    assert resp.json()["detail"]["code"] == "too_large"
 
 
 def test_repo_detail_frontend_shape(client_and_conn):

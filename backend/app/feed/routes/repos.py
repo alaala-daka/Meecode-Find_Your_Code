@@ -137,16 +137,17 @@ def get_repo_tree(
 
 
 @lru_cache(maxsize=config.FILE_CACHE_SIZE)
-def _cached_file(full_name: str, path: str, branch: str) -> tuple[str, str]:
+def _cached_file(full_name: str, path: str, branch: str) -> tuple[str, str, str]:
     """缓存文件内容。GitHubError 往外抛（不进缓存）；
-    二进制判定与截断由内容决定，结果可安全缓存。
+    二进制/超大判定由内容决定，结果可安全缓存。返回 (内容, 错误码, 错误消息)，
+    错误码 '' 表示正常；422 不返回任何内容，故超限文本直接丢弃。
     """
     content = github.get_file(full_name, path, branch, interactive=True)
     if "\x00" in content[:4096]:
-        return "", "该文件为二进制，请到 GitHub 查看"
+        return "", "binary", "该文件为二进制，请到 GitHub 查看"
     if len(content) > config.MAX_FILE_CHARS:
-        return content[:config.MAX_FILE_CHARS], "文件过大，已截断，完整内容请到 GitHub 查看"
-    return content, ""
+        return "", "too_large", "文件过大，请到 GitHub 查看"
+    return content, "", ""
 
 
 @router.get("/repos/{repo_id}/files", response_model=RepoFileOut)
@@ -158,12 +159,12 @@ def get_repo_file(
     row = _load(conn, repo_id)
     safe = _safe_path(path)
     try:
-        content, error = _cached_file(row["full_name"], safe, row["default_branch"])
+        content, code, message = _cached_file(row["full_name"], safe, row["default_branch"])
     except github.GitHubError as exc:
         raise HTTPException(status_code=502, detail=f"暂时无法读取该文件:{exc}") from exc
-    if error:
-        # 二进制/截断是确定性结果,不是瞬时故障:422 让前端走错误提示而不是空文件
-        raise HTTPException(status_code=422, detail=error)
+    if code:
+        # 二进制/超大是确定性结果,不是瞬时故障:422 让前端按 code 出对应文案
+        raise HTTPException(status_code=422, detail={"code": code, "message": message})
     return RepoFileOut(path=safe, content=content)
 
 
