@@ -89,8 +89,24 @@ def test_strips_whitespace(monkeypatch):
     assert urlguard.validate_base_url("  https://api.deepseek.com  ") == "https://api.deepseek.com"
 
 
-def test_llm_override_rejects_private_base_url(monkeypatch):
+def test_llm_override_private_base_url_rejected_at_validate_time(monkeypatch):
+    """口径迁移（F1）：内网 base_url 不再在 parse/schema 期拒绝（纯语法），
+    SSRF 拦截移到 validate_base_url_async（Task 4 起在 _resolve 连接前调用）。"""
+    import asyncio
+
     from app.schemas import LLMOverride
 
-    with pytest.raises(ValueError):
-        LLMOverride(base_url="http://169.254.169.254/")
+    # 语法合法：parse 期放行
+    ov = LLMOverride(base_url="http://169.254.169.254/")
+    assert ov.base_url == "http://169.254.169.254/"
+
+    async def _fake_getaddrinfo(host, port):
+        return [(2, 1, 6, "", ("169.254.169.254", port))]
+
+    async def _run():
+        loop = asyncio.get_running_loop()
+        monkeypatch.setattr(loop, "getaddrinfo", _fake_getaddrinfo)
+        with pytest.raises(ValueError):
+            await urlguard.validate_base_url_async(ov.base_url)
+
+    asyncio.run(_run())

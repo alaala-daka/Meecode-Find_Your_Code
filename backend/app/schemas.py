@@ -35,10 +35,13 @@ class LLMOverride(BaseModel):
     @field_validator("base_url")
     @classmethod
     def _check_base_url(cls, v: Optional[str]) -> Optional[str]:
+        # 仅语法/凭据/端口校验，不做 DNS（内网地址在 _resolve 校验/连接前经
+        # urlguard.validate_base_url_async 拦截，避免同步 DNS 阻塞请求体校验路径）
         if v is None or not v.strip():
             return v
-        from .urlguard import validate_base_url
-        return validate_base_url(v)
+        from .urlguard import _parse_and_check_syntax
+        _parse_and_check_syntax(v.strip())
+        return v.strip()
 
 
 class ChildSpec(BaseModel):
