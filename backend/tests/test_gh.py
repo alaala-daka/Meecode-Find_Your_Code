@@ -1,4 +1,4 @@
-"""gh.fetch_repo_context:GitHub 拉取与降级(MockTransport,离线可跑)。"""
+"""gh.fetch_repo_context:GitHub 拉取与降级(MockTransport 兼作异步 transport,离线可跑)。"""
 import httpx
 import pytest
 
@@ -23,8 +23,8 @@ def _handler(request: httpx.Request) -> httpx.Response:
     return httpx.Response(404)
 
 
-def test_fetch_repo_context_assembles_package():
-    repo = gh.fetch_repo_context("octocat/demo", transport=httpx.MockTransport(_handler))
+async def test_fetch_repo_context_assembles_package():
+    repo = await gh.fetch_repo_context("octocat/demo", transport=httpx.MockTransport(_handler))
     assert repo["full_name"] == "octocat/demo"
     assert repo["default_branch"] == "main"
     assert repo["description"] == "demo repo"
@@ -33,13 +33,13 @@ def test_fetch_repo_context_assembles_package():
     assert "Python" in repo["languages_text"] and "80%" in repo["languages_text"]
 
 
-def test_fetch_repo_context_missing_repo():
+async def test_fetch_repo_context_missing_repo():
     with pytest.raises(gh.GitHubFetchError, match="仓库不存在"):
-        gh.fetch_repo_context("octocat/ghost", transport=httpx.MockTransport(_handler))
+        await gh.fetch_repo_context("octocat/ghost", transport=httpx.MockTransport(_handler))
 
 
-def test_fetch_repo_context_rate_limited(monkeypatch):
+async def test_fetch_repo_context_rate_limited(monkeypatch):
     monkeypatch.setattr(config, "GITHUB_TOKEN", "")
     limited = httpx.MockTransport(lambda req: httpx.Response(403))
     with pytest.raises(gh.GitHubFetchError, match="限流"):
-        gh.fetch_repo_context("octocat/demo", transport=limited)
+        await gh.fetch_repo_context("octocat/demo", transport=limited)

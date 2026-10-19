@@ -51,7 +51,7 @@ def test_detail_threads_llm_override(monkeypatch):
                         lambda host, port, *a, **k: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("203.0.113.10", port or 0))])
     seen: dict = {}
 
-    def fake_chat_json(system, user, model, **kwargs):
+    async def fake_chat_json(system, user, model, **kwargs):
         seen.update(kwargs)
         return ElaborateResult(detail="详细阐述内容")
 

@@ -2,11 +2,12 @@
 from __future__ import annotations
 
 import json
+import logging
 import threading
 import time
 import uuid
 from contextlib import asynccontextmanager
-from typing import Iterator
+from typing import AsyncIterator
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -33,6 +34,8 @@ from .schemas import (  # 解读域 schemas,原样
     DetailRequest, DetailResponse, EdgePayload, ExpandRequest, ExpandResponse,
     NodePayload, RepoRootRequest, RepoRootResponse, Settings,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -137,35 +140,37 @@ def create_session() -> CreateSessionResponse:
 
 
 @app.post("/api/roots", response_model=CreateRootResponse)
-def create_root(req: CreateRootRequest) -> CreateRootResponse:
+async def create_root(req: CreateRootRequest) -> CreateRootResponse:
     _require_session(req.session_id)
     raw = req.raw_input.strip()
     if not raw:
         raise HTTPException(status_code=422, detail="输入不能为空")
     try:
-        topic = run_rewrite(raw, llm=req.llm)
+        topic = await run_rewrite(raw, llm=req.llm)
     except RuntimeError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        logger.warning("create_root 生成失败: %s", exc)  # F6:原始异常只落日志,不出网
+        raise HTTPException(status_code=502, detail="生成失败，请稍后重试") from exc
     node = NodePayload(id=uuid.uuid4().hex, title=topic, content=topic, relevance=1.0)
     return CreateRootResponse(node=node)
 
 
 @app.post("/api/repos/root", response_model=RepoRootResponse)
-def create_repo_root(req: RepoRootRequest) -> RepoRootResponse:
+async def create_repo_root(req: RepoRootRequest) -> RepoRootResponse:
     """以仓库为根建图:拉取理解包 → 主题陈述 → 自动首层展开。"""
     _require_session(req.session_id)
     if config.LLM_MOCK:
         repo = mock_repo_context(req.full_name.strip().strip("/"))
     else:
         try:
-            repo = gh.fetch_repo_context(req.full_name, req.default_branch)
+            repo = await gh.fetch_repo_context(req.full_name, req.default_branch)
         except gh.GitHubFetchError as exc:
+            # N8 白名单:GitHubFetchError 文案面向用户直出(不含密钥/内网信息)
             raise HTTPException(status_code=502, detail=str(exc)) from exc
     _require_session(req.session_id)["repo_context"] = repo
 
     try:
-        topic = run_repo_topic(repo["full_name"], repo["description"], repo["readme"], llm=req.llm)
-        children, edges, _refused = run_expand(
+        topic = await run_repo_topic(repo["full_name"], repo["description"], repo["readme"], llm=req.llm)
+        children, edges, _refused = await run_expand(
             parent_title=topic,
             path=[topic],
             depth=0,
@@ -175,7 +180,8 @@ def create_repo_root(req: RepoRootRequest) -> RepoRootResponse:
             route=llm_usage.ROUTE_REPO_ROOT,
         )
     except RuntimeError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        logger.warning("create_repo_root 生成失败: %s", exc)  # F6
+        raise HTTPException(status_code=502, detail="生成失败，请稍后重试") from exc
 
     node = NodePayload(id=uuid.uuid4().hex, title=topic, content=topic, relevance=1.0)
     edge_by_title = {e.child_title: e for e in edges}
@@ -203,10 +209,10 @@ def create_repo_root(req: RepoRootRequest) -> RepoRootResponse:
 
 
 @app.post("/api/expand", response_model=ExpandResponse)
-def expand(req: ExpandRequest) -> ExpandResponse:
+async def expand(req: ExpandRequest) -> ExpandResponse:
     _require_session(req.session_id)
     try:
-        children, edges, refused = run_expand(
+        children, edges, refused = await run_expand(
             parent_title=req.node_title,
             path=req.path,
             depth=req.depth,
@@ -216,7 +222,8 @@ def expand(req: ExpandRequest) -> ExpandResponse:
             route=llm_usage.ROUTE_EXPAND,
         )
     except RuntimeError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        logger.warning("expand 生成失败: %s", exc)  # F6
+        raise HTTPException(status_code=502, detail="生成失败，请稍后重试") from exc
 
     if refused:
         return ExpandResponse(refused=refused)
@@ -251,11 +258,11 @@ def expand(req: ExpandRequest) -> ExpandResponse:
 
 
 @app.post("/api/nodes/detail", response_model=DetailResponse)
-def node_detail(req: DetailRequest) -> DetailResponse:
+async def node_detail(req: DetailRequest) -> DetailResponse:
     """详细展开(双击已展开节点):生成更丰富的 markdown 阐述,不产生新子节点。"""
     _require_session(req.session_id)
     try:
-        detail = run_elaborate(
+        detail = await run_elaborate(
             req.node_title,
             req.path,
             req.brief,
@@ -263,21 +270,23 @@ def node_detail(req: DetailRequest) -> DetailResponse:
             repo_context=_require_session(req.session_id).get("repo_context"),
         )
     except RuntimeError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        logger.warning("node_detail 生成失败: %s", exc)  # F6
+        raise HTTPException(status_code=502, detail="生成失败，请稍后重试") from exc
     return DetailResponse(node_id=req.node_id, detail=detail)
 
 
-def _ndjson_stream(events: Iterator[dict]) -> Iterator[str]:
+async def _ndjson_stream(events: AsyncIterator[dict]) -> AsyncIterator[str]:
     """统一 NDJSON 输出;流中途异常以 error 事件收尾(此时 HTTP 状态已提交 200)。"""
     try:
-        for ev in events:
+        async for ev in events:
             yield json.dumps(ev, ensure_ascii=False) + "\n"
     except Exception as exc:
-        yield json.dumps({"type": "error", "message": f"生成中断:{exc}"}, ensure_ascii=False) + "\n"
+        logger.warning("NDJSON 流中断: %s", exc)  # F6:原始异常只落日志,不出网
+        yield json.dumps({"type": "error", "message": "生成中断"}, ensure_ascii=False) + "\n"
 
 
 @app.post("/api/reader/chat")
-def reader_chat(req: ChatRequest) -> StreamingResponse:
+async def reader_chat(req: ChatRequest) -> StreamingResponse:
     """阅读器伴读问答:NDJSON 流式;mock 模式输出确定性模拟回答。"""
     _require_session(req.session_id)
     history = [{"role": m.role, "content": m.content} for m in req.messages[-20:]]

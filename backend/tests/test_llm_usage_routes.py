@@ -1,5 +1,5 @@
 """route 常量与调用点一致（spec §4.2）：每个 LLM 入口的记账 route 归属。"""
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -13,7 +13,7 @@ def graph_calls(monkeypatch):
     """替换 agent.graph 的 chat_json，捕获 route 实参。"""
     calls: list[dict] = []
 
-    def fake_chat_json(*args, **kwargs):
+    async def fake_chat_json(*args, **kwargs):
         calls.append(kwargs)
         return MagicMock(topic="t", children=[MagicMock(title="c")], edges=[])
 
@@ -22,34 +22,41 @@ def graph_calls(monkeypatch):
     return calls
 
 
-def test_graph五调用点route归属(graph_calls):
+async def test_graph五调用点route归属(graph_calls):
     base = len(graph_calls)
-    agent_graph.run_rewrite("输入")
+    await agent_graph.run_rewrite("输入")
     assert len(graph_calls) == base + 1  # rewrite_node 一次
     assert graph_calls[-1]["route"] == llm_usage.ROUTE_ROOTS
 
     base = len(graph_calls)
-    agent_graph.run_expand("父", ["父"], 0, Settings())
+    await agent_graph.run_expand("父", ["父"], 0, Settings())
     assert len(graph_calls) == base + 2  # decompose + relate 各触发一次
     assert all(c["route"] == llm_usage.ROUTE_EXPAND for c in graph_calls[base:])
     assert graph_calls[-1]["route"] == llm_usage.ROUTE_EXPAND
 
     base = len(graph_calls)
-    agent_graph.run_expand("父", ["父"], 0, Settings(),
-                           route=llm_usage.ROUTE_REPO_ROOT)
+    await agent_graph.run_expand("父", ["父"], 0, Settings(),
+                                 route=llm_usage.ROUTE_REPO_ROOT)
     assert len(graph_calls) == base + 2  # decompose + relate 各触发一次
     assert all(c["route"] == llm_usage.ROUTE_REPO_ROOT for c in graph_calls[base:])
     assert graph_calls[-1]["route"] == llm_usage.ROUTE_REPO_ROOT
 
     base = len(graph_calls)
-    agent_graph.run_elaborate("n", ["n"], "b")
+    await agent_graph.run_elaborate("n", ["n"], "b")
     assert len(graph_calls) == base + 1  # run_elaborate 一次
     assert graph_calls[-1]["route"] == llm_usage.ROUTE_NODES_DETAIL
 
     base = len(graph_calls)
-    agent_graph.run_repo_topic("a/b", "d", "r")
+    await agent_graph.run_repo_topic("a/b", "d", "r")
     assert len(graph_calls) == base + 1  # run_repo_topic 一次
     assert graph_calls[-1]["route"] == llm_usage.ROUTE_REPO_ROOT
+
+
+def _empty_agen():
+    async def gen():
+        return
+        yield  # pragma: no cover
+    return gen()
 
 
 def test_main三路由的route接线(client, monkeypatch):
@@ -60,11 +67,11 @@ def test_main三路由的route接线(client, monkeypatch):
     monkeypatch.setattr(config, "LLM_API_KEY", "k")  # reader_chat 的 llm_configured() 检查
     sid = client.post("/api/sessions").json()["session_id"]
 
-    expand_spy = MagicMock(return_value=([], [], None))
+    expand_spy = AsyncMock(return_value=([], [], None))
     monkeypatch.setattr(main_mod, "run_expand", expand_spy)
-    monkeypatch.setattr(main_mod, "run_repo_topic", MagicMock(return_value="主题"))
+    monkeypatch.setattr(main_mod, "run_repo_topic", AsyncMock(return_value="主题"))
     monkeypatch.setattr(main_mod.gh, "fetch_repo_context",
-                        MagicMock(return_value={"full_name": "a/b", "description": "", "readme": ""}))
+                        AsyncMock(return_value={"full_name": "a/b", "description": "", "readme": ""}))
 
     client.post("/api/expand", json={"session_id": sid, "node_id": "n",
                                      "node_title": "t", "depth": 1})
@@ -73,7 +80,7 @@ def test_main三路由的route接线(client, monkeypatch):
     client.post("/api/repos/root", json={"session_id": sid, "full_name": "a/b"})
     assert expand_spy.call_args.kwargs["route"] == llm_usage.ROUTE_REPO_ROOT
 
-    chat_spy = MagicMock(return_value=iter([]))
+    chat_spy = MagicMock(return_value=_empty_agen())
     monkeypatch.setattr(main_mod, "chat_stream_events", chat_spy)
     client.post("/api/reader/chat",
                 json={"session_id": sid, "node_id": "n", "node_title": "t"})
