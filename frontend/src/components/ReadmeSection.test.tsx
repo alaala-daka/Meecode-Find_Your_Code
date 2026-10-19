@@ -48,4 +48,15 @@ describe('ReadmeSection', () => {
     render(<ReadmeSection repoId={1} tree={TREE_WITH_README} fullName="owner/repo" defaultBranch="main" />)
     expect(await screen.findByText('暂无自述')).toBeInTheDocument()
   })
+
+  it('README 相对链接解析为 GitHub canonical 深链（blob/<ref>/<path>）', async () => {
+    const { api } = await import('../api/client')
+    vi.spyOn(api, 'repoFile').mockResolvedValueOnce({
+      path: 'README.md',
+      content: '详见 [文档](docs/使用说明.md)',
+    })
+    render(<ReadmeSection repoId={1} tree={TREE_WITH_README} fullName="owner/repo" defaultBranch="main" />)
+    expect(await screen.findByRole('link', { name: '文档' }))
+      .toHaveAttribute('href', 'https://github.com/owner/repo/blob/main/docs/%E4%BD%BF%E7%94%A8%E8%AF%B4%E6%98%8E.md')
+  })
 })
