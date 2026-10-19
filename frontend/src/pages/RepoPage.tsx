@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { api } from '../api/client'
+import { ApiError } from '../api/errors'
 import type { CurrentUser, RepoDetail, RepoFile, RepoTreeItem, UserProfile } from '../api/types'
 import Capsule from '../components/Capsule'
 import CodeView from '../components/CodeView'
@@ -9,6 +10,7 @@ import CommentSection from '../components/CommentSection'
 import EmptyState from '../components/EmptyState'
 import FileTree from '../components/FileTree'
 import IconAction from '../components/IconAction'
+import ImagePreview from '../components/ImagePreview'
 import LoginModal from '../components/LoginModal'
 import ReadmeSection from '../components/ReadmeSection'
 import RepoRail from '../components/RepoRail'
@@ -16,6 +18,7 @@ import StarSyncModal from '../components/StarSyncModal'
 import Tabs from '../components/Tabs'
 import Toast from '../components/Toast'
 import TopBar from '../components/TopBar'
+import { isImageFile } from '../lib/isImageFile'
 import { useAuthStore } from '../store/authStore'
 import { capsuleBg, capsuleText, languageColor } from '../theme/languageColors'
 import { formatCount, formatTime } from '../utils/format'
@@ -35,6 +38,26 @@ function isStarAuthed(u: UserProfile | CurrentUser | null): boolean {
   return u != null && 'gh_star_authed' in u && u.gh_star_authed
 }
 
+type FilePreviewError = 'unsupported' | 'too_large' | 'failed'
+
+const FILE_ERROR_TEXT: Record<FilePreviewError, string> = {
+  unsupported: '该文件格式不支持预览',
+  too_large: '文件过大',
+  failed: '文件预览失败',
+}
+
+/** 递归查节点 size（图片大小护栏）；size 可为 0，故用 undefined 表示未命中 */
+function findTreeSize(nodes: RepoTreeItem[], path: string): number | undefined {
+  for (const n of nodes) {
+    if (n.path === path) return n.size
+    if (n.children) {
+      const hit = findTreeSize(n.children, path)
+      if (hit !== undefined) return hit
+    }
+  }
+  return undefined
+}
+
 export default function RepoPage() {
   const { id } = useParams()
   const repoId = Number(id)
@@ -48,7 +71,8 @@ export default function RepoPage() {
   const [tree, setTree] = useState<RepoTreeItem[]>([])
   const [treeError, setTreeError] = useState(false)
   const [file, setFile] = useState<RepoFile | null>(null)
-  const [fileError, setFileError] = useState(false)
+  const [image, setImage] = useState<string | null>(null) // 图片走 raw 直链，不经 /files
+  const [fileError, setFileError] = useState<FilePreviewError | null>(null)
   const [liked, setLiked] = useState(false)
   const [faved, setFaved] = useState(false)
   const [busy, setBusy] = useState<'like' | 'fav' | null>(null)
@@ -114,15 +138,23 @@ export default function RepoPage() {
 
   async function selectFile(path: string) {
     const req = ++fileReqRef.current
-    setFileError(false)
+    setFileError(null)
+    setFile(null)
+    setImage(null)
+    if (isImageFile(path)) {
+      setImage(path) // 图片不请求 /files：ImagePreview 直连 raw 直链
+      return
+    }
     try {
       const f = await api.repoFile(repoId, path)
-      if (req !== fileReqRef.current) return // 已有更新的请求，丢弃过期响应
+      if (req !== fileReqRef.current) return // 有更新的请求，丢弃过期响应
       setFile(f)
-    } catch {
+    } catch (err) {
       if (req !== fileReqRef.current) return
-      setFileError(true)
-      setFile(null)
+      setFileError(
+        err instanceof ApiError && err.code === 'binary' ? 'unsupported'
+          : err instanceof ApiError && err.code === 'too_large' ? 'too_large'
+            : 'failed')
     }
   }
 
@@ -289,16 +321,25 @@ export default function RepoPage() {
             <div className="repo-tab-body" key={tab} id="repo-tab-panel" role="tabpanel" aria-label={tab === 'files' ? '文件预览' : '仓库解读'}>
               {tab === 'files' && (
                 <div className="repo-files">
-                  <FileTree tree={tree} current={file?.path ?? null} onSelect={(p) => onSelectFile(p)} />
+                  <FileTree tree={tree} current={file?.path ?? image ?? null} onSelect={(p) => onSelectFile(p)} />
                   {treeError && (
                     <p className="file-fallback">
                       文件树加载失败，<a href={detail.github_url} target="_blank" rel="noreferrer">去 GitHub 查看 ↗</a>
                     </p>
                   )}
                   {!treeError && file && <CodeView file={file} githubUrl={detail.github_url} defaultBranch={detail.default_branch} />}
+                  {!treeError && image && (
+                    <ImagePreview
+                      path={image}
+                      fullName={detail.full_name}
+                      defaultBranch={detail.default_branch}
+                      githubUrl={detail.github_url}
+                      size={findTreeSize(tree, image)}
+                    />
+                  )}
                   {!treeError && fileError && (
                     <p className="file-fallback">
-                      文件预览失败，<a href={detail.github_url} target="_blank" rel="noreferrer">去 GitHub 查看 ↗</a>
+                      {FILE_ERROR_TEXT[fileError]}，<a href={detail.github_url} target="_blank" rel="noreferrer">去 GitHub 查看 ↗</a>
                     </p>
                   )}
                 </div>
