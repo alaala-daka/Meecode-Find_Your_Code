@@ -16,6 +16,7 @@ from openai import AsyncOpenAI
 
 from . import config, llm_usage
 from .schemas import BaseModel, LLMOverride
+from .security import CURRENT_RATE_KEY
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -23,8 +24,87 @@ T = TypeVar("T", bound=BaseModel)
 _CLIENTS_MAX = 32
 _clients: dict[tuple[str, str], AsyncOpenAI] = {}
 
-# 全进程 LLM provider 并发上限(每 rate_key 细分额度在 Task 5 接入,此处仅全局)
+# ---------- 并发席位(N4 预留席 + F3 每 key 帽 + 饱和快速失败) ----------
+# _llm_sem:全局总帽 LLM_MAX_CONCURRENCY,语义不变 —— 并发在飞的 LLM provider 请求。
+# _general_sem:通用池(= 全局 - LLM_RESERVED_SEATS),仅「既有 key」(当前已持有席位的
+# rate_key)占用;既有 key 摩不进 _llm_sem 中的预留额度,故新/低活跃 key 恒有
+# ≥LLM_RESERVED_SEATS 席可用(预留席模型:通用池 + 预留席 = 全局,既有 key 只可用通用池)。
 _llm_sem = asyncio.Semaphore(config.LLM_MAX_CONCURRENCY)
+_general_sem = asyncio.Semaphore(
+    max(0, config.LLM_MAX_CONCURRENCY - config.LLM_RESERVED_SEATS))
+
+_key_sems: dict[str, asyncio.Semaphore] = {}   # per-key 并发帽(F3)
+_active_keys: dict[str, int] = {}              # rate_key → 当前持有席位数;归零即移除(重新算「新 key」)
+
+
+class SeatBusyError(TimeoutError):
+    """席位获取超时(全局/通用池/每 key 任一维度饱和):N4 快速失败,不无限排队。
+
+    继承 TimeoutError 保留超时语义;LLM 路由映射 HTTP 503「服务繁忙，请稍后重试」
+    (F6 脱敏),chat_json 不得当作输出失败重试、不落 usage 行(无 provider 往返)。
+    """
+
+
+def _reset_seats_for_test() -> None:
+    """重建全部席位信号量(容量取当前 config),清空 per-key/active 状态。测试隔离用。"""
+    global _llm_sem, _general_sem
+    _llm_sem = asyncio.Semaphore(config.LLM_MAX_CONCURRENCY)
+    _general_sem = asyncio.Semaphore(
+        max(0, config.LLM_MAX_CONCURRENCY - config.LLM_RESERVED_SEATS))
+    _key_sems.clear()
+    _active_keys.clear()
+
+
+def _key_sem(key: str) -> asyncio.Semaphore:
+    sem = _key_sems.get(key)
+    if sem is None:
+        sem = asyncio.Semaphore(config.LLM_MAX_CONCURRENCY_PER_KEY)
+        _key_sems[key] = sem
+    return sem
+
+
+async def _acquire(sem: asyncio.Semaphore) -> None:
+    """限时获取一个席位;超时抛 SeatBusyError(N4:饱和快速失败,不无限排队)。"""
+    try:
+        await asyncio.wait_for(sem.acquire(), timeout=config.LLM_ACQUIRE_TIMEOUT)
+    except TimeoutError as exc:   # 3.11+ asyncio.TimeoutError 即内置 TimeoutError
+        raise SeatBusyError from exc
+
+
+@asynccontextmanager
+async def _seat():
+    """provider 往返期间的并发席位:per-key 帽 → (既有 key)通用池 → 全局帽。
+
+    取键经 security.CURRENT_RATE_KEY(N3,不透传 Request);获取顺序固定(per-key 最先:
+    同 key 排队不占全局席),全部限时快速失败(SeatBusyError);任一获取失败即抛,
+    已持有席位在对应 finally 全部归还 —— 正常/异常/断开任一退出路径不泄漏席位(F5)。
+    """
+    key = CURRENT_RATE_KEY.get()
+    ksem = _key_sem(key)
+    await _acquire(ksem)
+    try:
+        existing = key in _active_keys        # 已持有席位 = 既有 key,预留席不向其开放
+        if existing:
+            await _acquire(_general_sem)
+        try:
+            await _acquire(_llm_sem)
+            try:
+                _active_keys[key] = _active_keys.get(key, 0) + 1
+                try:
+                    yield
+                finally:
+                    left = _active_keys.get(key, 1) - 1
+                    if left > 0:
+                        _active_keys[key] = left
+                    else:
+                        _active_keys.pop(key, None)
+            finally:
+                _llm_sem.release()
+        finally:
+            if existing:
+                _general_sem.release()
+    finally:
+        ksem.release()
 
 
 def _make_async_client(*, base_url: str, api_key: str) -> AsyncOpenAI:
@@ -62,16 +142,6 @@ async def _resolve(llm: LLMOverride | None) -> tuple[AsyncOpenAI, str]:
 def _configured(llm: LLMOverride | None) -> bool:
     # env 已配置,或请求级带了 api_key(此时 base_url/model 可回落 env)
     return config.llm_configured() or bool(llm and (llm.api_key or "").strip())
-
-
-@asynccontextmanager
-async def _seat():
-    """全局并发席位:N4 限时获取,超限快速失败,不无限排队。"""
-    await asyncio.wait_for(_llm_sem.acquire(), timeout=config.LLM_ACQUIRE_TIMEOUT)
-    try:
-        yield
-    finally:
-        _llm_sem.release()
 
 
 async def chat_json(
@@ -115,6 +185,8 @@ async def chat_json(
             completion = int(getattr(usage, "completion_tokens", 0) or 0)
             text = resp.choices[0].message.content or ""
             result = model.model_validate(json.loads(_strip_code_fence(text)))
+        except SeatBusyError:
+            raise   # 席位饱和快速失败:无 provider 往返,不重试、不落 usage 行(N4)
         except Exception as exc:  # JSON 解析或 schema 校验失败 → 回填重试
             llm_usage.record_usage(
                 route=route, repo_id=repo_id, model=model_name,
@@ -193,16 +265,15 @@ async def chat_stream_events(
         }
         if use_tools:
             kwargs["tools"] = use_tools
-        t0 = time.monotonic()
-        prompt = completion = 0
-        ok = 0
-        try:
-            async with _seat():   # 每轮 provider 往返持有席位,流抽干即释放
+        async with _seat():   # 每轮 provider 往返持有席位,流抽干即释放;获取超时→SeatBusyError(无往返,不落 usage)
+            t0 = time.monotonic()
+            prompt = completion = 0
+            ok = 0
+            content_parts: list[str] = []
+            tool_calls: dict[int, dict] = {}  # index -> {id, name, arguments}
+            finish: str | None = None
+            try:
                 stream = await client.chat.completions.create(**kwargs)
-
-                content_parts: list[str] = []
-                tool_calls: dict[int, dict] = {}  # index -> {id, name, arguments}
-                finish: str | None = None
 
                 async for chunk in stream:
                     usage = getattr(chunk, "usage", None)  # usage chunk choices 为空,先于过滤捕获
@@ -230,15 +301,16 @@ async def chat_stream_events(
                                     slot["arguments"] += tc.function.arguments
                     if choice.finish_reason:
                         finish = choice.finish_reason
-            ok = 1  # 流正常走完
-        except GeneratorExit:
-            ok = 1  # 客户端断流:调用已成功返流、成本已发生,计 ok(§4.2)
-            raise
-        finally:
-            llm_usage.record_usage(
-                route=route, repo_id=repo_id, model=model_name,
-                prompt_tokens=prompt, completion_tokens=completion,
-                ok=ok, latency_ms=int((time.monotonic() - t0) * 1000))
+                ok = 1  # 流正常走完
+            except GeneratorExit:
+                ok = 1  # 客户端断流:调用已成功返流、成本已发生,计 ok(§4.2)
+                raise
+            finally:
+                llm_usage.record_usage(
+                    route=route, repo_id=repo_id, model=model_name,
+                    prompt_tokens=prompt, completion_tokens=completion,
+                    ok=ok, latency_ms=int((time.monotonic() - t0) * 1000))
+        # 席位已释放:web_search 与轮次间隙不占席(§5.1)
 
         if finish == "tool_calls" and tool_calls and use_tools:
             convo.append(

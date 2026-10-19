@@ -45,5 +45,6 @@ async def test_client_eviction_closes(monkeypatch):
     from app.schemas import LLMOverride
     for i in range(llm._CLIENTS_MAX + 3):
         await llm._resolve(LLMOverride(api_key=f"sk-{i}"))
-    assert len(llm._clients) <= llm._CLIENTS_MAX
+    assert len(llm._clients) == llm._CLIENTS_MAX                 # 淘汰后恒定在上限(F4)
     assert all(getattr(c, "closed", False) for c in created[:3])  # 被淘汰者已 close
+    assert not any(getattr(c, "closed", False) for c in created[3:])  # 留存者未被误关

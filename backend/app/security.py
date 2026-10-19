@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import base64
+import contextvars
 import hashlib
 import logging
 import os
@@ -92,6 +93,15 @@ def rate_key(request: Request) -> str:
         return f"ip:{client_ip(request)}"
     user_id, epoch = verified
     return f"u:{user_id}:{epoch}"
+
+
+# 每 key 并发帽的取键(N3):中间件在请求起始写入 rate_key,llm._seat 经 ContextVar 读取,
+# chat_json/chat_stream_events/graph 深处不透传 Request。默认 "anon":非 HTTP 上下文
+# (后台任务等)归入共享的匿名桶。BaseHTTPMiddleware 下游任务在 spawn 时复制 context,
+# 中间件先 set 后 call_next,下游(llm._seat 读取点)可见 —— 由
+# test_llm_concurrency.py::test_rate_key_contextvar_reaches_seat 实证锁定。
+CURRENT_RATE_KEY: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "CURRENT_RATE_KEY", default="anon")
 
 
 HIT_PATH = "/api/hit"
@@ -294,6 +304,9 @@ class SecurityMiddleware(BaseHTTPMiddleware):
 
     async def _respond(self, request: Request, call_next):
         path = request.url.path
+        # N3:per-key 并发帽取键。必须在 call_next 之前写入 —— BaseHTTPMiddleware 的
+        # 下游任务在 spawn 时复制当前 context,下游的 llm._seat 即可读到该 rate_key。
+        CURRENT_RATE_KEY.set(rate_key(request))
         if request.method not in SAFE_METHODS:
             origin = request.headers.get("origin")
             if origin and origin not in config.ALLOWED_ORIGINS:

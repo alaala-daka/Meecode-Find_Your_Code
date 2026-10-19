@@ -28,7 +28,7 @@ from .feed.routes import me as me_routes
 from .feed.routes import repos as repos_routes
 from .feed.routes import submit as submit_routes
 from .feed.routes import users as users_routes
-from .llm import chat_stream_events
+from .llm import SeatBusyError, chat_stream_events
 from .schemas import (  # 解读域 schemas,原样
     ChatRequest, CreateRootRequest, CreateRootResponse, CreateSessionResponse,
     DetailRequest, DetailResponse, EdgePayload, ExpandRequest, ExpandResponse,
@@ -147,6 +147,8 @@ async def create_root(req: CreateRootRequest) -> CreateRootResponse:
         raise HTTPException(status_code=422, detail="输入不能为空")
     try:
         topic = await run_rewrite(raw, llm=req.llm)
+    except SeatBusyError as exc:
+        raise HTTPException(status_code=503, detail="服务繁忙，请稍后重试") from exc  # N4 饱和快速失败(F6 脱敏)
     except RuntimeError as exc:
         logger.warning("create_root 生成失败: %s", exc)  # F6:原始异常只落日志,不出网
         raise HTTPException(status_code=502, detail="生成失败，请稍后重试") from exc
@@ -179,6 +181,8 @@ async def create_repo_root(req: RepoRootRequest) -> RepoRootResponse:
             repo_context=repo,
             route=llm_usage.ROUTE_REPO_ROOT,
         )
+    except SeatBusyError as exc:
+        raise HTTPException(status_code=503, detail="服务繁忙，请稍后重试") from exc  # N4 饱和快速失败(F6 脱敏)
     except RuntimeError as exc:
         logger.warning("create_repo_root 生成失败: %s", exc)  # F6
         raise HTTPException(status_code=502, detail="生成失败，请稍后重试") from exc
@@ -221,6 +225,8 @@ async def expand(req: ExpandRequest) -> ExpandResponse:
             repo_context=_require_session(req.session_id).get("repo_context"),
             route=llm_usage.ROUTE_EXPAND,
         )
+    except SeatBusyError as exc:
+        raise HTTPException(status_code=503, detail="服务繁忙，请稍后重试") from exc  # N4 饱和快速失败(F6 脱敏)
     except RuntimeError as exc:
         logger.warning("expand 生成失败: %s", exc)  # F6
         raise HTTPException(status_code=502, detail="生成失败，请稍后重试") from exc
@@ -269,20 +275,38 @@ async def node_detail(req: DetailRequest) -> DetailResponse:
             llm=req.llm,
             repo_context=_require_session(req.session_id).get("repo_context"),
         )
+    except SeatBusyError as exc:
+        raise HTTPException(status_code=503, detail="服务繁忙，请稍后重试") from exc  # N4 饱和快速失败(F6 脱敏)
     except RuntimeError as exc:
         logger.warning("node_detail 生成失败: %s", exc)  # F6
         raise HTTPException(status_code=502, detail="生成失败，请稍后重试") from exc
     return DetailResponse(node_id=req.node_id, detail=detail)
 
 
-async def _ndjson_stream(events: AsyncIterator[dict]) -> AsyncIterator[str]:
-    """统一 NDJSON 输出;流中途异常以 error 事件收尾(此时 HTTP 状态已提交 200)。"""
+async def _ndjson_stream(events: AsyncIterator[dict], primed: dict | None = None) -> AsyncIterator[str]:
+    """统一 NDJSON 输出;流中途异常以 error 事件收尾(此时 HTTP 状态已提交 200)。
+
+    finally 显式 aclose 上游生成器:客户端断开/取消时席位与计量立即回收(F5),
+    不依赖 GC 兜底;aclose 失败只记日志,不改变已发出的流。
+    """
     try:
+        if primed is not None:
+            yield json.dumps(primed, ensure_ascii=False) + "\n"
         async for ev in events:
             yield json.dumps(ev, ensure_ascii=False) + "\n"
+    except SeatBusyError:
+        logger.warning("NDJSON 流席位饱和,提前收尾")  # F6:原始异常只落日志
+        yield json.dumps({"type": "error", "message": "服务繁忙，请稍后重试"}, ensure_ascii=False) + "\n"
     except Exception as exc:
         logger.warning("NDJSON 流中断: %s", exc)  # F6:原始异常只落日志,不出网
         yield json.dumps({"type": "error", "message": "生成中断"}, ensure_ascii=False) + "\n"
+    finally:
+        aclose = getattr(events, "aclose", None)
+        if aclose is not None:
+            try:
+                await aclose()
+            except Exception:  # pragma: no cover - 上游收尾异常不掩盖主流结果
+                logger.warning("NDJSON 上游生成器收尾失败", exc_info=True)
 
 
 @app.post("/api/reader/chat")
@@ -311,7 +335,14 @@ async def reader_chat(req: ChatRequest) -> StreamingResponse:
             llm=req.llm,
             tavily_key=tavily_key,
         )
-    return StreamingResponse(_ndjson_stream(events), media_type="application/x-ndjson")
+    # 饱和快速失败(N4):流开始前预取首事件,席位获取超时在此显形为 503,而非 200 后的 error 事件
+    try:
+        primed = await anext(events)
+    except StopAsyncIteration:
+        primed = None
+    except SeatBusyError as exc:
+        raise HTTPException(status_code=503, detail="服务繁忙，请稍后重试") from exc
+    return StreamingResponse(_ndjson_stream(events, primed), media_type="application/x-ndjson")
 
 
 def _require_session(session_id: str) -> dict:
