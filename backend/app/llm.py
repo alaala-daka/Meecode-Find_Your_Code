@@ -33,8 +33,10 @@ _llm_sem = asyncio.Semaphore(config.LLM_MAX_CONCURRENCY)
 _general_sem = asyncio.Semaphore(
     max(0, config.LLM_MAX_CONCURRENCY - config.LLM_RESERVED_SEATS))
 
-_key_sems: dict[str, asyncio.Semaphore] = {}   # per-key 并发帽(F3)
-_active_keys: dict[str, int] = {}              # rate_key → 当前持有席位数;归零即移除(重新算「新 key」)
+_key_sems: dict[str, asyncio.Semaphore] = {}   # per-key 并发帽(F3);LRU 序,最旧在前
+_active_keys: dict[str, int] = {}              # rate_key → 在飞请求计数(含等待全局席者);归零即移除(重新算「新 key」)
+
+_KEY_SEMS_MAX = 4096   # per-key 信号量表上界(F4 纪律):随 epoch 轮换/匿名 IP 无界增长的封口
 
 
 class SeatBusyError(TimeoutError):
@@ -55,11 +57,35 @@ def _reset_seats_for_test() -> None:
     _active_keys.clear()
 
 
+def _key_sem_idle(key: str, sem: asyncio.Semaphore) -> bool:
+    """零占用(无持有者/无等待者)才算可淘汰:淘汰占用中的信号量会破坏 per-key 记账。"""
+    if key in _active_keys:
+        return False
+    waiters = getattr(sem, "_waiters", None)
+    if waiters and any(not w.done() for w in waiters):
+        return False
+    return sem._value == config.LLM_MAX_CONCURRENCY_PER_KEY
+
+
 def _key_sem(key: str) -> asyncio.Semaphore:
-    sem = _key_sems.get(key)
-    if sem is None:
-        sem = asyncio.Semaphore(config.LLM_MAX_CONCURRENCY_PER_KEY)
-        _key_sems[key] = sem
+    """LRU 取/建 per-key 帽:命中挪到最新端;插入前淘汰零占用的最旧项(F4 纪律)。
+
+    全部占用时允许暂时超 _KEY_SEMS_MAX(正确性优先于硬上界);被淘汰的旧持有者
+    释放走获取时捕获的旧对象,自洽不串账。
+    """
+    sem = _key_sems.pop(key, None)
+    if sem is not None:
+        _key_sems[key] = sem   # LRU:命中即挪到最新端
+        return sem
+    while len(_key_sems) >= _KEY_SEMS_MAX:
+        for k, s in _key_sems.items():   # dict 序即 LRU 序:最旧在前
+            if _key_sem_idle(k, s):
+                del _key_sems[k]
+                break
+        else:
+            break   # 全部占用:不淘汰
+    sem = asyncio.Semaphore(config.LLM_MAX_CONCURRENCY_PER_KEY)
+    _key_sems[key] = sem
     return sem
 
 
@@ -78,33 +104,39 @@ async def _seat():
     取键经 security.CURRENT_RATE_KEY(N3,不透传 Request);获取顺序固定(per-key 最先:
     同 key 排队不占全局席),全部限时快速失败(SeatBusyError);任一获取失败即抛,
     已持有席位在对应 finally 全部归还 —— 正常/异常/断开任一退出路径不泄漏席位(F5)。
+
+    预留席分类防垄断(复审 Finding #1):分类与注册在**同一同步段**(无 await)完成,
+    并发同 key 请求只有首个计「新 key」可走非通用席,其余一律走通用池 —— 同 key
+    ramp-up 冲刺在全局饱和下堆在 _llm_sem 上时,吃不满 LLM_RESERVED_SEATS 预留池,
+    真正的新 key 不会被挤成 503。注册先行于 _key_sem 获取,亦保证在飞 key 的
+    per-key 信号量不被 LRU 淘汰(Finding #2)。
     """
     key = CURRENT_RATE_KEY.get()
-    ksem = _key_sem(key)
-    await _acquire(ksem)
+    existing = _active_keys.get(key, 0) > 0    # 分类+注册原子:并发同 key 仅首个算「新 key」
+    _active_keys[key] = _active_keys.get(key, 0) + 1
     try:
-        existing = key in _active_keys        # 已持有席位 = 既有 key,预留席不向其开放
-        if existing:
-            await _acquire(_general_sem)
+        ksem = _key_sem(key)
+        await _acquire(ksem)
         try:
-            await _acquire(_llm_sem)
+            if existing:
+                await _acquire(_general_sem)   # 既有 key:预留席不向其开放
             try:
-                _active_keys[key] = _active_keys.get(key, 0) + 1
+                await _acquire(_llm_sem)
                 try:
                     yield
                 finally:
-                    left = _active_keys.get(key, 1) - 1
-                    if left > 0:
-                        _active_keys[key] = left
-                    else:
-                        _active_keys.pop(key, None)
+                    _llm_sem.release()
             finally:
-                _llm_sem.release()
+                if existing:
+                    _general_sem.release()
         finally:
-            if existing:
-                _general_sem.release()
+            ksem.release()
     finally:
-        ksem.release()
+        left = _active_keys.get(key, 1) - 1
+        if left > 0:
+            _active_keys[key] = left
+        else:
+            _active_keys.pop(key, None)
 
 
 def _make_async_client(*, base_url: str, api_key: str) -> AsyncOpenAI:

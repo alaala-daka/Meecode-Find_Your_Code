@@ -187,6 +187,120 @@ async def test_reserved_seats_new_key_gets_in_when_general_full(monkeypatch):
     assert llm._llm_sem._value == config.LLM_MAX_CONCURRENCY
     assert llm._active_keys == {}
 
+    # --- 复审 Finding #1(ramp-up 竞态):同 key 并发冲刺不得垄断预留席 ---
+    llm._reset_seats_for_test()
+    rush_outcomes: asyncio.Queue = asyncio.Queue()
+    rush_gate = asyncio.Event()
+
+    async def rush(key: str):
+        security.CURRENT_RATE_KEY.set(key)
+        try:
+            async with llm._seat():
+                rush_outcomes.put_nowait("held")
+                await rush_gate.wait()
+        except llm.SeatBusyError:
+            rush_outcomes.put_nowait("busy")
+
+    rush_tasks = [asyncio.create_task(rush("ip:rush")) for _ in range(3)]
+    got = [await asyncio.wait_for(rush_outcomes.get(), timeout=2) for _ in range(3)]
+    assert sorted(got) == ["held", "held", "held"]
+    # 冲刺只有 1 路按「新 key」走非通用席,其余必须占通用池(不得 3 路全绕开)
+    assert llm._general_sem._value == 0
+    assert llm._llm_sem._value == config.LLM_MAX_CONCURRENCY - 3
+    # 真正的新 key 仍拿得到席位:预留席没被同 key 冲刺吃满
+    security.CURRENT_RATE_KEY.set("ip:other")
+    async with llm._seat():
+        pass
+    rush_gate.set()
+    await asyncio.gather(*rush_tasks)
+    assert llm._active_keys == {}
+
+
+async def test_same_key_burst_cannot_monopolize_reserved(monkeypatch):
+    """复审 Finding #1(核心保证):全局饱和下的同 key ramp-up 冲刺吃不满预留池 ——
+    冲刺里只有 1 路计「新 key」,其余走通用池;真正的新 key 仍拿得到席位。
+    (旧实现必须先有全局饱和:冲刺全部堆积在 _llm_sem 取席点且尚未注册时,才会
+    全部误计「新 key」全绕开通用池,吃光含预留在内的全部席位。)"""
+    monkeypatch.setattr(config, "LLM_MAX_CONCURRENCY", 4)
+    monkeypatch.setattr(config, "LLM_RESERVED_SEATS", 2)      # 通用池=2,预留额度=2
+    monkeypatch.setattr(config, "LLM_ACQUIRE_TIMEOUT", 1.0)
+    llm._reset_seats_for_test()
+
+    outcomes: asyncio.Queue = asyncio.Queue()
+
+    async def hold(key: str, tag: str, gate: asyncio.Event):
+        security.CURRENT_RATE_KEY.set(key)
+        try:
+            async with llm._seat():
+                outcomes.put_nowait(("held", tag))
+                await gate.wait()
+        except llm.SeatBusyError:
+            outcomes.put_nowait(("busy", tag))
+
+    # 阶段1:4 个互异 key 各占 1 席,占满全局 —— 制造 ramp-up 堆积窗口
+    blocker_gate = asyncio.Event()
+    blockers = [asyncio.create_task(hold(f"ip:s{i}", f"s{i}", blocker_gate)) for i in range(4)]
+    for _ in range(4):
+        assert (await asyncio.wait_for(outcomes.get(), timeout=2))[0] == "held"
+    assert llm._llm_sem._value == 0
+
+    # 阶段2:同 key 并发冲刺(此刻全局饱和,必然堆积在取席点)
+    burst_gate = asyncio.Event()
+    burst = [asyncio.create_task(hold("ip:big", f"b{i}", burst_gate)) for i in range(4)]
+    await asyncio.sleep(0.05)   # 让 4 路全部进入取席等待(远小于 ACQUIRE_TIMEOUT)
+
+    # 阶段3:释放阻塞者,冲刺占席:只有 1 路非通用席,其余争 2 个通用席
+    blocker_gate.set()
+    await asyncio.gather(*blockers)
+    got = [await asyncio.wait_for(outcomes.get(), timeout=3) for _ in range(4)]
+    assert sorted(g for g, _ in got) == ["busy", "held", "held", "held"]  # 旧实现:4 held 全绕开通用池
+    assert llm._general_sem._value == 0                       # 通用池满:2 席都被冲刺的既有请求拿走
+    assert llm._llm_sem._value == 1                           # 冲刺共占 3 席(1 非通用 + 2 通用),预留额度未被吃满
+
+    # 核心断言:真正的新 key 仍拿得到席位(旧实现此处 503)
+    security.CURRENT_RATE_KEY.set("ip:fresh")
+    async with llm._seat():
+        pass
+
+    burst_gate.set()
+    await asyncio.gather(*burst)
+    assert llm._llm_sem._value == config.LLM_MAX_CONCURRENCY
+    assert llm._general_sem._value == config.LLM_MAX_CONCURRENCY - config.LLM_RESERVED_SEATS
+    assert llm._active_keys == {}
+
+
+async def test_key_sems_bounded_lru_evicts_only_unoccupied(monkeypatch):
+    """复审 Finding #2:_key_sems 有界(LRU),只淘汰零占用的信号量;
+    有持有者/等待者的一律保留(per-key 记账不被破坏)。"""
+    monkeypatch.setattr(llm, "_KEY_SEMS_MAX", 4)
+    llm._reset_seats_for_test()
+    started: asyncio.Queue = asyncio.Queue()
+    gate = asyncio.Event()
+
+    async def hold(key: str):
+        security.CURRENT_RATE_KEY.set(key)
+        async with llm._seat():
+            started.put_nowait(key)
+            await gate.wait()
+
+    tasks = [asyncio.create_task(hold(k)) for k in ("ip:a", "ip:b")]
+    for _ in range(2):
+        await asyncio.wait_for(started.get(), timeout=2)
+
+    for i in range(10):   # churn 10 个不同 key(每个入席即出,留下零占用信号量)
+        security.CURRENT_RATE_KEY.set(f"ip:{i}")
+        async with llm._seat():
+            pass
+
+    assert len(llm._key_sems) <= 4                            # 有界(F4 纪律)
+    assert "ip:a" in llm._key_sems and "ip:b" in llm._key_sems  # 占用中的不被淘汰
+    assert "ip:0" not in llm._key_sems                        # 零占用最旧项被淘汰(LRU)
+    assert "ip:9" in llm._key_sems                            # 最新项保留
+
+    gate.set()
+    await asyncio.gather(*tasks)
+    assert llm._active_keys == {}
+
 
 # ---------- ContextVar 传播(N3:named risk —— BaseHTTPMiddleware 下游传播) ----------
 
