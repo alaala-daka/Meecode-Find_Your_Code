@@ -26,6 +26,9 @@
 - 匹配限定根名:`socket.getaddrinfo` 只认 `socket.` 前缀或裸名,`loop.getaddrinfo`
   (async 正解)不误报;`time.sleep` 不误报 `asyncio.sleep`;`OpenAI` 不误报
   `AsyncOpenAI`;`httpx.Client` 不误报 `AsyncClient`;`invoke` 不误报 `ainvoke`。
+- 名字先归一再判违禁:import 别名(`import socket as s`、`from time import sleep as sl`)
+  与简单赋值别名(`f = socket.getaddrinfo`)还原成真实符号,封住换名逃逸
+  (test_selfcheck_alias_evasion_* 三连,各带「裸拼写规则单独不抓」的判别力断言)。
 - 每条规则都有下方 seeded 自检(判别力自证):该抓的必抓、不该抓的必不抓。
 """
 from __future__ import annotations
@@ -82,20 +85,24 @@ def _dotted(func: ast.expr) -> str | None:
     return None
 
 
-def _forbidden_reason(func: ast.expr) -> str | None:
-    if isinstance(func, ast.Name):
-        return _BARE.get(func.id)
-    if not isinstance(func, ast.Attribute):
-        return None
-    dotted = _dotted(func)
-    if dotted is not None:
-        segs = dotted.split(".")
+def _match_forbidden(canonical: str | None, attr: str | None) -> str | None:
+    """纯拼写规则:输入为**归一后**的点分名(canonical),或非命名链的属性名兜底。
+
+    归一(canonicalization)由 _Index 负责:import 别名/赋值别名先还原成真实符号,
+    例如 s.getaddrinfo(socket as s)→socket.getaddrinfo、sl(time.sleep as sl)→time.sleep、
+    f = socket.getaddrinfo → f(...)→socket.getaddrinfo。不做归一的裸拼写可被换名逃逸
+    (见 test_selfcheck_alias_evasion_* 中「拼写规则单独不抓」的判别力断言)。
+    """
+    if canonical is not None:
+        segs = canonical.split(".")
+        if len(segs) == 1:
+            return _BARE.get(segs[0])
         root, last = segs[0], segs[-1]
-        if dotted in ("socket.getaddrinfo", "socket.gethostbyname"):
+        if canonical in ("socket.getaddrinfo", "socket.gethostbyname"):
             return "同步 DNS"
-        if dotted == "time.sleep":
+        if canonical == "time.sleep":
             return "同步睡眠"
-        if dotted == "sqlite3.connect":
+        if canonical == "sqlite3.connect":
             return "同步 sqlite3.connect"
         if root == "httpx" and last in ("post", "get", "request"):
             return "同步 httpx 直发"
@@ -104,7 +111,7 @@ def _forbidden_reason(func: ast.expr) -> str | None:
         if root == "requests":
             return "同步 requests"
         return _ATTR_ONLY.get(last)
-    return _ATTR_ONLY.get(func.attr)
+    return _ATTR_ONLY.get(attr or "")
 
 
 # ---------- 索引与调用解析(只为「可达调用」服务;解析不出即跳过) ----------
@@ -128,6 +135,7 @@ class _Module:
         self.methods: dict[str, dict[str, FuncInfo]] = {}   # 类名 -> 方法名 -> fn
         self.imports: dict[str, tuple] = {}                  # 别名 -> ("module", m) | ("func", m, name)
         self.instances: dict[str, str] = {}                  # 模块级 x = Cls(...) -> 类名
+        self.alias: dict[str, set[str]] = {}                 # 简单赋值别名 x = <Name|Attribute 点分名>
         self.classes: set[str] = set()
 
 
@@ -147,8 +155,11 @@ class _Index:
             for child in ast.iter_child_nodes(node):
                 if isinstance(child, ast.Import):
                     for alias in child.names:
-                        module.imports[alias.asname or alias.name.split(".")[0]] = (
-                            "module", alias.name.split(".")[0])
+                        if alias.asname:   # import socket as s → s 归一到 socket
+                            module.imports[alias.asname] = ("module", alias.name)
+                        else:
+                            root = alias.name.split(".")[0]
+                            module.imports[root] = ("module", root)
                 elif isinstance(child, ast.ImportFrom):
                     base = self._from_target(module.name, child)
                     for alias in child.names:
@@ -171,14 +182,25 @@ class _Index:
                     if cls:
                         module.methods.setdefault(cls, {})[child.name] = info
                     visit(child, cls, info)
-                elif isinstance(child, ast.Assign) and parent is None and cls is None:
-                    for t in child.targets:
-                        if isinstance(t, ast.Name) and isinstance(child.value, ast.Call):
-                            fn = child.value.func
-                            if isinstance(fn, ast.Name):
-                                module.instances[t.id] = fn.id
-                            elif isinstance(fn, ast.Attribute):
-                                module.instances[t.id] = fn.attr
+                elif isinstance(child, (ast.Assign, ast.AnnAssign)):
+                    value = child.value
+                    targets = child.targets if isinstance(child, ast.Assign) else [child.target]
+                    if (isinstance(child, ast.Assign) and parent is None and cls is None
+                            and isinstance(value, ast.Call)):
+                        for t in targets:
+                            if isinstance(t, ast.Name):
+                                fn = value.func
+                                if isinstance(fn, ast.Name):
+                                    module.instances[t.id] = fn.id
+                                elif isinstance(fn, ast.Attribute):
+                                    module.instances[t.id] = fn.attr
+                    if value is not None and len(targets) == 1 and isinstance(targets[0], ast.Name):
+                        # 简单赋值别名(f = socket.getaddrinfo):归一到目标点分名,封住换名逃逸
+                        if isinstance(value, (ast.Name, ast.Attribute)):
+                            dv = _dotted(value)
+                            if dv is not None:
+                                module.alias.setdefault(targets[0].id, set()).add(dv)
+                    visit(child, cls, parent)
                 else:
                     visit(child, cls, parent)
 
@@ -191,6 +213,37 @@ class _Index:
         pkg = current.split(".")[:-1]
         base = pkg[: len(pkg) - (node.level - 1)]
         return ".".join(base + ([node.module] if node.module else []))
+
+    # ---- 别名归一(封住 import-alias / 赋值别名逃逸) ----
+
+    def _lookup_name(self, name: str, module: str, depth: int) -> str | None:
+        """裸名/根名 → 真实点分名:import 别名优先,再查简单赋值别名;查不到 None(保留原拼写)。"""
+        if depth > 8:
+            return None
+        m = self.modules.get(module)
+        if m is None:
+            return None
+        imp = m.imports.get(name)
+        if imp is not None:
+            return imp[1] if imp[0] == "module" else (f"{imp[1]}.{imp[2]}" if imp[1] else imp[2])
+        targets = m.alias.get(name)
+        if targets and len(targets) == 1:   # 多目标=歧义,保守跳过(不误报方向)
+            return self._canonicalize_dotted(next(iter(targets)), module, depth + 1)
+        return None
+
+    def _canonicalize_dotted(self, dotted: str, module: str, depth: int = 0) -> str:
+        segs = dotted.split(".")
+        looked = self._lookup_name(segs[0], module, depth)
+        if looked is None:
+            return dotted
+        return ".".join([looked] + segs[1:])
+
+    def forbidden_reason(self, func: ast.expr, fi: FuncInfo) -> str | None:
+        """违禁判定:先把名字归一到真实符号(import/赋值别名),再套拼写规则。"""
+        dotted = _dotted(func)
+        canonical = self._canonicalize_dotted(dotted, fi.module) if dotted is not None else None
+        attr = getattr(func, "attr", None) if isinstance(func, ast.Attribute) else None
+        return _match_forbidden(canonical, attr)
 
     def unique_func(self, module: str, name: str) -> FuncInfo | None:
         m = self.modules.get(module)
@@ -313,7 +366,7 @@ def scan_modules(sources: dict[str, str]) -> list[Finding]:
                 continue
             visited.add(key)
             for call in _iter_own_calls(fi.node):
-                reason = _forbidden_reason(call.func)
+                reason = index.forbidden_reason(call.func, fi)
                 if reason is not None:
                     findings.append(Finding(
                         root=root_qual, site=fi.qual, module=fi.module,
@@ -430,6 +483,67 @@ def test_selfcheck_flags_sqlite_write_on_reached_helper():
     )
     assert sorted(f.reason for f in scan_modules({"seeded.a": src})) == [
         "同步 sqlite3 写", "同步 sqlite3 写"]
+
+
+# ---------- 判别力自检(seeded):import/赋值别名换名逃逸必须被抓获 ----------
+
+
+def test_selfcheck_alias_evasion_import_socket_as():
+    """`import socket as s` + s.getaddrinfo:归一到 socket.getaddrinfo 后判违禁。"""
+    src = (
+        "import socket as s\n"
+        "async def boom():\n"
+        "    s.getaddrinfo('x', 80)\n"
+    )
+    assert _match_forbidden("s.getaddrinfo", None) is None   # 判别力:裸拼写规则单独不抓(修复前的逃逸)
+    findings = scan_modules({"seeded.a": src})
+    assert len(findings) == 1
+    f = findings[0]
+    assert (f.reason, f.site, f.root) == ("同步 DNS", "seeded.a.boom", "seeded.a.boom")
+
+
+def test_selfcheck_alias_evasion_from_time_import_sleep_as():
+    """`from time import sleep as sl` + sl(1):归一到 time.sleep 后判违禁。"""
+    src = (
+        "from time import sleep as sl\n"
+        "async def boom():\n"
+        "    sl(1)\n"
+    )
+    assert _match_forbidden("sl", None) is None   # 判别力:裸拼写规则单独不抓
+    findings = scan_modules({"seeded.a": src})
+    assert len(findings) == 1
+    f = findings[0]
+    assert (f.reason, f.site, f.root) == ("同步睡眠", "seeded.a.boom", "seeded.a.boom")
+
+
+def test_selfcheck_alias_evasion_assignment_alias():
+    """`f = socket.getaddrinfo` + f(...):赋值别名归一到 socket.getaddrinfo 后判违禁。"""
+    src = (
+        "import socket\n"
+        "async def boom():\n"
+        "    f = socket.getaddrinfo\n"
+        "    f('x', 80)\n"
+    )
+    assert _match_forbidden("f", None) is None   # 判别力:裸拼写规则单独不抓
+    findings = scan_modules({"seeded.a": src})
+    assert len(findings) == 1
+    fn = findings[0]
+    assert (fn.reason, fn.site, fn.root) == ("同步 DNS", "seeded.a.boom", "seeded.a.boom")
+
+
+def test_selfcheck_alias_evasion_through_reached_helper():
+    """别名逃逸在「可达调用」链上同样抓得到:助手体内 sl(1) 归一判违禁,根在 async。"""
+    src = (
+        "from time import sleep as sl\n"
+        "def helper():\n"
+        "    sl(1)\n"
+        "async def boom():\n"
+        "    helper()\n"
+    )
+    findings = scan_modules({"seeded.a": src})
+    assert len(findings) == 1
+    f = findings[0]
+    assert (f.reason, f.site, f.root) == ("同步睡眠", "seeded.a.helper", "seeded.a.boom")
 
 
 # ---------- 判别力自检(seeded):不该抓的必不抓(误报防线) ----------
