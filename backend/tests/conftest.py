@@ -11,6 +11,14 @@ def _clear_llm_clients():
 
 
 @pytest.fixture(autouse=True)
+def _reset_llm_seats():
+    """席位状态每用例重建(Task 5):防跨用例串扰,也防信号量绑到上个用例的事件循环。"""
+    llm._reset_seats_for_test()
+    yield
+    llm._reset_seats_for_test()
+
+
+@pytest.fixture(autouse=True)
 def _clear_github_caches():
     """文件树/文件内容带 lru_cache,用例间必须清,否则降级分支测不到。"""
     from app.feed.routes import repos as feed_repos

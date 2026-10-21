@@ -30,6 +30,15 @@ def _rows(path):
         conn.close()
 
 
+def _flush(path):
+    """缓冲语义：record_usage 只入缓冲，断言落库前显式冲刷（口径迁移，非回归）。"""
+    conn = db.connect(path)
+    try:
+        return llm_usage.flush_for_test(conn)
+    finally:
+        conn.close()
+
+
 def _seed_kw(**kw):
     base = dict(route=llm_usage.ROUTE_ROOTS, repo_id=None, model="m",
                 prompt_tokens=1, completion_tokens=2, ok=1, latency_ms=10)
@@ -46,6 +55,7 @@ def test_枚举锁_九值():
 def test_record落行字段(usage_db):
     _seed_kw(route=llm_usage.ROUTE_EXPAND, repo_id=3, model="gpt-x",
              prompt_tokens=7, completion_tokens=5, ok=0, latency_ms=250)
+    assert _flush(usage_db) == 1
     (row,) = _rows(usage_db)
     assert row["route"] == "expand" and row["repo_id"] == 3
     assert row["model"] == "gpt-x"
@@ -56,6 +66,7 @@ def test_record落行字段(usage_db):
 
 def test_model截断100字符(usage_db):
     _seed_kw(model="x" * 300)
+    assert _flush(usage_db) == 1
     (row,) = _rows(usage_db)
     assert row["model"] == "x" * 100
 
@@ -64,10 +75,12 @@ def test_写库异常吞掉并计failures(usage_db, monkeypatch):
     def boom():
         raise RuntimeError("db down")
 
-    monkeypatch.setattr(llm_usage, "_factory", boom)
+    _seed_kw()  # 先入缓冲
+    monkeypatch.setattr(llm_usage, "_factory", boom)  # 后台冲刷自开连接时抛异常
     before = llm_usage.failures
-    _seed_kw()  # 不得抛出
+    llm_usage._flush_auto()  # 守护线程同款入口：工厂抛异常须吞掉并计数
     assert llm_usage.failures == before + 1
+    assert _rows(usage_db) == []  # 未落库
 
 
 def test_写锁竞争立即返回且释放后恢复(usage_db):
@@ -76,17 +89,23 @@ def test_写锁竞争立即返回且释放后恢复(usage_db):
     locked = db.connect(usage_db)
     try:
         locked.execute("INSERT INTO llm_usage (ts, route, model, ok) VALUES (1,'roots','held',1)")
-        started = time.monotonic()
         _seed_kw()
-        elapsed = time.monotonic() - started
+        conn = db.connect(usage_db)
+        try:
+            started = time.monotonic()
+            n = llm_usage.flush_for_test(conn)  # busy_timeout=0：遇锁立即失败，不排队等业务写锁
+            elapsed = time.monotonic() - started
+        finally:
+            conn.close()
         assert elapsed < 1, f"观测写入等待了 {elapsed:.2f}s"
-        assert llm_usage.failures == 1
+        assert n == 0 and llm_usage.failures == 1
         assert _rows(usage_db) == []
     finally:
         locked.rollback()
         locked.close()
 
     _seed_kw()
+    assert _flush(usage_db) == 1
     assert len(_rows(usage_db)) == 1
     assert llm_usage.failures == 1
 
@@ -94,11 +113,13 @@ def test_写锁竞争立即返回且释放后恢复(usage_db):
 def test_未绑定连接工厂丢弃不抛():
     llm_usage.reset()
     _seed_kw()  # 不得抛出、不落行（无库可写）
+    assert llm_usage._buf == []  # 记录即丢弃，不入缓冲（防止串入后续用例的库）
 
 
 def test_LLM_MOCK不落行(usage_db, monkeypatch):
     monkeypatch.setattr(config, "LLM_MOCK", True)
     _seed_kw()
+    assert _flush(usage_db) == 0
     assert _rows(usage_db) == []
 
 
@@ -125,18 +146,34 @@ class _FakeCompletions:
     def __init__(self, *, resp=None, exc=None, stream=None):
         self._resp, self._exc, self._stream = resp, exc, stream
 
-    def create(self, **kwargs):
+    async def create(self, **kwargs):
         self.kwargs = kwargs
         if self._exc is not None:
             raise self._exc
         if self._stream is not None:
-            return iter(self._stream)
+            return _AsyncIter(self._stream)
         return self._resp
+
+
+class _AsyncIter:
+    """伪异步流:把 chunk 列表包成 async for 可迭代对象。"""
+
+    def __init__(self, items):
+        self._it = iter(items)
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        try:
+            return next(self._it)
+        except StopIteration:
+            raise StopAsyncIteration
 
 
 def _install(monkeypatch, completions):
     fake = type("Fake", (), {"chat": type("Chat", (), {"completions": completions})()})()
-    monkeypatch.setattr(llm, "OpenAI", lambda base_url=None, api_key=None: fake)
+    monkeypatch.setattr(llm, "_make_async_client", lambda **kw: fake)
     monkeypatch.setattr(llm.config, "LLM_MOCK", False)
     monkeypatch.setattr(llm.config, "LLM_API_KEY", "k")
     monkeypatch.setattr(llm.config, "LLM_MODEL", "m1")
@@ -154,66 +191,71 @@ def _usage_chunk():
     return type("Chunk", (), {"choices": [], "usage": u})()
 
 
-def test_chat_json成功落行ok1(usage_db, monkeypatch):
+async def test_chat_json成功落行ok1(usage_db, monkeypatch):
     _install(monkeypatch, _FakeCompletions(resp=_resp()))
-    llm.chat_json("s", "u", RewriteResult,
-                  route=llm_usage.ROUTE_ROOTS, repo_id=9)
+    await llm.chat_json("s", "u", RewriteResult,
+                        route=llm_usage.ROUTE_ROOTS, repo_id=9)
+    assert _flush(usage_db) == 1
     (row,) = _rows(usage_db)
     assert (row["route"], row["repo_id"], row["model"], row["ok"]) == ("roots", 9, "m1", 1)
     assert (row["prompt_tokens"], row["completion_tokens"]) == (7, 5)
     assert row["latency_ms"] >= 0
 
 
-def test_chat_json解析失败记ok0与usage实得值(usage_db, monkeypatch):
+async def test_chat_json解析失败记ok0与usage实得值(usage_db, monkeypatch):
     _install(monkeypatch, _FakeCompletions(resp=_resp(content="不是 JSON")))
     with pytest.raises(RuntimeError):
-        llm.chat_json("s", "u", RewriteResult,
-                      route=llm_usage.ROUTE_NODES_DETAIL)
+        await llm.chat_json("s", "u", RewriteResult,
+                            route=llm_usage.ROUTE_NODES_DETAIL)
+    assert _flush(usage_db) == 2
     rows = _rows(usage_db)
     assert len(rows) == 2  # 两次 attempt 各一行
     assert [r["ok"] for r in rows] == [0, 0]
     assert all((r["prompt_tokens"], r["completion_tokens"]) == (7, 5) for r in rows)
 
 
-def test_chat_json网络异常记ok0与0tokens(usage_db, monkeypatch):
+async def test_chat_json网络异常记ok0与0tokens(usage_db, monkeypatch):
     _install(monkeypatch, _FakeCompletions(exc=RuntimeError("boom")))
     with pytest.raises(RuntimeError):
-        llm.chat_json("s", "u", RewriteResult, route=llm_usage.ROUTE_ROOTS)
+        await llm.chat_json("s", "u", RewriteResult, route=llm_usage.ROUTE_ROOTS)
+    assert _flush(usage_db) == 2
     rows = _rows(usage_db)
     assert len(rows) == 2 and all(r["ok"] == 0 for r in rows)
     assert all((r["prompt_tokens"], r["completion_tokens"]) == (0, 0) for r in rows)
 
 
-def test_流式usage末chunk空choices也被采到(usage_db, monkeypatch):
+async def test_流式usage末chunk空choices也被采到(usage_db, monkeypatch):
     _install(monkeypatch,
              _FakeCompletions(stream=[_delta_chunk("hi"), _usage_chunk()]))
-    events = list(llm.chat_stream_events(
+    events = [e async for e in llm.chat_stream_events(
         system="s", messages=[{"role": "user", "content": "x"}],
-        route=llm_usage.ROUTE_READER_CHAT))
+        route=llm_usage.ROUTE_READER_CHAT)]
     assert events == [{"type": "delta", "text": "hi"}, {"type": "done"}]  # done 收尾为既有事件协议
+    assert _flush(usage_db) == 1
     (row,) = _rows(usage_db)
     assert (row["route"], row["ok"]) == ("reader-chat", 1)
     assert (row["prompt_tokens"], row["completion_tokens"]) == (3, 4)
 
 
-def test_流式断流记ok1且latency到中断时刻(usage_db, monkeypatch):
+async def test_流式断流记ok1且latency到中断时刻(usage_db, monkeypatch):
     _install(monkeypatch,
              _FakeCompletions(stream=[_delta_chunk("a"), _delta_chunk("b"), _usage_chunk()]))
     gen = llm.chat_stream_events(
         system="s", messages=[{"role": "user", "content": "x"}],
         route=llm_usage.ROUTE_READER_CHAT)
-    next(gen)
-    gen.close()  # 模拟客户端断流（GeneratorExit）
+    await gen.__anext__()
+    await gen.aclose()  # 模拟客户端断流（GeneratorExit）
+    assert _flush(usage_db) == 1  # finally 里的记账进缓冲，冲刷后落库
     (row,) = _rows(usage_db)
     assert row["ok"] == 1 and row["latency_ms"] >= 0
     assert (row["prompt_tokens"], row["completion_tokens"]) == (0, 0)  # 未到 usage chunk
 
 
-def test_流式断言stream_options开启usage(usage_db, monkeypatch):
+async def test_流式断言stream_options开启usage(usage_db, monkeypatch):
     comp = _FakeCompletions(stream=[_delta_chunk("z"), _usage_chunk()])
     _install(monkeypatch, comp)
-    list(llm.chat_stream_events(
-        system="s", messages=[], route=llm_usage.ROUTE_READER_CHAT))
+    [e async for e in llm.chat_stream_events(
+        system="s", messages=[], route=llm_usage.ROUTE_READER_CHAT)]
     assert comp.kwargs["stream_options"] == {"include_usage": True}
 
 
@@ -251,6 +293,7 @@ def test_feed_chat_json落行(usage_db, monkeypatch):
     out = feed_llm.chat_json(system="s", user="u", model=CommentVerdict,
                              route=llm_usage.ROUTE_SUBMIT_SCREEN)
     assert out.is_compliant is True
+    assert _flush(usage_db) == 1
     (row,) = _rows(usage_db)
     assert (row["route"], row["repo_id"], row["model"], row["ok"]) == ("submit-screen", None, "m2", 1)
     assert (row["prompt_tokens"], row["completion_tokens"]) == (11, 2)
@@ -272,6 +315,7 @@ def test_预审落行带repo_id(conn, usage_db, monkeypatch):
 
     moderation.moderate_comment(conn, cid)
 
+    assert _flush(usage_db) == 1
     (row,) = _rows(usage_db)
     assert (row["route"], row["repo_id"]) == ("comment-moderate", 42)
 

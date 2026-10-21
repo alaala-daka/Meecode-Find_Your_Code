@@ -85,6 +85,16 @@ RATE_LIMITS: dict[str, int] = {
     for bucket, limit in _RATE_LIMIT_DEFAULTS.items()
 }
 
+# ---------- LLM 并发/超时（异步化，spec 2026-10-19-llm-async-design.md §5.7）----------
+LLM_MAX_CONCURRENCY: int = _int_env("LLM_MAX_CONCURRENCY", 200)              # 全进程并发 LLM provider 请求
+LLM_MAX_CONCURRENCY_PER_KEY: int = _int_env("LLM_MAX_CONCURRENCY_PER_KEY", 20)  # 每 rate_key 并发
+LLM_ACQUIRE_TIMEOUT: float = float(os.getenv("LLM_ACQUIRE_TIMEOUT", "10"))  # 席位获取最长等待，超时快速失败
+LLM_RESERVED_SEATS: int = _int_env("LLM_RESERVED_SEATS", 20)                 # 给低活跃 key 预留席位
+LLM_TIMEOUT: float = float(os.getenv("LLM_TIMEOUT", "120"))                 # 单次 LLM 调用超时
+LLM_STREAM_TOTAL_TIMEOUT: float = float(os.getenv("LLM_STREAM_TOTAL_TIMEOUT", "180"))  # 单流墙钟总超时
+URL_RESOLVE_TIMEOUT: float = float(os.getenv("URL_RESOLVE_TIMEOUT", "2"))   # URL/DNS 校验超时
+URL_RESOLVE_MAX_CONCURRENCY: int = _int_env("URL_RESOLVE_MAX_CONCURRENCY", 8)  # DNS 校验并发上限（独立信号量）
+
 
 def ensure_prod_secrets() -> None:
     """生产模式 fail-fast:忘配 SESSION_SECRET 就拒启,避免会话 cookie 可被公开常量伪造。"""

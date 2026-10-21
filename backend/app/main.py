@@ -2,11 +2,12 @@
 from __future__ import annotations
 
 import json
+import logging
 import threading
 import time
 import uuid
 from contextlib import asynccontextmanager
-from typing import Iterator
+from typing import AsyncIterator
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -27,12 +28,14 @@ from .feed.routes import me as me_routes
 from .feed.routes import repos as repos_routes
 from .feed.routes import submit as submit_routes
 from .feed.routes import users as users_routes
-from .llm import chat_stream_events
+from .llm import SeatBusyError, chat_stream_events
 from .schemas import (  # 解读域 schemas,原样
     ChatRequest, CreateRootRequest, CreateRootResponse, CreateSessionResponse,
     DetailRequest, DetailResponse, EdgePayload, ExpandRequest, ExpandResponse,
     NodePayload, RepoRootRequest, RepoRootResponse, Settings,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -137,35 +140,42 @@ def create_session() -> CreateSessionResponse:
 
 
 @app.post("/api/roots", response_model=CreateRootResponse)
-def create_root(req: CreateRootRequest) -> CreateRootResponse:
+async def create_root(req: CreateRootRequest) -> CreateRootResponse:
     _require_session(req.session_id)
     raw = req.raw_input.strip()
     if not raw:
         raise HTTPException(status_code=422, detail="输入不能为空")
     try:
-        topic = run_rewrite(raw, llm=req.llm)
+        topic = await run_rewrite(raw, llm=req.llm)
+    except ValueError as exc:
+        # urlguard 固定脱敏文案(SSRF/解析超时等)直出安全(F6);错误码不变量:分支前该输入类为 422
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SeatBusyError as exc:
+        raise HTTPException(status_code=503, detail="服务繁忙，请稍后重试") from exc  # N4 饱和快速失败(F6 脱敏)
     except RuntimeError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        logger.warning("create_root 生成失败: %s", exc)  # F6:原始异常只落日志,不出网
+        raise HTTPException(status_code=502, detail="生成失败，请稍后重试") from exc
     node = NodePayload(id=uuid.uuid4().hex, title=topic, content=topic, relevance=1.0)
     return CreateRootResponse(node=node)
 
 
 @app.post("/api/repos/root", response_model=RepoRootResponse)
-def create_repo_root(req: RepoRootRequest) -> RepoRootResponse:
+async def create_repo_root(req: RepoRootRequest) -> RepoRootResponse:
     """以仓库为根建图:拉取理解包 → 主题陈述 → 自动首层展开。"""
     _require_session(req.session_id)
     if config.LLM_MOCK:
         repo = mock_repo_context(req.full_name.strip().strip("/"))
     else:
         try:
-            repo = gh.fetch_repo_context(req.full_name, req.default_branch)
+            repo = await gh.fetch_repo_context(req.full_name, req.default_branch)
         except gh.GitHubFetchError as exc:
+            # N8 白名单:GitHubFetchError 文案面向用户直出(不含密钥/内网信息)
             raise HTTPException(status_code=502, detail=str(exc)) from exc
     _require_session(req.session_id)["repo_context"] = repo
 
     try:
-        topic = run_repo_topic(repo["full_name"], repo["description"], repo["readme"], llm=req.llm)
-        children, edges, _refused = run_expand(
+        topic = await run_repo_topic(repo["full_name"], repo["description"], repo["readme"], llm=req.llm)
+        children, edges, _refused = await run_expand(
             parent_title=topic,
             path=[topic],
             depth=0,
@@ -174,8 +184,14 @@ def create_repo_root(req: RepoRootRequest) -> RepoRootResponse:
             repo_context=repo,
             route=llm_usage.ROUTE_REPO_ROOT,
         )
+    except ValueError as exc:
+        # urlguard 固定脱敏文案(SSRF/解析超时等)直出安全(F6);错误码不变量:分支前该输入类为 422
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SeatBusyError as exc:
+        raise HTTPException(status_code=503, detail="服务繁忙，请稍后重试") from exc  # N4 饱和快速失败(F6 脱敏)
     except RuntimeError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        logger.warning("create_repo_root 生成失败: %s", exc)  # F6
+        raise HTTPException(status_code=502, detail="生成失败，请稍后重试") from exc
 
     node = NodePayload(id=uuid.uuid4().hex, title=topic, content=topic, relevance=1.0)
     edge_by_title = {e.child_title: e for e in edges}
@@ -203,10 +219,10 @@ def create_repo_root(req: RepoRootRequest) -> RepoRootResponse:
 
 
 @app.post("/api/expand", response_model=ExpandResponse)
-def expand(req: ExpandRequest) -> ExpandResponse:
+async def expand(req: ExpandRequest) -> ExpandResponse:
     _require_session(req.session_id)
     try:
-        children, edges, refused = run_expand(
+        children, edges, refused = await run_expand(
             parent_title=req.node_title,
             path=req.path,
             depth=req.depth,
@@ -215,8 +231,14 @@ def expand(req: ExpandRequest) -> ExpandResponse:
             repo_context=_require_session(req.session_id).get("repo_context"),
             route=llm_usage.ROUTE_EXPAND,
         )
+    except ValueError as exc:
+        # urlguard 固定脱敏文案(SSRF/解析超时等)直出安全(F6);错误码不变量:分支前该输入类为 422
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SeatBusyError as exc:
+        raise HTTPException(status_code=503, detail="服务繁忙，请稍后重试") from exc  # N4 饱和快速失败(F6 脱敏)
     except RuntimeError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        logger.warning("expand 生成失败: %s", exc)  # F6
+        raise HTTPException(status_code=502, detail="生成失败，请稍后重试") from exc
 
     if refused:
         return ExpandResponse(refused=refused)
@@ -251,33 +273,56 @@ def expand(req: ExpandRequest) -> ExpandResponse:
 
 
 @app.post("/api/nodes/detail", response_model=DetailResponse)
-def node_detail(req: DetailRequest) -> DetailResponse:
+async def node_detail(req: DetailRequest) -> DetailResponse:
     """详细展开(双击已展开节点):生成更丰富的 markdown 阐述,不产生新子节点。"""
     _require_session(req.session_id)
     try:
-        detail = run_elaborate(
+        detail = await run_elaborate(
             req.node_title,
             req.path,
             req.brief,
             llm=req.llm,
             repo_context=_require_session(req.session_id).get("repo_context"),
         )
+    except ValueError as exc:
+        # urlguard 固定脱敏文案(SSRF/解析超时等)直出安全(F6);错误码不变量:分支前该输入类为 422
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SeatBusyError as exc:
+        raise HTTPException(status_code=503, detail="服务繁忙，请稍后重试") from exc  # N4 饱和快速失败(F6 脱敏)
     except RuntimeError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        logger.warning("node_detail 生成失败: %s", exc)  # F6
+        raise HTTPException(status_code=502, detail="生成失败，请稍后重试") from exc
     return DetailResponse(node_id=req.node_id, detail=detail)
 
 
-def _ndjson_stream(events: Iterator[dict]) -> Iterator[str]:
-    """统一 NDJSON 输出;流中途异常以 error 事件收尾(此时 HTTP 状态已提交 200)。"""
+async def _ndjson_stream(events: AsyncIterator[dict], primed: dict | None = None) -> AsyncIterator[str]:
+    """统一 NDJSON 输出;流中途异常以 error 事件收尾(此时 HTTP 状态已提交 200)。
+
+    finally 显式 aclose 上游生成器:客户端断开/取消时席位与计量立即回收(F5),
+    不依赖 GC 兜底;aclose 失败只记日志,不改变已发出的流。
+    """
     try:
-        for ev in events:
+        if primed is not None:
+            yield json.dumps(primed, ensure_ascii=False) + "\n"
+        async for ev in events:
             yield json.dumps(ev, ensure_ascii=False) + "\n"
+    except SeatBusyError:
+        logger.warning("NDJSON 流席位饱和,提前收尾")  # F6:原始异常只落日志
+        yield json.dumps({"type": "error", "message": "服务繁忙，请稍后重试"}, ensure_ascii=False) + "\n"
     except Exception as exc:
-        yield json.dumps({"type": "error", "message": f"生成中断:{exc}"}, ensure_ascii=False) + "\n"
+        logger.warning("NDJSON 流中断: %s", exc)  # F6:原始异常只落日志,不出网
+        yield json.dumps({"type": "error", "message": "生成中断"}, ensure_ascii=False) + "\n"
+    finally:
+        aclose = getattr(events, "aclose", None)
+        if aclose is not None:
+            try:
+                await aclose()
+            except Exception:  # pragma: no cover - 上游收尾异常不掩盖主流结果
+                logger.warning("NDJSON 上游生成器收尾失败", exc_info=True)
 
 
 @app.post("/api/reader/chat")
-def reader_chat(req: ChatRequest) -> StreamingResponse:
+async def reader_chat(req: ChatRequest) -> StreamingResponse:
     """阅读器伴读问答:NDJSON 流式;mock 模式输出确定性模拟回答。"""
     _require_session(req.session_id)
     history = [{"role": m.role, "content": m.content} for m in req.messages[-20:]]
@@ -302,7 +347,17 @@ def reader_chat(req: ChatRequest) -> StreamingResponse:
             llm=req.llm,
             tavily_key=tavily_key,
         )
-    return StreamingResponse(_ndjson_stream(events), media_type="application/x-ndjson")
+    # 饱和快速失败(N4):流开始前预取首事件,席位获取超时在此显形为 503,而非 200 后的 error 事件
+    try:
+        primed = await anext(events)
+    except StopAsyncIteration:
+        primed = None
+    except ValueError as exc:
+        # 预取首事件时 _resolve→urlguard 的固定脱敏文案(SSRF/解析超时等)在此显形,映射 422(F6)
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except SeatBusyError as exc:
+        raise HTTPException(status_code=503, detail="服务繁忙，请稍后重试") from exc
+    return StreamingResponse(_ndjson_stream(events, primed), media_type="application/x-ndjson")
 
 
 def _require_session(session_id: str) -> dict:

@@ -5,7 +5,7 @@
 """
 from __future__ import annotations
 
-from typing import Iterator
+from typing import AsyncIterator
 
 from ..schemas import ChildSpec, EdgeDescription, NodeType, Settings
 
@@ -72,7 +72,7 @@ def mock_elaborate(node_title: str, path: list[str], brief: str = "") -> str:
     )
 
 
-def mock_chat_events(node_title: str, messages: list[dict]) -> Iterator[dict]:
+async def mock_chat_events(node_title: str, messages: list[dict]) -> AsyncIterator[dict]:
     """模拟伴读回答:确定性分块流式文本(离线演示用),永不触发工具。"""
     question = next((m["content"] for m in reversed(messages) if m.get("role") == "user"), "")
     answer = (

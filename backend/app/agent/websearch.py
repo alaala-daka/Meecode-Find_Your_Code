@@ -15,15 +15,15 @@ TAVILY_TOOL = {
 }
 
 
-def web_search(query: str, api_key: str, max_results: int = 5) -> list[dict]:
+async def web_search(query: str, api_key: str, max_results: int = 5) -> list[dict]:
     """返回 [{title, url, content}] 摘要列表;异常由调用方兜底成 error 结果。"""
     import httpx  # 懒加载:mock/无 key 场景不触发
 
-    resp = httpx.post(
-        "https://api.tavily.com/search",
-        json={"api_key": api_key, "query": query, "max_results": max_results},
-        timeout=15,
-    )
+    async with httpx.AsyncClient(follow_redirects=False, timeout=15) as c:
+        resp = await c.post(
+            "https://api.tavily.com/search",
+            json={"api_key": api_key, "query": query, "max_results": max_results},
+        )
     resp.raise_for_status()
     data = resp.json()
     return [

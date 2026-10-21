@@ -2,9 +2,13 @@
 觅码仓库解读专用;失败一律抛 GitHubFetchError(message 面向用户直接展示)。"""
 from __future__ import annotations
 
+import logging
+
 import httpx
 
 from . import config
+
+logger = logging.getLogger(__name__)
 
 GITHUB_API = "https://api.github.com"
 README_MAX_CHARS = 4000
@@ -56,23 +60,23 @@ def _summarize_languages(languages: dict[str, int]) -> str:
     return "、".join(f"{name} {round(count * 100 / total)}%" for name, count in ranked)
 
 
-def fetch_repo_context(
+async def fetch_repo_context(
     full_name: str,
     default_branch: str | None = None,
-    transport: httpx.BaseTransport | None = None,
+    transport: httpx.AsyncBaseTransport | None = None,
 ) -> dict:
-    """拉取仓库理解包;transport 参数仅供测试注入(httpx.MockTransport)。"""
+    """拉取仓库理解包;transport 参数仅供测试注入(httpx.MockTransport 兼作异步 transport)。"""
     full_name = full_name.strip().strip("/")
     headers = _headers(config.GITHUB_TOKEN)
     try:
-        with httpx.Client(
+        async with httpx.AsyncClient(
             base_url=GITHUB_API,
             headers=headers,
             timeout=TIMEOUT_SECONDS,
-            follow_redirects=True,
+            follow_redirects=False,
             transport=transport,
         ) as client:
-            meta_resp = client.get(f"/repos/{full_name}")
+            meta_resp = await client.get(f"/repos/{full_name}")
             if meta_resp.status_code == 404:
                 raise GitHubFetchError("GitHub 仓库不存在或已私有")
             if meta_resp.status_code == 403:
@@ -82,7 +86,7 @@ def fetch_repo_context(
             branch = default_branch or meta.get("default_branch") or "HEAD"
 
             readme = ""
-            readme_resp = client.get(
+            readme_resp = await client.get(
                 f"/repos/{full_name}/readme",
                 headers={**headers, "Accept": "application/vnd.github.raw"},
             )
@@ -90,16 +94,17 @@ def fetch_repo_context(
                 readme = _truncate(readme_resp.text, README_MAX_CHARS)
 
             tree_text = ""
-            tree_resp = client.get(f"/repos/{full_name}/git/trees/{branch}", params={"recursive": "1"})
+            tree_resp = await client.get(f"/repos/{full_name}/git/trees/{branch}", params={"recursive": "1"})
             if tree_resp.status_code == 200:
                 tree_text = _summarize_tree(tree_resp.json().get("tree", []))
 
             languages_text = ""
-            lang_resp = client.get(f"/repos/{full_name}/languages")
+            lang_resp = await client.get(f"/repos/{full_name}/languages")
             if lang_resp.status_code == 200:
                 languages_text = _summarize_languages(lang_resp.json())
     except httpx.HTTPError as exc:
-        raise GitHubFetchError(f"GitHub 连接失败:{exc}") from exc
+        logger.warning("GitHub 连接失败: %s", exc)  # F6:原始异常只落日志,不出网
+        raise GitHubFetchError("GitHub 连接失败") from exc
 
     return {
         "full_name": full_name,

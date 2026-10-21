@@ -45,11 +45,11 @@ class AgentState(TypedDict, total=False):
 # ---------------------------------------------------------------- nodes
 
 
-def rewrite_node(state: AgentState) -> dict[str, Any]:
+async def rewrite_node(state: AgentState) -> dict[str, Any]:
     """① 输入改写:任意句式 → 以主题为核心的名词性陈述(F1)。"""
     if config.LLM_MOCK:
         return {"topic": mock.mock_rewrite(state["raw_input"])}
-    result = chat_json(
+    result = await chat_json(
         prompts.REWRITE_SYSTEM,
         prompts.REWRITE_USER.format(raw_input=state["raw_input"]),
         RewriteResult,
@@ -67,7 +67,7 @@ def stop_check_node(state: AgentState) -> dict[str, Any]:
     return {"refused": None}
 
 
-def decompose_node(state: AgentState) -> dict[str, Any]:
+async def decompose_node(state: AgentState) -> dict[str, Any]:
     """② 概念拆解:生成 ≤max_children 个子节点,按相关度排序、标注类型(F2/F4)。
 
     已探索路径作为"Agent 推断层"的上下文传入提示词(F3 第二层)。
@@ -75,7 +75,7 @@ def decompose_node(state: AgentState) -> dict[str, Any]:
     settings = state["settings"]
     if config.LLM_MOCK:
         return {"children": mock.mock_decompose(state["parent_title"], settings)}
-    result = chat_json(
+    result = await chat_json(
         prompts.DECOMPOSE_SYSTEM,
         prompts.DECOMPOSE_USER.format(
             parent_title=state["parent_title"],
@@ -92,7 +92,7 @@ def decompose_node(state: AgentState) -> dict[str, Any]:
     return {"children": children}
 
 
-def relate_node(state: AgentState) -> dict[str, Any]:
+async def relate_node(state: AgentState) -> dict[str, Any]:
     """③ 关系描述:为每条边生成双向描述,聚焦两者区别(F6)。"""
     children = state.get("children") or []
     if not children:
@@ -100,7 +100,7 @@ def relate_node(state: AgentState) -> dict[str, Any]:
     if config.LLM_MOCK:
         return {"edges": mock.mock_relate(state["parent_title"], children)}
     titles = "\n".join(f"- {c.title}" for c in children)
-    result = chat_json(
+    result = await chat_json(
         prompts.RELATE_SYSTEM,
         prompts.RELATE_USER.format(
             parent_title=state["parent_title"],
@@ -135,12 +135,12 @@ _expand_graph = (
 )
 
 
-def run_rewrite(raw_input: str, llm: LLMOverride | None = None) -> str:
-    state = _rewrite_graph.invoke({"raw_input": raw_input, "llm": llm})
+async def run_rewrite(raw_input: str, llm: LLMOverride | None = None) -> str:
+    state = await _rewrite_graph.ainvoke({"raw_input": raw_input, "llm": llm})
     return state["topic"]
 
 
-def run_expand(
+async def run_expand(
     parent_title: str,
     path: list[str],
     depth: int,
@@ -149,7 +149,7 @@ def run_expand(
     repo_context: Optional[dict] = None,
     route: str = llm_usage.ROUTE_EXPAND,
 ) -> tuple[list[ChildSpec], list[EdgeDescription], Optional[str]]:
-    state = _expand_graph.invoke(
+    state = await _expand_graph.ainvoke(
         {
             "parent_title": parent_title,
             "path": path,
@@ -163,7 +163,7 @@ def run_expand(
     return state.get("children") or [], state.get("edges") or [], state.get("refused")
 
 
-def run_elaborate(
+async def run_elaborate(
     node_title: str,
     path: list[str],
     brief: str,
@@ -173,7 +173,7 @@ def run_elaborate(
     """详细展开:为已展开节点生成更丰富的 markdown 阐述(不产生新子节点)。"""
     if config.LLM_MOCK:
         return mock.mock_elaborate(node_title, path, brief)
-    result = chat_json(
+    result = await chat_json(
         prompts.ELABORATE_SYSTEM,
         prompts.ELABORATE_USER.format(
             node_title=node_title,
@@ -188,13 +188,13 @@ def run_elaborate(
     return result.detail.strip()
 
 
-def run_repo_topic(
+async def run_repo_topic(
     full_name: str, description: str, readme: str, llm: LLMOverride | None = None
 ) -> str:
     """仓库解读根主题:按仓库实情生成"XX 的解读"式名词性陈述。"""
     if config.LLM_MOCK:
         return f"{full_name} 仓库的解读"
-    result = chat_json(
+    result = await chat_json(
         prompts.REPO_TOPIC_SYSTEM,
         prompts.REPO_TOPIC_USER.format(
             full_name=full_name, description=description or "(无)", readme=readme or "(无)"
