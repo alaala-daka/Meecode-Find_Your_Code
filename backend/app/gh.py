@@ -40,13 +40,19 @@ MOVED_ERROR = "仓库已移动或改名"   # N8 同口径固定文案,面向用�
 
 def _redirect_target(current: str, response: httpx.Response) -> str | None:
     """3xx 的安全跟随判定:Location 相对当前 URL 解析后,目标必须是 https://api.github.com
-    (同一可信 API 宿主)才可跟随;跨宿主/缺 Location 一律 None,绝不跟随任意外部重定向。"""
+    (同一可信 API 宿主)才可跟随;跨宿主/缺 Location 一律 None,绝不跟随任意外部重定向。
+    宿主必须**精确等于** api.github.com(userinfo 伪装/相似域后缀一律拒),端口钉死
+    默认(443/无显式端口)—— 拒绝 https://api.github.com:<任意端口> 之类旁路。"""
     location = response.headers.get("Location")
     if not location:
         return None
     target = urllib.parse.urljoin(current, location)
     parts = urllib.parse.urlparse(target)
-    if parts.scheme == "https" and parts.hostname == "api.github.com":
+    try:
+        port = parts.port   # 非法端口会抛 ValueError → 一律按不可安全跟随处理
+    except ValueError:
+        return None
+    if parts.scheme == "https" and parts.hostname == "api.github.com" and port in (None, 443):
         return target
     return None
 

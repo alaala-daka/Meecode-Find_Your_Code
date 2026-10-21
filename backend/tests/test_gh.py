@@ -104,18 +104,49 @@ async def test_fetch_repo_context_rejects_cross_host_redirect():
     assert seen and all("evil.com" not in u for u in seen)  # 重定向目标从未被请求
 
 
-async def test_fetch_repo_context_redirect_loop_hits_hop_limit():
-    """N7(c):api.github.com 上的 301 打环 → 跳数封顶后固定文案显式失败(不挂死/不无限跟随)。"""
+# 仿冒宿主/userinfo 伪装/端口旁路:跟随判定必须是 hostname 精确等于 api.github.com
+# 且端口钉死默认 —— 任何「in/endswith/后缀匹配」式放宽都会让下列用例请求到目标 URL 而失败。
+_ADVERSARIAL_LOCATIONS = [
+    "https://api.github.com.evil.com/x",          # 相似域后缀:contains/endswith 放宽即漏
+    "https://api.github.com@evil.com/x",          # userinfo 伪装:真宿主名藏在用户名里
+    "https://evil.com@.api.github.com.evil.com/x",  # userinfo + 相似域组合
+    "https://api.github.com:8443/x",              # 同宿主非默认端口旁路
+]
+
+
+@pytest.mark.parametrize("location", _ADVERSARIAL_LOCATIONS)
+async def test_fetch_repo_context_rejects_adversarial_redirect_location(location):
+    """N7 安全加固:仿冒 Location 一律不跟随(固定文案收尾),目标 URL 绝不出现在请求列表。"""
     seen: list[str] = []
 
     def _handler(request: httpx.Request) -> httpx.Response:
         seen.append(str(request.url))
-        return httpx.Response(301, headers={"Location": "https://api.github.com/repos/loop/next"})
+        return httpx.Response(301, headers={"Location": location})
 
     with pytest.raises(gh.GitHubFetchError) as excinfo:
         await gh.fetch_repo_context("octocat/demo", transport=httpx.MockTransport(_handler))
     assert str(excinfo.value) == "仓库已移动或改名"
-    assert len(seen) <= gh.MAX_REDIRECT_HOPS + 1   # 手动跟随最多 MAX_REDIRECT_HOPS 跳
+    assert seen == ["https://api.github.com/repos/octocat/demo"]  # 仅首发一次,目标从未被请求
+    assert location not in seen
+    assert all("evil.com" not in u and ":8443" not in u for u in seen)
+
+
+async def test_fetch_repo_context_redirect_chain_hits_hop_limit():
+    """N7(c):长重定向链(MAX_REDIRECT_HOPS 远不够走完)→ 跳数到顶即固定文案显式失败。
+    断言**恰好** MAX_REDIRECT_HOPS + 1 次请求:提前停(0 跳/少跳)或多跳都会失败。"""
+    seen: list[str] = []
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        seen.append(str(request.url))
+        hop = len(seen)
+        if hop >= 99:   # 链长远超跳数上限:终止由跳数上限触发,而非链耗尽
+            return httpx.Response(200, json={"default_branch": "main"})
+        return httpx.Response(301, headers={"Location": f"https://api.github.com/repos/loop/hop{hop}"})
+
+    with pytest.raises(gh.GitHubFetchError) as excinfo:
+        await gh.fetch_repo_context("octocat/demo", transport=httpx.MockTransport(_handler))
+    assert str(excinfo.value) == "仓库已移动或改名"
+    assert len(seen) == gh.MAX_REDIRECT_HOPS + 1   # 手动跟随恰好 MAX_REDIRECT_HOPS 跳 + 首发
 
 
 async def test_fetch_repo_context_3xx_without_location_is_explicit():

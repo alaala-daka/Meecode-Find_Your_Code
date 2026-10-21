@@ -40,6 +40,10 @@
   类绑定可解析)照旧跟进 —— 方法体真跑在事件循环上,跟进是真阳性(2b 判夺)。
 - 已知残留盲区(刻意保守):`global` 语句跨函数回填的绑定不追踪;接收者类型不可
   判的属性调用仍按属性名兜底(execute/commit/read/write/invoke)。
+- 已知残留盲区(2a,Python 语义使然、刻意如此):局部变量/参数名 `time`/`socket` 若在
+  运行时恰持**真模块**(如依赖注入传入真 time/socket),其 `sleep`/`getaddrinfo` 调用不入
+  _ATTR_ONLY 兜底(二者不在其中)而漏报 —— 与「根被局部绑定遮蔽不误报」同源:静态无法
+  分辨真假日,取不误报方向。
 
 误报防线(决策 CRITICAL):
 - 匹配限定根名:`socket.getaddrinfo` 只认 `socket.` 前缀或裸名,`loop.getaddrinfo`
