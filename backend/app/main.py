@@ -147,6 +147,9 @@ async def create_root(req: CreateRootRequest) -> CreateRootResponse:
         raise HTTPException(status_code=422, detail="输入不能为空")
     try:
         topic = await run_rewrite(raw, llm=req.llm)
+    except ValueError as exc:
+        # urlguard 固定脱敏文案(SSRF/解析超时等)直出安全(F6);错误码不变量:分支前该输入类为 422
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except SeatBusyError as exc:
         raise HTTPException(status_code=503, detail="服务繁忙，请稍后重试") from exc  # N4 饱和快速失败(F6 脱敏)
     except RuntimeError as exc:
@@ -181,6 +184,9 @@ async def create_repo_root(req: RepoRootRequest) -> RepoRootResponse:
             repo_context=repo,
             route=llm_usage.ROUTE_REPO_ROOT,
         )
+    except ValueError as exc:
+        # urlguard 固定脱敏文案(SSRF/解析超时等)直出安全(F6);错误码不变量:分支前该输入类为 422
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except SeatBusyError as exc:
         raise HTTPException(status_code=503, detail="服务繁忙，请稍后重试") from exc  # N4 饱和快速失败(F6 脱敏)
     except RuntimeError as exc:
@@ -225,6 +231,9 @@ async def expand(req: ExpandRequest) -> ExpandResponse:
             repo_context=_require_session(req.session_id).get("repo_context"),
             route=llm_usage.ROUTE_EXPAND,
         )
+    except ValueError as exc:
+        # urlguard 固定脱敏文案(SSRF/解析超时等)直出安全(F6);错误码不变量:分支前该输入类为 422
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except SeatBusyError as exc:
         raise HTTPException(status_code=503, detail="服务繁忙，请稍后重试") from exc  # N4 饱和快速失败(F6 脱敏)
     except RuntimeError as exc:
@@ -275,6 +284,9 @@ async def node_detail(req: DetailRequest) -> DetailResponse:
             llm=req.llm,
             repo_context=_require_session(req.session_id).get("repo_context"),
         )
+    except ValueError as exc:
+        # urlguard 固定脱敏文案(SSRF/解析超时等)直出安全(F6);错误码不变量:分支前该输入类为 422
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except SeatBusyError as exc:
         raise HTTPException(status_code=503, detail="服务繁忙，请稍后重试") from exc  # N4 饱和快速失败(F6 脱敏)
     except RuntimeError as exc:
@@ -340,6 +352,9 @@ async def reader_chat(req: ChatRequest) -> StreamingResponse:
         primed = await anext(events)
     except StopAsyncIteration:
         primed = None
+    except ValueError as exc:
+        # 预取首事件时 _resolve→urlguard 的固定脱敏文案(SSRF/解析超时等)在此显形,映射 422(F6)
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except SeatBusyError as exc:
         raise HTTPException(status_code=503, detail="服务繁忙，请稍后重试") from exc
     return StreamingResponse(_ndjson_stream(events, primed), media_type="application/x-ndjson")
