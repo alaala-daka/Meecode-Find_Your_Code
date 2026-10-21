@@ -31,6 +31,13 @@
   同名局部绑定**遮蔽**外层 import/别名(`client = make_test_client()` 盖掉
   `import httpx as client` → 不误报 httpx.post)。
 - 局部同名多次绑定(值不同)= 歧义,保守按局部变量处理(不误报方向)。
+- 根被局部绑定遮蔽(round 3):点分名的根解析到普通局部绑定(`("var", ...)`)时,根限定
+  规则(time.sleep/socket.*/httpx.*/requests.*)不适用,只按最终属性名对 _ATTR_ONLY 兜底
+  —— `time = FakeClock(); time.sleep(0)` 不误报「同步睡眠」;真模块根照抓(见自检)。
+- 类体自有作用域(round 3):类体绑定(方法名/类级赋值/import)不泄漏进模块/外层作用域
+  (Python 语义:类体绑定对外不可见,方法体不闭包类体),裸调用 refresh() 不跟进
+  `class C: def refresh(self)` 的体;实例上的方法调用(`c.refresh()`/`C().refresh()`,
+  类绑定可解析)照旧跟进 —— 方法体真跑在事件循环上,跟进是真阳性(2b 判夺)。
 - 已知残留盲区(刻意保守):`global` 语句跨函数回填的绑定不追踪;接收者类型不可
   判的属性调用仍按属性名兜底(execute/commit/read/write/invoke)。
 
@@ -95,14 +102,19 @@ def _dotted(func: ast.expr) -> str | None:
     return None
 
 
-def _match_forbidden(canonical: str | None, attr: str | None) -> str | None:
+def _match_forbidden(canonical: str | None, attr: str | None, *, attr_only: bool = False) -> str | None:
     """纯拼写规则:输入为**归一后**的点分名(canonical),或非命名链的属性名兜底。
 
     归一由 _Index._canonical 负责(scope-aware,见模块 docstring);不做归一的裸拼写
     可被换名逃逸(见 test_selfcheck_alias_evasion_* 中「拼写规则单独不抓」断言)。
+    attr_only=True(round 3):点分名的根被局部变量/参数遮蔽时,只按最终属性名对
+    _ATTR_ONLY 兜底 —— 根限定规则(time.sleep/socket.*/httpx.*/requests.*)只对真模块根
+    生效,被遮蔽的根不得触发(见 test_selfcheck_allows_local_var_shadowing_module_root_name)。
     """
     if canonical is not None:
         segs = canonical.split(".")
+        if attr_only:
+            return _ATTR_ONLY.get(segs[-1])
         if len(segs) == 1:
             return _BARE.get(segs[0])
         root, last = segs[0], segs[-1]
@@ -127,6 +139,15 @@ def _match_forbidden(canonical: str | None, attr: str | None) -> str | None:
 # 作用域绑定值形状(元组首元=种类):
 #   ("def", FuncInfo) | ("class", 类名) | ("module", 模块名) | ("func", 模块, 名)
 #   | ("alias", 目标点分名) | ("instance", 类名) | ("var", None)  ← 普通局部绑定/歧义
+
+
+class _ClassScope:
+    """类体作用域(round 3):类体内绑定(方法名/类级赋值/import)不泄漏进外层/模块作用域 ——
+    Python 语义里类体绑定对外不可见(方法体也不闭包类体);否则 async 函数里的裸调用
+    refresh() 会被错跟进 class C: def refresh(self) 的体(见自检)。类名本身照旧绑到外层。"""
+
+    def __init__(self) -> None:
+        self.bindings: dict[str, tuple] = {}
 
 
 @dataclass
@@ -177,8 +198,7 @@ class _Index:
                 return target_names(node.value)
             return []
 
-        def visit(node, cls: str | None, parent: FuncInfo | None) -> None:
-            scope = parent if parent is not None else module
+        def visit(node, cls: str | None, parent: FuncInfo | None, scope) -> None:
             for child in ast.iter_child_nodes(node):
                 if isinstance(child, ast.Import):
                     for alias in child.names:
@@ -199,7 +219,7 @@ class _Index:
                 elif isinstance(child, ast.ClassDef):
                     module.classes.add(child.name) if scope is module else None
                     bind(scope, child.name, ("class", child.name))
-                    visit(child, child.name, parent)
+                    visit(child, child.name, parent, _ClassScope())   # 类体自有作用域(round 3)
                 elif isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     qual = f"{module.name}.{child.name}"
                     if cls:
@@ -215,7 +235,7 @@ class _Index:
                     for arg in [*args.posonlyargs, *args.args, *args.kwonlyargs,
                                 *[a for a in (args.vararg, args.kwarg) if a is not None]]:
                         bind(info, arg.arg, ("var", None))
-                    visit(child, cls, info)
+                    visit(child, cls, info, info)
                 elif isinstance(child, (ast.Assign, ast.AnnAssign)):
                     value = child.value
                     targets = child.targets if isinstance(child, ast.Assign) else [child.target]
@@ -236,33 +256,33 @@ class _Index:
                                     bind(scope, nm, ("var", None))
                             else:
                                 bind(scope, nm, ("var", None))
-                    visit(child, cls, parent)
+                    visit(child, cls, parent, scope)
                 elif isinstance(child, ast.AugAssign):
                     for nm in target_names(child.target):
                         bind(scope, nm, ("var", None))
-                    visit(child, cls, parent)
+                    visit(child, cls, parent, scope)
                 elif isinstance(child, (ast.For, ast.AsyncFor)):
                     for nm in target_names(child.target):
                         bind(scope, nm, ("var", None))
-                    visit(child, cls, parent)
+                    visit(child, cls, parent, scope)
                 elif isinstance(child, (ast.With, ast.AsyncWith)):
                     for item in child.items:
                         if item.optional_vars is not None:
                             for nm in target_names(item.optional_vars):
                                 bind(scope, nm, ("var", None))
-                    visit(child, cls, parent)
+                    visit(child, cls, parent, scope)
                 elif isinstance(child, ast.ExceptHandler):
                     if child.name:
                         bind(scope, child.name, ("var", None))
-                    visit(child, cls, parent)
+                    visit(child, cls, parent, scope)
                 elif isinstance(child, ast.comprehension):
                     for nm in target_names(child.target):
                         bind(scope, nm, ("var", None))
-                    visit(child, cls, parent)
+                    visit(child, cls, parent, scope)
                 else:
-                    visit(child, cls, parent)
+                    visit(child, cls, parent, scope)
 
-        visit(module.tree, None, None)
+        visit(module.tree, None, None, module)
 
     @staticmethod
     def _from_target(current: str, node: ast.ImportFrom) -> str:
@@ -284,29 +304,30 @@ class _Index:
             scope = scope.parent
         return self.modules[fi.module].bindings.get(name)
 
-    def _canonical(self, dotted: str, fi: FuncInfo, depth: int = 0) -> str | None:
-        """点分名归一到真实符号;None = 明确不是违禁符号(用户 def/class 或被遮蔽的裸名)。"""
+    def _canonical(self, dotted: str, fi: FuncInfo, depth: int = 0) -> tuple[str | None, bool]:
+        """点分名归一到真实符号,并回报「根是否被局部绑定遮蔽」(round 3);
+        None = 明确不是违禁符号(用户 def/class 或被遮蔽的裸名)。"""
         if depth > 8:
-            return dotted
+            return dotted, False
         segs = dotted.split(".")
         head, tail = segs[0], segs[1:]
         b = self._resolve_binding(head, fi)
         if b is None:                       # 未绑定自由名:保留原拼写(属性名兜底照旧)
-            return dotted
+            return dotted, False
         kind = b[0]
         if kind in ("def", "class"):        # 用户定义同名符号:不是违禁内置
-            return None
-        if kind == "var":                   # 局部绑定遮蔽:裸调用不是内置;属性走原拼写
-            return None if not tail else dotted
+            return None, False
+        if kind == "var":                   # 局部绑定遮蔽:裸调用不是内置;属性只按属性名兜底(根限定规则失效)
+            return (None, False) if not tail else (dotted, True)
         if kind == "instance":              # 实例方法接收者类型不可判:按属性名兜底(同旧行为)
-            return dotted
+            return dotted, False
         if kind == "module":
-            return ".".join([b[1]] + tail)
+            return ".".join([b[1]] + tail), False
         if kind == "func":
             base = f"{b[1]}.{b[2]}" if b[1] else b[2]
-            return ".".join([base] + tail)
-        target = self._canonical(b[1], fi, depth + 1)   # ("alias", 目标点分名)
-        return None if target is None else ".".join([target] + tail)
+            return ".".join([base] + tail), False
+        target, shadowed = self._canonical(b[1], fi, depth + 1)   # ("alias", 目标点分名)
+        return (None, False) if target is None else (".".join([target] + tail), shadowed)
 
     def forbidden_reason(self, func: ast.expr, fi: FuncInfo) -> str | None:
         """违禁判定:名字先 scope-aware 归一到真实符号,再套拼写规则。"""
@@ -314,10 +335,10 @@ class _Index:
         if dotted is None:
             attr = func.attr if isinstance(func, ast.Attribute) else None
             return _match_forbidden(None, attr)
-        canonical = self._canonical(dotted, fi)
+        canonical, shadowed = self._canonical(dotted, fi)
         if canonical is None:
             return None
-        return _match_forbidden(canonical, None)
+        return _match_forbidden(canonical, None, attr_only=shadowed)
 
     def unique_func(self, module: str, name: str) -> FuncInfo | None:
         m = self.modules.get(module)
@@ -377,6 +398,15 @@ class _Index:
             recv = func.value
             if isinstance(recv, ast.Name) and recv.id in ("self", "cls") and fi.cls:
                 return self.unique_method(fi.module, fi.cls, func.attr)
+            if isinstance(recv, ast.Call):
+                # 2b 判夺:C() 产出 C 实例(构造目标是可解析的类绑定时),C().m() 与
+                # c = C(); c.m() 同判 —— 方法体真跑在事件循环上,跟进是真阳性;
+                # 构造目标不是类绑定(工厂函数/不可解析)则保守不跟(宁漏报不误报)。
+                cls_name = recv.func.id if isinstance(recv.func, ast.Name) else None
+                b = self._resolve_binding(cls_name, fi) if cls_name is not None else None
+                if b is not None and b[0] == "class":
+                    return self.unique_method(fi.module, b[1], func.attr)
+                return None
             recv_dotted = _dotted(recv)
             if recv_dotted is None:
                 return None
@@ -746,3 +776,107 @@ def test_selfcheck_allows_framework_run_sync_generator_deps():
         "        conn.close()\n"
     )
     assert scan_modules({"seeded.a": src}) == []
+
+
+# ---------- 判别力自检(seeded):误报防线(round 3:根名遮蔽 / 类体泄漏) ----------
+
+
+def test_selfcheck_allows_local_var_shadowing_module_root_name():
+    """round 3 误报复现形态①:局部 time = FakeClock() 遮蔽根名后 time.sleep 不得按
+    根限定规则判「同步睡眠」—— 根已不是 time 模块(即使模块真 import time,局部遮蔽同判)。"""
+    for src in (
+        "async def boom():\n"
+        "    time = FakeClock()\n"
+        "    time.sleep(0)\n",
+        "import time\n"
+        "async def boom():\n"
+        "    time = FakeClock()\n"
+        "    time.sleep(0)\n",
+    ):
+        assert scan_modules({"seeded.a": src}) == []
+
+
+def test_selfcheck_allows_bare_call_of_class_method_name():
+    """round 3 误报复现形态②:类体方法名不得泄漏进模块/外层作用域(Python 语义:类体绑定
+    类体外不可见),裸调用 refresh() 不得被错跟进 class C: def refresh(self): time.sleep(1)。"""
+    src = (
+        "import time\n"
+        "class C:\n"
+        "    def refresh(self):\n"
+        "        time.sleep(1)\n"
+        "async def boom():\n"
+        "    refresh()\n"
+    )
+    assert scan_modules({"seeded.a": src}) == []
+
+
+# ---------- 判别力自检(seeded):round 3 修复不得引入漏报 ----------
+
+
+def test_selfcheck_flags_genuine_module_root_dns_in_async_fn():
+    """真模块根 socket.getaddrinfo(async def 体内,未被遮蔽)必须照抓。"""
+    src = "import socket\nasync def boom():\n    socket.getaddrinfo('x', 80)\n"
+    findings = scan_modules({"seeded.a": src})
+    assert [f.reason for f in findings] == ["同步 DNS"]
+
+
+def test_selfcheck_flags_attr_only_rules_on_var_receivers():
+    """属性名兜底规则(接收者不可判,含局部变量/参数/self)必须照抓:execute/commit/write。"""
+    src = (
+        "async def boom(self, conn, fh):\n"
+        "    self.execute('UPDATE t SET a = 1')\n"
+        "    conn.execute('INSERT INTO t VALUES (1)')\n"
+        "    conn.commit()\n"
+        "    fh.write('x')\n"
+    )
+    findings = scan_modules({"seeded.a": src})
+    assert sorted(f.reason for f in findings) == ["同步 sqlite3 写"] * 3 + ["同步文件 I/O"]
+
+
+def test_selfcheck_flags_same_scope_import_alias():
+    """同作用域 `import socket as s` + s.getaddrinfo(round 1 归一)必须照抓。"""
+    src = (
+        "async def boom():\n"
+        "    import socket as s\n"
+        "    s.getaddrinfo('x', 80)\n"
+    )
+    findings = scan_modules({"seeded.a": src})
+    assert [f.reason for f in findings] == ["同步 DNS"]
+
+
+# ---------- 判别力自检(seeded):2b 判夺 —— 实例上的方法调用跟进而裸名不跟 ----------
+
+
+def test_selfcheck_flags_ctor_instance_method_call_followed_into_body():
+    """2b 判夺:C().refresh() 是「实例上的方法调用」,方法体真跑在事件循环上 → 跟进是真阳性。
+    与 c = C(); c.refresh()(既有行为)同判:二者都是 C 实例调用,判决必须一致;只有
+    裸名 refresh()(类名泄漏形态)不跟进。"""
+    src = (
+        "import time\n"
+        "class C:\n"
+        "    def refresh(self):\n"
+        "        time.sleep(1)\n"
+        "async def boom():\n"
+        "    C().refresh()\n"
+    )
+    findings = scan_modules({"seeded.a": src})
+    assert len(findings) == 1
+    f = findings[0]
+    assert (f.reason, f.site, f.root) == ("同步睡眠", "seeded.a.C.refresh", "seeded.a.boom")
+
+
+def test_selfcheck_flags_named_instance_method_call_followed_into_body():
+    """一致性钉死:模块级 c = C() + c.refresh() 与 C().refresh() 同判(都跟进类方法体)。"""
+    src = (
+        "import time\n"
+        "class C:\n"
+        "    def refresh(self):\n"
+        "        time.sleep(1)\n"
+        "c = C()\n"
+        "async def boom():\n"
+        "    c.refresh()\n"
+    )
+    findings = scan_modules({"seeded.a": src})
+    assert len(findings) == 1
+    f = findings[0]
+    assert (f.reason, f.site, f.root) == ("同步睡眠", "seeded.a.C.refresh", "seeded.a.boom")
