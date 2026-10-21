@@ -22,20 +22,30 @@
 - 解析保守:仅跟进能唯一解析的调用目标(同名多定义/局部变量/第三方一律跳过),
   宁漏报不误报;漏报面由 test_redline_runtime.py 的运行时探针补。
 
+名字解析(scope-aware,round 2 修订):
+- import 别名(`import socket as s`、`from time import sleep as sl`)与简单赋值别名
+  (`f = socket.getaddrinfo`)归一到真实符号再判违禁,封住换名逃逸
+  (test_selfcheck_alias_evasion_*)。
+- 归一**只认词法作用域内可见的绑定**:只沿「调用点所在函数 → 外层嵌套函数 → 模块」
+  查;别的函数里的绑定不得漏进来(test_selfcheck_allows_scoped_alias_*)。
+  同名局部绑定**遮蔽**外层 import/别名(`client = make_test_client()` 盖掉
+  `import httpx as client` → 不误报 httpx.post)。
+- 局部同名多次绑定(值不同)= 歧义,保守按局部变量处理(不误报方向)。
+- 已知残留盲区(刻意保守):`global` 语句跨函数回填的绑定不追踪;接收者类型不可
+  判的属性调用仍按属性名兜底(execute/commit/read/write/invoke)。
+
 误报防线(决策 CRITICAL):
 - 匹配限定根名:`socket.getaddrinfo` 只认 `socket.` 前缀或裸名,`loop.getaddrinfo`
   (async 正解)不误报;`time.sleep` 不误报 `asyncio.sleep`;`OpenAI` 不误报
   `AsyncOpenAI`;`httpx.Client` 不误报 `AsyncClient`;`invoke` 不误报 `ainvoke`。
-- 名字先归一再判违禁:import 别名(`import socket as s`、`from time import sleep as sl`)
-  与简单赋值别名(`f = socket.getaddrinfo`)还原成真实符号,封住换名逃逸
-  (test_selfcheck_alias_evasion_* 三连,各带「裸拼写规则单独不抓」的判别力断言)。
+- 用户定义同名符号(def/class 同名 sleep/open/connect...)不算违禁内置。
 - 每条规则都有下方 seeded 自检(判别力自证):该抓的必抓、不该抓的必不抓。
 """
 from __future__ import annotations
 
 import ast
 import pathlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 APP_DIR = pathlib.Path(__file__).resolve().parents[1] / "app"
 
@@ -47,7 +57,7 @@ APP_DIR = pathlib.Path(__file__).resolve().parents[1] / "app"
 STARTUP_EXEMPT_ROOTS = frozenset({"app.main.lifespan"})
 
 
-# ---------- 违禁匹配 ----------
+# ---------- 违禁匹配(纯拼写规则,输入为归一后的名字) ----------
 
 # 裸名调用(含 from X import y 后直呼 y 的形态)
 _BARE = {
@@ -88,10 +98,8 @@ def _dotted(func: ast.expr) -> str | None:
 def _match_forbidden(canonical: str | None, attr: str | None) -> str | None:
     """纯拼写规则:输入为**归一后**的点分名(canonical),或非命名链的属性名兜底。
 
-    归一(canonicalization)由 _Index 负责:import 别名/赋值别名先还原成真实符号,
-    例如 s.getaddrinfo(socket as s)→socket.getaddrinfo、sl(time.sleep as sl)→time.sleep、
-    f = socket.getaddrinfo → f(...)→socket.getaddrinfo。不做归一的裸拼写可被换名逃逸
-    (见 test_selfcheck_alias_evasion_* 中「拼写规则单独不抓」的判别力断言)。
+    归一由 _Index._canonical 负责(scope-aware,见模块 docstring);不做归一的裸拼写
+    可被换名逃逸(见 test_selfcheck_alias_evasion_* 中「拼写规则单独不抓」断言)。
     """
     if canonical is not None:
         segs = canonical.split(".")
@@ -114,7 +122,11 @@ def _match_forbidden(canonical: str | None, attr: str | None) -> str | None:
     return _ATTR_ONLY.get(attr or "")
 
 
-# ---------- 索引与调用解析(只为「可达调用」服务;解析不出即跳过) ----------
+# ---------- 索引与名字/调用解析 ----------
+
+# 作用域绑定值形状(元组首元=种类):
+#   ("def", FuncInfo) | ("class", 类名) | ("module", 模块名) | ("func", 模块, 名)
+#   | ("alias", 目标点分名) | ("instance", 类名) | ("var", None)  ← 普通局部绑定/歧义
 
 
 @dataclass
@@ -125,6 +137,7 @@ class FuncInfo:
     cls: str | None          # 所属类(方法)
     parent: "FuncInfo | None"  # 所在外层函数(嵌套 def)
     qual: str
+    bindings: dict[str, tuple] = field(default_factory=dict)   # 本函数作用域内绑定
 
 
 class _Module:
@@ -133,9 +146,8 @@ class _Module:
         self.tree = tree
         self.funcs: list[FuncInfo] = []
         self.methods: dict[str, dict[str, FuncInfo]] = {}   # 类名 -> 方法名 -> fn
-        self.imports: dict[str, tuple] = {}                  # 别名 -> ("module", m) | ("func", m, name)
-        self.instances: dict[str, str] = {}                  # 模块级 x = Cls(...) -> 类名
-        self.alias: dict[str, set[str]] = {}                 # 简单赋值别名 x = <Name|Attribute 点分名>
+        self.bindings: dict[str, tuple] = {}                 # 模块作用域内绑定
+        self.instances: dict[str, str] = {}                  # 模块级 x = f(...) -> 被调名(walk_attr 兜底)
         self.classes: set[str] = set()
 
 
@@ -151,25 +163,42 @@ class _Index:
             self._build(module)
 
     def _build(self, module: _Module) -> None:
+        def bind(scope, name: str, value: tuple) -> None:
+            prev = scope.bindings.get(name)
+            # 同一作用域内同名多次绑定且值不同 = 歧义(动态谁赢不可知),保守当普通局部绑定
+            scope.bindings[name] = value if prev is None or prev == value else ("var", None)
+
+        def target_names(node) -> list[str]:
+            if isinstance(node, ast.Name):
+                return [node.id]
+            if isinstance(node, (ast.Tuple, ast.List)):
+                return [n for e in node.elts for n in target_names(e)]
+            if isinstance(node, ast.Starred):
+                return target_names(node.value)
+            return []
+
         def visit(node, cls: str | None, parent: FuncInfo | None) -> None:
+            scope = parent if parent is not None else module
             for child in ast.iter_child_nodes(node):
                 if isinstance(child, ast.Import):
                     for alias in child.names:
                         if alias.asname:   # import socket as s → s 归一到 socket
-                            module.imports[alias.asname] = ("module", alias.name)
+                            bind(scope, alias.asname, ("module", alias.name))
                         else:
                             root = alias.name.split(".")[0]
-                            module.imports[root] = ("module", root)
+                            bind(scope, root, ("module", root))
                 elif isinstance(child, ast.ImportFrom):
                     base = self._from_target(module.name, child)
                     for alias in child.names:
                         full = f"{base}.{alias.name}" if base else alias.name
+                        key = alias.asname or alias.name
                         if full in self.modules:   # 导入的其实是子模块(from .feed import db)
-                            module.imports[alias.asname or alias.name] = ("module", full)
+                            bind(scope, key, ("module", full))
                         else:
-                            module.imports[alias.asname or alias.name] = ("func", base, alias.name)
+                            bind(scope, key, ("func", base, alias.name))
                 elif isinstance(child, ast.ClassDef):
-                    module.classes.add(child.name)
+                    module.classes.add(child.name) if scope is module else None
+                    bind(scope, child.name, ("class", child.name))
                     visit(child, child.name, parent)
                 elif isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     qual = f"{module.name}.{child.name}"
@@ -181,25 +210,54 @@ class _Index:
                     module.funcs.append(info)
                     if cls:
                         module.methods.setdefault(cls, {})[child.name] = info
+                    bind(scope, child.name, ("def", info))
+                    args = child.args
+                    for arg in [*args.posonlyargs, *args.args, *args.kwonlyargs,
+                                *[a for a in (args.vararg, args.kwarg) if a is not None]]:
+                        bind(info, arg.arg, ("var", None))
                     visit(child, cls, info)
                 elif isinstance(child, (ast.Assign, ast.AnnAssign)):
                     value = child.value
                     targets = child.targets if isinstance(child, ast.Assign) else [child.target]
-                    if (isinstance(child, ast.Assign) and parent is None and cls is None
-                            and isinstance(value, ast.Call)):
-                        for t in targets:
-                            if isinstance(t, ast.Name):
+                    for t in targets:
+                        for nm in target_names(t):
+                            if (isinstance(t, ast.Name) and isinstance(value, (ast.Name, ast.Attribute))
+                                    and _dotted(value) is not None):
+                                bind(scope, nm, ("alias", _dotted(value)))   # f = socket.getaddrinfo
+                            elif (isinstance(child, ast.Assign) and scope is module
+                                  and isinstance(value, ast.Call)):
                                 fn = value.func
-                                if isinstance(fn, ast.Name):
-                                    module.instances[t.id] = fn.id
-                                elif isinstance(fn, ast.Attribute):
-                                    module.instances[t.id] = fn.attr
-                    if value is not None and len(targets) == 1 and isinstance(targets[0], ast.Name):
-                        # 简单赋值别名(f = socket.getaddrinfo):归一到目标点分名,封住换名逃逸
-                        if isinstance(value, (ast.Name, ast.Attribute)):
-                            dv = _dotted(value)
-                            if dv is not None:
-                                module.alias.setdefault(targets[0].id, set()).add(dv)
+                                cls_name = (fn.id if isinstance(fn, ast.Name)
+                                            else fn.attr if isinstance(fn, ast.Attribute) else None)
+                                if cls_name is not None:
+                                    module.instances[nm] = cls_name
+                                    bind(scope, nm, ("instance", cls_name))
+                                else:
+                                    bind(scope, nm, ("var", None))
+                            else:
+                                bind(scope, nm, ("var", None))
+                    visit(child, cls, parent)
+                elif isinstance(child, ast.AugAssign):
+                    for nm in target_names(child.target):
+                        bind(scope, nm, ("var", None))
+                    visit(child, cls, parent)
+                elif isinstance(child, (ast.For, ast.AsyncFor)):
+                    for nm in target_names(child.target):
+                        bind(scope, nm, ("var", None))
+                    visit(child, cls, parent)
+                elif isinstance(child, (ast.With, ast.AsyncWith)):
+                    for item in child.items:
+                        if item.optional_vars is not None:
+                            for nm in target_names(item.optional_vars):
+                                bind(scope, nm, ("var", None))
+                    visit(child, cls, parent)
+                elif isinstance(child, ast.ExceptHandler):
+                    if child.name:
+                        bind(scope, child.name, ("var", None))
+                    visit(child, cls, parent)
+                elif isinstance(child, ast.comprehension):
+                    for nm in target_names(child.target):
+                        bind(scope, nm, ("var", None))
                     visit(child, cls, parent)
                 else:
                     visit(child, cls, parent)
@@ -214,36 +272,52 @@ class _Index:
         base = pkg[: len(pkg) - (node.level - 1)]
         return ".".join(base + ([node.module] if node.module else []))
 
-    # ---- 别名归一(封住 import-alias / 赋值别名逃逸) ----
+    # ---- 词法作用域内名字解析(round 2:别的函数的绑定不得漏进来;局部遮蔽外层) ----
 
-    def _lookup_name(self, name: str, module: str, depth: int) -> str | None:
-        """裸名/根名 → 真实点分名:import 别名优先,再查简单赋值别名;查不到 None(保留原拼写)。"""
+    def _resolve_binding(self, name: str, fi: FuncInfo) -> tuple | None:
+        """沿词法链(本函数 → 外层嵌套函数 → 模块)找绑定;查不到 None(= 未绑定自由名)。"""
+        scope: FuncInfo | None = fi
+        while scope is not None:
+            b = scope.bindings.get(name)
+            if b is not None:
+                return b
+            scope = scope.parent
+        return self.modules[fi.module].bindings.get(name)
+
+    def _canonical(self, dotted: str, fi: FuncInfo, depth: int = 0) -> str | None:
+        """点分名归一到真实符号;None = 明确不是违禁符号(用户 def/class 或被遮蔽的裸名)。"""
         if depth > 8:
-            return None
-        m = self.modules.get(module)
-        if m is None:
-            return None
-        imp = m.imports.get(name)
-        if imp is not None:
-            return imp[1] if imp[0] == "module" else (f"{imp[1]}.{imp[2]}" if imp[1] else imp[2])
-        targets = m.alias.get(name)
-        if targets and len(targets) == 1:   # 多目标=歧义,保守跳过(不误报方向)
-            return self._canonicalize_dotted(next(iter(targets)), module, depth + 1)
-        return None
-
-    def _canonicalize_dotted(self, dotted: str, module: str, depth: int = 0) -> str:
-        segs = dotted.split(".")
-        looked = self._lookup_name(segs[0], module, depth)
-        if looked is None:
             return dotted
-        return ".".join([looked] + segs[1:])
+        segs = dotted.split(".")
+        head, tail = segs[0], segs[1:]
+        b = self._resolve_binding(head, fi)
+        if b is None:                       # 未绑定自由名:保留原拼写(属性名兜底照旧)
+            return dotted
+        kind = b[0]
+        if kind in ("def", "class"):        # 用户定义同名符号:不是违禁内置
+            return None
+        if kind == "var":                   # 局部绑定遮蔽:裸调用不是内置;属性走原拼写
+            return None if not tail else dotted
+        if kind == "instance":              # 实例方法接收者类型不可判:按属性名兜底(同旧行为)
+            return dotted
+        if kind == "module":
+            return ".".join([b[1]] + tail)
+        if kind == "func":
+            base = f"{b[1]}.{b[2]}" if b[1] else b[2]
+            return ".".join([base] + tail)
+        target = self._canonical(b[1], fi, depth + 1)   # ("alias", 目标点分名)
+        return None if target is None else ".".join([target] + tail)
 
     def forbidden_reason(self, func: ast.expr, fi: FuncInfo) -> str | None:
-        """违禁判定:先把名字归一到真实符号(import/赋值别名),再套拼写规则。"""
+        """违禁判定:名字先 scope-aware 归一到真实符号,再套拼写规则。"""
         dotted = _dotted(func)
-        canonical = self._canonicalize_dotted(dotted, fi.module) if dotted is not None else None
-        attr = getattr(func, "attr", None) if isinstance(func, ast.Attribute) else None
-        return _match_forbidden(canonical, attr)
+        if dotted is None:
+            attr = func.attr if isinstance(func, ast.Attribute) else None
+            return _match_forbidden(None, attr)
+        canonical = self._canonical(dotted, fi)
+        if canonical is None:
+            return None
+        return _match_forbidden(canonical, None)
 
     def unique_func(self, module: str, name: str) -> FuncInfo | None:
         m = self.modules.get(module)
@@ -259,7 +333,7 @@ class _Index:
         return m.methods.get(cls, {}).get(name)
 
     def walk_attr(self, module: str, segs: list[str]) -> FuncInfo | None:
-        """模块命名空间逐段走:子模块 → 模块级函数 → 类.方法 → 实例.方法。"""
+        """模块命名空间逐段走:子模块 → 模块作用域绑定(import/def/类/实例) → 兜底。"""
         m = self.modules.get(module)
         if m is None or not segs:
             return None
@@ -267,8 +341,20 @@ class _Index:
         sub = f"{module}.{head}"
         if sub in self.modules:
             return self.walk_attr(sub, tail)
-        if head in m.imports and m.imports[head][0] == "module":
-            return self.walk_attr(m.imports[head][1], tail)
+        b = m.bindings.get(head)
+        if b is not None:
+            kind = b[0]
+            if kind == "module":
+                return self.walk_attr(b[1], tail)
+            if kind == "func":
+                return self.unique_func(b[1], b[2]) if not tail else None
+            if kind == "def":
+                return b[1] if not tail else None
+            if kind == "instance":
+                return self.unique_method(module, b[1], tail[0]) if len(tail) == 1 else None
+            if kind == "class":
+                return self.unique_method(module, b[1], tail[0]) if len(tail) == 1 else None
+            return None
         if not tail:
             return self.unique_func(module, head)
         if head in m.classes:
@@ -279,20 +365,14 @@ class _Index:
 
     def resolve(self, func: ast.expr, fi: FuncInfo) -> FuncInfo | None:
         if isinstance(func, ast.Name):
-            scope: FuncInfo | None = fi
-            while scope is not None:  # 内层嵌套 def 优先
-                nested = [f for f in self.modules[fi.module].funcs
-                          if f.parent is scope and f.name == func.id]
-                if len(nested) == 1:
-                    return nested[0]
-                scope = scope.parent
-            hit = self.unique_func(fi.module, func.id)
-            if hit is not None:
-                return hit
-            imp = self.modules[fi.module].imports.get(func.id)
-            if imp and imp[0] == "func":
-                return self.unique_func(imp[1], imp[2])
-            return None
+            b = self._resolve_binding(func.id, fi)
+            if b is None:
+                return None
+            if b[0] == "def":
+                return b[1]
+            if b[0] == "func":
+                return self.unique_func(b[1], b[2])
+            return None   # var/alias/instance/class/module:不跟进(alias 保守不展开)
         if isinstance(func, ast.Attribute):
             recv = func.value
             if isinstance(recv, ast.Name) and recv.id in ("self", "cls") and fi.cls:
@@ -301,10 +381,17 @@ class _Index:
             if recv_dotted is None:
                 return None
             segs = recv_dotted.split(".") + [func.attr]
-            imp = self.modules[fi.module].imports.get(segs[0])
-            if imp is not None and imp[0] == "module":
-                return self.walk_attr(imp[1], segs[1:])
-            return self.walk_attr(fi.module, segs)  # 同模块实例/类/函数
+            b = self._resolve_binding(segs[0], fi)
+            if b is None:
+                return self.walk_attr(fi.module, segs)   # 未绑定自由名:模块命名空间兜底(旧行为)
+            kind = b[0]
+            if kind == "module":
+                return self.walk_attr(b[1], segs[1:])
+            if kind == "instance":
+                return self.unique_method(fi.module, b[1], segs[1]) if len(segs) == 2 else None
+            if kind == "class":
+                return self.unique_method(fi.module, b[1], segs[1]) if len(segs) == 2 else None
+            return None   # def/func/alias/var:局部遮蔽或不可解析,不跟进(round 2 修误报)
         return None
 
 
@@ -485,7 +572,7 @@ def test_selfcheck_flags_sqlite_write_on_reached_helper():
         "同步 sqlite3 写", "同步 sqlite3 写"]
 
 
-# ---------- 判别力自检(seeded):import/赋值别名换名逃逸必须被抓获 ----------
+# ---------- 判别力自检(seeded):import/赋值别名换名逃逸必须被抓获(round 1) ----------
 
 
 def test_selfcheck_alias_evasion_import_socket_as():
@@ -546,7 +633,55 @@ def test_selfcheck_alias_evasion_through_reached_helper():
     assert (f.reason, f.site, f.root) == ("同步睡眠", "seeded.a.helper", "seeded.a.boom")
 
 
-# ---------- 判别力自检(seeded):不该抓的必不抓(误报防线) ----------
+# ---------- 判别力自检(seeded):不该抓的必不抓(误报防线,round 2:作用域) ----------
+
+
+def test_selfcheck_allows_scoped_alias_poisoning_sync_fn():
+    """round 2 误报复现形态①:别的(同步)函数里的 f = socket.getaddrinfo 不得漏进
+    无关 async 函数的 f(1)(该 f 是局部 get_handler() 结果)。"""
+    src = (
+        "import socket\n"
+        "def sync_setup():\n"
+        "    f = socket.getaddrinfo\n"
+        "async def boom():\n"
+        "    f = get_handler()\n"
+        "    f(1)\n"
+    )
+    assert scan_modules({"seeded.a": src}) == []
+
+
+def test_selfcheck_allows_scoped_alias_poisoning_across_async_fns():
+    """round 2 误报复现形态②:另一 async 函数里的别名绑定同样不得跨函数漏入。"""
+    src = (
+        "import socket\n"
+        "async def other():\n"
+        "    f = socket.getaddrinfo\n"
+        "async def boom():\n"
+        "    f = make_thing()\n"
+        "    f(1)\n"
+    )
+    assert scan_modules({"seeded.a": src}) == []
+
+
+def test_selfcheck_allows_local_shadow_of_module_import():
+    """round 2 误报复现形态③:函数局部 client = make_test_client() 遮蔽
+    模块级 import httpx as client → client.post 不得归一成 httpx.post。"""
+    src = (
+        "import httpx as client\n"
+        "async def boom():\n"
+        "    client = make_test_client()\n"
+        "    client.post('https://x')\n"
+    )
+    assert scan_modules({"seeded.a": src}) == []
+
+
+def test_selfcheck_allows_local_param_shadowing_builtin_name():
+    """参数同名遮蔽:参数 open 不是内置 open,open(...) 不判同步文件 I/O。"""
+    src = (
+        "async def boom(open):\n"
+        "    open('f')\n"
+    )
+    assert scan_modules({"seeded.a": src}) == []
 
 
 def test_selfcheck_allows_sync_by_design_functions_not_reached_from_async():
