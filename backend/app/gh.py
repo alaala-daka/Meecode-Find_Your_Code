@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import urllib.parse
 
 import httpx
 
@@ -14,6 +15,7 @@ GITHUB_API = "https://api.github.com"
 README_MAX_CHARS = 4000
 TREE_MAX_LINES = 60
 TIMEOUT_SECONDS = 10.0
+MAX_REDIRECT_HOPS = 3   # N7:手动跟随重定向上限(防环/防无限跳)
 
 
 class GitHubFetchError(RuntimeError):
@@ -29,6 +31,41 @@ def _headers(token: str) -> dict[str, str]:
     if token:
         headers["Authorization"] = f"Bearer {token}"
     return headers
+
+
+# ---------- N7:改名/迁移仓库的 3xx 处理(F7:客户端保持 follow_redirects=False,手动逐跳) ----------
+
+MOVED_ERROR = "仓库已移动或改名"   # N8 同口径固定文案,面向用户直出;不外泄 URL/主机(F6)
+
+
+def _redirect_target(current: str, response: httpx.Response) -> str | None:
+    """3xx 的安全跟随判定:Location 相对当前 URL 解析后,目标必须是 https://api.github.com
+    (同一可信 API 宿主)才可跟随;跨宿主/缺 Location 一律 None,绝不跟随任意外部重定向。"""
+    location = response.headers.get("Location")
+    if not location:
+        return None
+    target = urllib.parse.urljoin(current, location)
+    parts = urllib.parse.urlparse(target)
+    if parts.scheme == "https" and parts.hostname == "api.github.com":
+        return target
+    return None
+
+
+async def _get(client: httpx.AsyncClient, url: str, **kwargs) -> httpx.Response:
+    """GET 并手动跟随同宿主重定向(仅 https://api.github.com,最多 MAX_REDIRECT_HOPS 跳)。
+    3xx 但不可安全跟随(跨宿主/缺 Location/超跳数)一律抛 GitHubFetchError(MOVED_ERROR)。"""
+    current = url
+    for _ in range(MAX_REDIRECT_HOPS + 1):
+        resp = await client.get(current, **kwargs)
+        if not (300 <= resp.status_code < 400):
+            return resp
+        target = _redirect_target(current, resp)
+        if target is None:
+            logger.warning("GitHub 重定向不可安全跟随(跳数内收尾,目标不外泄): %s", resp.status_code)
+            raise GitHubFetchError(MOVED_ERROR)
+        current = target
+    logger.warning("GitHub 重定向超过跳数上限 %d,按已移动/改名收尾", MAX_REDIRECT_HOPS)
+    raise GitHubFetchError(MOVED_ERROR)
 
 
 def _truncate(text: str, limit: int) -> str:
@@ -76,7 +113,7 @@ async def fetch_repo_context(
             follow_redirects=False,
             transport=transport,
         ) as client:
-            meta_resp = await client.get(f"/repos/{full_name}")
+            meta_resp = await _get(client, f"/repos/{full_name}")
             if meta_resp.status_code == 404:
                 raise GitHubFetchError("GitHub 仓库不存在或已私有")
             if meta_resp.status_code == 403:
@@ -86,7 +123,8 @@ async def fetch_repo_context(
             branch = default_branch or meta.get("default_branch") or "HEAD"
 
             readme = ""
-            readme_resp = await client.get(
+            readme_resp = await _get(
+                client,
                 f"/repos/{full_name}/readme",
                 headers={**headers, "Accept": "application/vnd.github.raw"},
             )
@@ -94,12 +132,12 @@ async def fetch_repo_context(
                 readme = _truncate(readme_resp.text, README_MAX_CHARS)
 
             tree_text = ""
-            tree_resp = await client.get(f"/repos/{full_name}/git/trees/{branch}", params={"recursive": "1"})
+            tree_resp = await _get(client, f"/repos/{full_name}/git/trees/{branch}", params={"recursive": "1"})
             if tree_resp.status_code == 200:
                 tree_text = _summarize_tree(tree_resp.json().get("tree", []))
 
             languages_text = ""
-            lang_resp = await client.get(f"/repos/{full_name}/languages")
+            lang_resp = await _get(client, f"/repos/{full_name}/languages")
             if lang_resp.status_code == 200:
                 languages_text = _summarize_languages(lang_resp.json())
     except httpx.HTTPError as exc:
