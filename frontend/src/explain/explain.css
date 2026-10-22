@@ -399,8 +399,20 @@
 }
 .explain-root .reader-send:hover:not(:disabled) { background: var(--terracotta-deep); transform: translateX(1px); }
 .explain-root .reader-send:disabled { opacity: 0.45; cursor: default; }
+/* 窄屏:阅读器整屏切换为阅读态(非抽屉)。width:100% 相对 .explain-root,配合 right:0 正好铺满、不向左溢出 */
 @media (max-width: 720px) {
-  .explain-root .reader-panel { width: 100vw; } /* 窄屏全宽 */
+  .explain-root .reader-panel {
+    width: 100%;
+    border-left: none;
+    box-shadow: none;
+    animation-name: reader-fade; /* 复用淡入,去掉横向"抽屉滑出"观感 */
+  }
+}
+
+/* 移动端整屏阅读态:概念图隐藏但不卸载(保留缩放/平移/布局状态,避免 ResizeObserver 归零连环重排) */
+.explain-root--reading .graph-canvas {
+  opacity: 0;
+  pointer-events: none;
 }
 @media (prefers-reduced-motion: reduce) {
   .explain-root .reader-panel, .explain-root .reader-article { animation: none; }

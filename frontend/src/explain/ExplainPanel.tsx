@@ -2,6 +2,7 @@
  * 编排自原型 WorkspacePage——去除输入阶段与页面装饰,图引擎/面板原样复用。 */
 import { useCallback, useEffect, useState } from 'react'
 import type { RepoDetail } from '../api/types'
+import { useIsMobile } from '../utils/useIsMobile'
 import { api } from './api/client'
 import { GraphCanvas } from './components/GraphCanvas'
 import { PracticeBar } from './components/PracticeBar'
@@ -45,6 +46,8 @@ export default function ExplainPanel({ repo }: Props) {
   const resetGraph = useGraphStore((s) => s.reset)
   const toggleSettings = useUiStore((s) => s.toggleSettings)
   const readerOpen = useReaderStore((s) => s.open)
+  const isMobile = useIsMobile()
+  const mobileReading = isMobile && readerOpen // 移动端整屏阅读态:图 ⇄ 阅读器互斥切换
 
   const build = useCallback(
     async (fullName: string, branch: string | null) => {
@@ -74,7 +77,7 @@ export default function ExplainPanel({ repo }: Props) {
   }, [build, full_name, repo.default_branch])
 
   return (
-    <div className="explain-root">
+    <div className={`explain-root${mobileReading ? ' explain-root--reading' : ''}`}>
       {stage === 'loading' && (
         <div className="explain-loading" role="status" aria-label="正在生成仓库解读">
           <p className="explain-loading-title">AI 正在阅读这个仓库…</p>
