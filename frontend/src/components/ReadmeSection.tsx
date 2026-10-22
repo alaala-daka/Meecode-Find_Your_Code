@@ -48,6 +48,15 @@ function buildComponents(fullName: string, ref: string): Components {
       if (!url) return <span>[视频]</span>
       return <video src={url} controls preload="metadata" width={width} height={height} />
     },
+    // GFM 表格 min-content 常超出窄屏可用宽度，包一层横向滚动容器（与 pre 的 overflow 同策略），
+    // 否则表格把文档撑宽、整页可横向拖动；wrapper 保留 <table> 语义不走 display:block
+    table({ children }) {
+      return (
+        <div className="readme-table-wrap">
+          <table>{children}</table>
+        </div>
+      )
+    },
   }
 }
 
