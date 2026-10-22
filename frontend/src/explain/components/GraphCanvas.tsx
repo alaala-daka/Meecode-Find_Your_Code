@@ -6,6 +6,7 @@ import { useGraphStore } from "../store/graphStore";
 import { useSessionStore } from "../store/sessionStore";
 import { useUiStore } from "../store/uiStore";
 import { useReaderStore, readerWidth } from "../store/readerStore";
+import { useIsMobile } from "../../utils/useIsMobile";
 import {
   animateZoomTo,
   clampWorldToViewport,
@@ -116,10 +117,14 @@ export function GraphCanvas() {
 
   // 阅读器开合/开着时结构变化 → 图内容 zoom-fit 进剩余可视区(节点不被遮挡)
   const readerOpen = useReaderStore((s) => s.open);
+  const isMobile = useIsMobile();
+  // 移动端整屏阅读态:图已隐藏(opacity:0),跳过一切重排;退出阅读态由下方 fit 全幅归位
+  const graphHidden = isMobile && readerOpen;
   useEffect(() => {
     const svg = svgRef.current;
     const z = zoomRef.current;
     if (!svg || !z) return;
+    if (graphHidden) return;
     let cancel: (() => void) | null = null;
     let timer: number | undefined;
 
@@ -146,7 +151,7 @@ export function GraphCanvas() {
     }
     fit(); // 关闭 → 全幅重排
     return () => cancel?.();
-  }, [readerOpen, fitToView]);
+  }, [readerOpen, graphHidden, fitToView]);
 
   // 阅读器关闭时,新生成节点后整图自动居中进空白区(视口内→仅平移保留缩放,越界→缩放收回)
   useEffect(() => {
@@ -169,6 +174,7 @@ export function GraphCanvas() {
 
   // 容器尺寸变化(窗口缩放/布局抖动)→ 整图重新收进空白区
   useEffect(() => {
+    if (graphHidden) return;
     const el = containerRef.current;
     if (!el || typeof ResizeObserver === "undefined") return;
     let timer: number | undefined;
@@ -190,7 +196,7 @@ export function GraphCanvas() {
       ro.disconnect();
       window.clearTimeout(timer);
     };
-  }, [readerOpen, fitToView]);
+  }, [readerOpen, graphHidden, fitToView]);
 
   // 卸载时停掉可能在飞的动画
   useEffect(
