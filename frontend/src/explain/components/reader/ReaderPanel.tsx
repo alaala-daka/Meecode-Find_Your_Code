@@ -1,6 +1,7 @@
 /** 右侧阅读器:概念精读 + 伴读追问(布局参考 Claude Code 会话面板)。
  * 签名元素:Agent 回答前的「芽标」——追问即浇灌。 */
 import { useEffect, useMemo, useState } from "react";
+import { useIsMobile } from "../../../utils/useIsMobile";
 import { useReaderStore } from "../../store/readerStore";
 import { ReaderArticle } from "./ReaderArticle";
 import { ReaderThread } from "./ReaderThread";
@@ -12,6 +13,7 @@ export function ReaderPanel() {
   const activeNodeId = useReaderStore((s) => s.activeNodeId);
   const activate = useReaderStore((s) => s.activate);
   const close = useReaderStore((s) => s.close);
+  const isMobile = useIsMobile(); // 移动端整屏阅读态:关闭语义是"返回概念图"
   const version = useReaderStore((s) => s.version); // 流式增量驱动重渲染
   const [historyOpen, setHistoryOpen] = useState(false);
 
@@ -69,10 +71,22 @@ export function ReaderPanel() {
               </ul>
             )}
           </div>
-          <button className="reader-icon-btn" onClick={close} aria-label="收起阅读器" title="收起阅读器">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
-              <path d="M9 5l7 7-7 7" />
-            </svg>
+          <button
+            className="reader-icon-btn"
+            onClick={close}
+            aria-label={isMobile ? "返回概念图" : "收起阅读器"}
+            title={isMobile ? "返回概念图" : "收起阅读器"}
+          >
+            {isMobile ? (
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M19 12H5" />
+                <path d="M12 19l-7-7 7-7" />
+              </svg>
+            ) : (
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+                <path d="M9 5l7 7-7 7" />
+              </svg>
+            )}
           </button>
         </div>
       </header>
