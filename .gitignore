@@ -31,3 +31,5 @@ __pycache__/
 
 # 构建产物
 *.tsbuildinfo
+docs/brand/meecode-poster-v1.prompt.txt
+*.txt
