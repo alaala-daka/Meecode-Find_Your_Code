@@ -1,6 +1,6 @@
 // src/pages/ProfilePage.tsx —— 规范 §7.5
 import { useCallback, useEffect, useState } from 'react'
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { api } from '../api/client'
 import type { CurrentUser, RepoCardData, UserProfile } from '../api/types'
 import Avatar from '../components/Avatar'
@@ -10,6 +10,7 @@ import RepoCard from '../components/RepoCard'
 import Tabs from '../components/Tabs'
 import TopBar from '../components/TopBar'
 import { useAuthStore } from '../store/authStore'
+import { useNotificationStore } from '../store/notificationStore'
 import './ProfilePage.css'
 
 const TAB_ITEMS = [
@@ -32,6 +33,7 @@ export default function ProfilePage() {
   const finePointer = typeof window.matchMedia === 'function'
     ? window.matchMedia('(pointer: fine)').matches
     : true
+  const unread = useNotificationStore((s) => s.count)   // 手机端顶栏无铃铛，「我的反馈」入口承载回复通知（未读红点）
 
   const loadAll = useCallback(async () => {
     setLoadError(false)
@@ -114,6 +116,12 @@ export default function ProfilePage() {
               <span>仓库 <b>{profile.repo_count}</b></span>
               <span>获赞星 <b>{profile.star_count}</b></span>
               <span>被收藏 <b>{profile.favorite_count}</b></span>
+              {isMe && (
+                <Link className="profile-feedback-link" to="/my/feedback">
+                  我的反馈
+                  {unread > 0 && <i className="profile-feedback-dot" aria-label={`${unread} 条未读回复`} />}
+                </Link>
+              )}
               {isMe && me && 'gh_star_authed' in me && me.gh_star_authed && (
                 <button
                   className="star-sync-off"

@@ -30,6 +30,8 @@
   font-weight: 700;
   letter-spacing: 0.01em;
 }
+
+/* .logo-cn「觅码」中文字标：仅移动端隐藏省宽（见底部移动断点） */
 .logo-sub {
   font-size: 17px;
   font-weight: 800;
@@ -90,6 +92,30 @@
   transition: background-color var(--time-fast);
 }
 .search-btn:hover { background: var(--brand); }
+
+/* 手机端搜索入口：只读胶囊按钮，点击进 /search-entry 中间页输入（TopBar.tsx isMobile 分支） */
+.search-entry {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  height: 36px;
+  padding: 0 12px 0 34px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  text-align: left;
+  transition: border-color var(--time-fast);
+}
+.search-entry:active { border-color: var(--brand); }
+.search-entry-text {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 13.5px;
+  color: var(--ink-3);
+}
+.search-entry-text.is-filled { color: var(--ink); }
 
 .topbar-right { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
 .icon-btn {
@@ -152,6 +178,9 @@
 @media (max-width: 720px) {
   .topbar-inner { gap: 10px; }
   .topbar-nav, .btn-submit { display: none; }
-  .search-btn { display: none; }
+  .logo-cn { display: none; }                       /* logo 只留标志 + Meecode，防顶栏溢出越界 */
+  .topbar-left, .topbar-search { min-width: 0; }    /* 允许搜索入口收缩，避免撑破视口 */
+  /* 无 matchMedia 旧环境兜底：isMobile 分支不生效时仍隐藏桌面专属件（JS 分支已不渲染，规则冗余但无害） */
+  .search-btn, .bell-wrap, .btn-history { display: none; }
   .search-input { padding-right: 34px; }
 }

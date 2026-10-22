@@ -6,6 +6,7 @@ import HomePage from './pages/HomePage'
 import MyFeedbackPage from './pages/MyFeedbackPage'
 import ProfilePage from './pages/ProfilePage'
 import RepoPage from './pages/RepoPage'
+import SearchEntryPage from './pages/SearchEntryPage'
 import SearchPage from './pages/SearchPage'
 import SubmitPage from './pages/SubmitPage'
 import SiteFooter from './components/SiteFooter'
@@ -42,6 +43,7 @@ export default function App() {
       <Routes>
         <Route path="/" element={<HomePage />} />
         <Route path="/search" element={<SearchPage />} />
+        <Route path="/search-entry" element={<SearchEntryPage />} />
         <Route path="/repo/:id" element={<RepoPage />} />
         <Route path="/submit" element={<SubmitPage />} />
         <Route path="/user/:login" element={<ProfilePage />} />

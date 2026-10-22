@@ -6,6 +6,7 @@ import type { ReplyNotification } from '../api/types'
 import { useAuthStore } from '../store/authStore'
 import { useNotificationStore } from '../store/notificationStore'
 import { formatTime } from '../utils/format'
+import { useIsMobile } from '../utils/useIsMobile'
 import Avatar from './Avatar'
 import FeedbackEntry from './FeedbackEntry'
 import LoginModal from './LoginModal'
@@ -20,6 +21,7 @@ export default function TopBar() {
   const [params] = useSearchParams()
   const location = useLocation()
   const user = useAuthStore((s) => s.user)
+  const isMobile = useIsMobile()   // ≤720px：搜索走中间页入口、隐藏铃铛与浏览历史（顶栏宽度不够，见 TopBar.css 移动断点）
   const [menuOpen, setMenuOpen] = useState(false)
   const [notes, setNotes] = useState<ReplyNotification[]>([])
   const unread = useNotificationStore((s) => s.count)
@@ -86,7 +88,8 @@ export default function TopBar() {
               </svg>
             </span>
             <span className="logo-text">
-              觅码<span className="logo-sub">Meecode</span>
+              <span className="logo-cn">觅码</span>
+              <span className="logo-sub">Meecode</span>
             </span>
           </Link>
           <nav className="topbar-nav">
@@ -98,74 +101,98 @@ export default function TopBar() {
           </nav>
         </div>
         <div className="topbar-search">
-          <svg className="search-glass" viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
-            <circle cx="7" cy="7" r="5" fill="none" stroke="currentColor" strokeWidth="1.8" />
-            <line x1="11" y1="11" x2="14" y2="14" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-          </svg>
-          <input
-            className="search-input"
-            name="q"
-            autoComplete="off"
-            spellCheck={false}
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && submitSearch()}
-            placeholder="搜索仓库、标签、一句话卖点…"
-            aria-label="搜索"
-          />
-          <button className="search-btn" onClick={submitSearch} aria-label="搜索按钮">搜索</button>
-        </div>
-        <div className="topbar-right">
-          <button className="icon-btn" aria-label="浏览历史" onClick={goHistory}>
-            <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">
-              <circle cx="10" cy="10" r="7.5" fill="none" stroke="currentColor" strokeWidth="1.6" />
-              <polyline points="10,5.5 10,10 13.5,12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </button>
-          <div className="bell-wrap">
+          {isMobile ? (
+            // 手机端：顶栏只留搜索入口（空间不足时输入框里看不清已键入的字），点击进 /search-entry 中间页输入
             <button
               type="button"
-              className="icon-btn"
-              aria-label="反馈回复通知"
-              aria-expanded={menuOpen}
-              aria-haspopup="menu"
-              onClick={() => void openBell()}
+              className="search-entry"
+              onClick={() => navigate('/search-entry')}
+              aria-label="搜索"
             >
-              <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">
-                <path
-                  d="M10 3a4.5 4.5 0 0 1 4.5 4.5V11l1.5 2.5H4L5.5 11V7.5A4.5 4.5 0 0 1 10 3z"
-                  fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinejoin="round"
-                />
-                <path d="M8 16a2 2 0 0 0 4 0" fill="none" stroke="currentColor"
-                  strokeWidth={1.6} strokeLinecap="round" />
+              <svg className="search-glass" viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+                <circle cx="7" cy="7" r="5" fill="none" stroke="currentColor" strokeWidth="1.8" />
+                <line x1="11" y1="11" x2="14" y2="14" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
               </svg>
-              {unread > 0 && <span className="bell-dot" aria-label={`${unread} 条未读回复`} />}
+              <span className={`search-entry-text${q ? ' is-filled' : ''}`}>
+                {q || '搜索仓库、标签、一句话卖点…'}
+              </span>
             </button>
-            {menuOpen && (
-              <div className="cat-more-menu bell-menu" role="menu">
-                {notes.length === 0 && <p className="bell-empty">暂无回复</p>}
-                {notes.map((n) => (
+          ) : (
+            <>
+              <svg className="search-glass" viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+                <circle cx="7" cy="7" r="5" fill="none" stroke="currentColor" strokeWidth="1.8" />
+                <line x1="11" y1="11" x2="14" y2="14" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+              </svg>
+              <input
+                className="search-input"
+                name="q"
+                autoComplete="off"
+                spellCheck={false}
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && submitSearch()}
+                placeholder="搜索仓库、标签、一句话卖点…"
+                aria-label="搜索"
+              />
+              <button className="search-btn" onClick={submitSearch} aria-label="搜索按钮">搜索</button>
+            </>
+          )}
+        </div>
+        <div className="topbar-right">
+          {!isMobile && (
+            <button className="icon-btn btn-history" aria-label="浏览历史" onClick={goHistory}>
+              <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">
+                <circle cx="10" cy="10" r="7.5" fill="none" stroke="currentColor" strokeWidth="1.6" />
+                <polyline points="10,5.5 10,10 13.5,12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
+          )}
+          {!isMobile && (
+            <div className="bell-wrap">
+              <button
+                type="button"
+                className="icon-btn"
+                aria-label="反馈回复通知"
+                aria-expanded={menuOpen}
+                aria-haspopup="menu"
+                onClick={() => void openBell()}
+              >
+                <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">
+                  <path
+                    d="M10 3a4.5 4.5 0 0 1 4.5 4.5V11l1.5 2.5H4L5.5 11V7.5A4.5 4.5 0 0 1 10 3z"
+                    fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinejoin="round"
+                  />
+                  <path d="M8 16a2 2 0 0 0 4 0" fill="none" stroke="currentColor"
+                    strokeWidth={1.6} strokeLinecap="round" />
+                </svg>
+                {unread > 0 && <span className="bell-dot" aria-label={`${unread} 条未读回复`} />}
+              </button>
+              {menuOpen && (
+                <div className="cat-more-menu bell-menu" role="menu">
+                  {notes.length === 0 && <p className="bell-empty">暂无回复</p>}
+                  {notes.map((n) => (
+                    <Link
+                      key={n.reply_id}
+                      to={`/my/feedback/${n.feedback_id}`}
+                      className="cat-more-item"
+                      role="menuitem"
+                      onClick={() => setMenuOpen(false)}
+                    >
+                      <span className="bell-note-preview">{n.reply_body_preview}</span>
+                      <span className="bell-note-time">{formatTime(new Date(n.created_at * 1000).toISOString())}</span>
+                    </Link>
+                  ))}
                   <Link
-                    key={n.reply_id}
-                    to={`/my/feedback/${n.feedback_id}`}
-                    className="cat-more-item"
-                    role="menuitem"
+                    to="/my/feedback"
+                    className="footer-cta bell-all"   // 底部文字链沿 .footer-cta（UI 约束 §1.13）
                     onClick={() => setMenuOpen(false)}
                   >
-                    <span className="bell-note-preview">{n.reply_body_preview}</span>
-                    <span className="bell-note-time">{formatTime(new Date(n.created_at * 1000).toISOString())}</span>
+                    查看全部反馈 →
                   </Link>
-                ))}
-                <Link
-                  to="/my/feedback"
-                  className="footer-cta bell-all"   // 底部文字链沿 .footer-cta（UI 约束 §1.13）
-                  onClick={() => setMenuOpen(false)}
-                >
-                  查看全部反馈 →
-                </Link>
-              </div>
-            )}
-          </div>
+                </div>
+              )}
+            </div>
+          )}
           <FeedbackEntry variant="icon" />
           <button className="btn btn-primary btn-submit" onClick={goSubmit}>+ 推广我的仓库</button>
           {user ? (

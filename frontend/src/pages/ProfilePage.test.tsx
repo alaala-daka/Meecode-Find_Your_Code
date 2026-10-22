@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { FIXTURE_USER } from '../api/fixtures'
 import type { CurrentUser } from '../api/types'
 import { useAuthStore } from '../store/authStore'
+import { useNotificationStore } from '../store/notificationStore'
 import ProfilePage from './ProfilePage'
 
 function renderAt(url: string) {
@@ -21,6 +22,7 @@ function renderAt(url: string) {
 describe('ProfilePage', () => {
   beforeEach(() => {
     useAuthStore.setState({ user: null })
+    useNotificationStore.setState({ count: 0 })
     vi.restoreAllMocks()
   })
 
@@ -112,5 +114,20 @@ describe('ProfilePage', () => {
     await userEvent.click(screen.getByRole('button', { name: /GitHub 点星已连接/ }))
     await waitFor(() =>
       expect(screen.queryByRole('button', { name: /GitHub 点星已连接/ })).not.toBeInTheDocument())
+  })
+
+  it('本人视图提供「我的反馈」入口（手机端无铃铛后的回复通知落点）', async () => {
+    useAuthStore.setState({ user: FIXTURE_USER })
+    useNotificationStore.setState({ count: 2 })
+    renderAt('/user/alice')
+    await screen.findAllByText('alice')
+    expect(screen.getByRole('link', { name: /我的反馈/ })).toHaveAttribute('href', '/my/feedback')
+  })
+
+  it('他人视图无「我的反馈」入口', async () => {
+    useAuthStore.setState({ user: FIXTURE_USER })
+    renderAt('/user/bob')
+    await screen.findAllByText('bob')
+    expect(screen.queryByRole('link', { name: /我的反馈/ })).not.toBeInTheDocument()
   })
 })

@@ -1,0 +1,78 @@
+/* src/pages/SearchEntryPage.css —— 搜索中间页：全宽输入 + 取消回退，沿顶栏线框搜索配方 */
+.search-entry-page { padding-top: 20px; }
+
+.entry-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.entry-field {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+}
+
+.entry-glass {
+  position: absolute;
+  left: 12px;
+  color: var(--ink-3);
+  pointer-events: none;
+}
+
+.entry-input {
+  width: 100%;
+  height: 40px;
+  padding: 0 34px 0 36px;
+  font-size: 16px;              /* ≥16px：iOS Safari 聚焦小于 16px 的输入框会自动放大页面 */
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  transition: border-color var(--time-fast);
+}
+.entry-input::placeholder { color: var(--ink-3); }
+.entry-input:hover { border-color: var(--line-strong); }
+.entry-input:focus { border-color: var(--brand); outline: none; }
+
+.entry-clear {
+  position: absolute;
+  right: 8px;
+  width: 22px;
+  height: 22px;
+  font-size: 16px;
+  line-height: 1;
+  color: var(--ink-3);
+  border-radius: var(--radius-pill);
+}
+.entry-clear:hover { color: var(--ink); background: var(--tint); }
+
+.entry-submit {
+  flex-shrink: 0;
+  height: 40px;
+  padding: 0 16px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--surface);
+  background: var(--ink);
+  border-radius: var(--radius-md);
+  transition: background-color var(--time-fast);
+}
+.entry-submit:hover { background: var(--brand); }
+
+.entry-cancel {
+  flex-shrink: 0;
+  padding: 5px 4px;
+  font-size: 13.5px;
+  color: var(--ink-2);
+  transition: color var(--time-fast);
+}
+.entry-cancel:hover { color: var(--brand); }
+
+.entry-hint {
+  margin-top: 12px;
+  font-size: 12.5px;
+  color: var(--ink-3);
+}

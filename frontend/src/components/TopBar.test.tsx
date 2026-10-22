@@ -2,7 +2,7 @@
 import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { FIXTURE_USER } from '../api/fixtures'
 import { useAuthStore } from '../store/authStore'
 import { useNotificationStore } from '../store/notificationStore'
@@ -113,5 +113,48 @@ describe('TopBar', () => {
     await userEvent.click(screen.getByRole('button', { name: '反馈回复通知' }))
     expect(screen.getByText('用 GitHub 登录')).toBeInTheDocument()
     expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+  })
+})
+
+describe('TopBar 手机端（≤720px）', () => {
+  beforeEach(() => {
+    // 手机视口：jsdom 无真实媒体查询，按 useIsMobile 约定桩出「命中 720px 断点」
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: query.includes('max-width: 720px'),
+      media: query,
+      onchange: null,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      addListener: () => {},
+      removeListener: () => {},
+      dispatchEvent: () => false,
+    }))
+    useAuthStore.setState({ user: null })
+    useNotificationStore.setState({ count: 0 })
+    navigateSpy.mockClear()
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('搜索框收为入口按钮，点击跳搜索中间页', async () => {
+    renderTopBar()
+    expect(screen.queryByRole('textbox', { name: '搜索' })).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: '搜索' }))
+    expect(navigateSpy).toHaveBeenCalledWith('/search-entry')
+  })
+
+  it('不渲染反馈铃铛与浏览历史（宽度让位搜索入口）', () => {
+    useNotificationStore.setState({ count: 2 })
+    renderTopBar()
+    expect(screen.queryByRole('button', { name: '反馈回复通知' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '浏览历史' })).not.toBeInTheDocument()
+  })
+
+  it('反馈图标与登录入口仍保留', () => {
+    renderTopBar()
+    expect(screen.getByRole('button', { name: '反馈' })).toBeInTheDocument()
+    expect(screen.getByText('登录')).toBeInTheDocument()
   })
 })

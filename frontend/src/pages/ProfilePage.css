@@ -67,6 +67,23 @@
 }
 .profile-stats b { font-family: var(--font-mono); color: var(--brand); font-weight: 700; }
 
+/* 「我的反馈」入口：手机端顶栏铃铛移除后的回复通知落点（未读红点沿 .bell-dot 配方） */
+.profile-feedback-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--ink-3);
+  text-decoration: underline;
+  transition: color var(--time-fast);
+}
+.profile-feedback-link:hover { color: var(--brand); }
+.profile-feedback-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--badge_red);
+}
+
 .profile-page .tabs {
   position: sticky;
   top: var(--topbar-h);
