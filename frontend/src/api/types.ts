@@ -1,4 +1,6 @@
 // src/api/types.ts —— 全部 DTO（与后端 schemas 对齐，后端就绪后不改前端类型）
+import type { RepoFilters } from '../lib/repoFilters'
+
 export type Source = 'submitted' | 'crawled'
 export type SortKey = 'default' | 'newest' | 'stars'
 export type InteractKind = 'like' | 'favorite'
@@ -71,7 +73,11 @@ export interface UserProfile {
 export interface FeedPage {
   cards: RepoCardData[]
   has_more: boolean
+  total: number   // 同过滤条件 COUNT(*)；已选条件行「共 N 个仓库」用
 }
+
+export interface FacetCount { name: string; count: number }
+export interface Facets { languages: FacetCount[]; topics: FacetCount[] }
 
 export interface SearchResult extends FeedPage {
   total: number
@@ -182,8 +188,9 @@ export interface FeedbackPayload {
 
 export interface ApiClient {
   categories(): Promise<string[]>
-  feed(category: string | null, page: number): Promise<FeedPage>
-  search(q: string, sort: SortKey, page: number): Promise<SearchResult>
+  feed(category: string | null, page: number, filters?: RepoFilters): Promise<FeedPage>
+  search(q: string, sort: SortKey, page: number, filters?: RepoFilters): Promise<SearchResult>
+  facets(): Promise<Facets>
   repo(id: number): Promise<RepoDetail>
   repoTree(id: number): Promise<RepoTreeItem[]>
   repoFile(id: number, path: string): Promise<RepoFile>

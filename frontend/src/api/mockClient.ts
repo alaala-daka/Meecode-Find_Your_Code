@@ -3,13 +3,28 @@ import { ApiError } from './errors'
 import {
   CATEGORIES, FIXTURE_FEEDBACK, FIXTURE_FILES, FIXTURE_REPOS, FIXTURE_TREE, FIXTURE_USER,
 } from './fixtures'
+import type { RepoFilters } from '../lib/repoFilters'
 import type {
-  AiDraftResult, ApiClient, Comment, CommentPage, CurrentUser, FeedPage, FeedbackDetail,
+  AiDraftResult, ApiClient, Comment, CommentPage, CurrentUser, Facets, FeedPage, FeedbackDetail,
   FeedbackPayload, InteractKind, InteractResult, MyFeedbackPage, MyGithubRepo, ReplyNotificationPage,
   RepoCardData, RepoDetail, RepoFile, RepoTreeItem, SearchResult, SubmitPayload, UserProfile,
 } from './types'
 
 const PAGE_SIZE = 8
+
+function matchFilters(r: RepoCardData, f: RepoFilters): boolean {
+  if (f.lang && (r.language ?? '').toLowerCase() !== f.lang.toLowerCase()) return false
+  if (f.stars !== undefined && r.stars < f.stars) return false
+  if (f.starsMax !== undefined && r.stars > f.starsMax) return false
+  if (f.since) {
+    // mock 无 pushed_at，用 published_at 近似（真实语义在后端，spec §3.1）
+    const days = { '7d': 7, '30d': 30, '90d': 90, ytd: 0 }[f.since]
+    const cutoff = days > 0 ? Date.now() - days * 86400_000 : new Date(new Date().getFullYear(), 0, 1).getTime()
+    if (new Date(r.published_at).getTime() < cutoff) return false
+  }
+  if (f.topics?.length && !f.topics.every((t) => r.topics.includes(t))) return false  // AND 交集
+  return true
+}
 
 // AI 分类推荐（mock 规则）：按 topics/仓库名/语言命中关键词计分，取最高分分类；真实后端就绪后由 LLM 给出
 const CATEGORY_KEYWORDS: Array<[string, string[]]> = [
@@ -69,21 +84,22 @@ export function createMockClient(): ApiClient {
     async categories() {
       return CATEGORIES
     },
-    async feed(category, page): Promise<FeedPage> {
-      const all = category
-        ? state.repos.filter((r) => r.category === category)
-        : state.repos
+    async feed(category, page, filters = {}): Promise<FeedPage> {
+      const all = state.repos.filter(
+        (r) => (!category || r.category === category) && matchFilters(r, filters),
+      )
       const start = (page - 1) * PAGE_SIZE
       const cards = all.slice(start, start + PAGE_SIZE)
-      return { cards, has_more: start + PAGE_SIZE < all.length }
+      return { cards, has_more: start + PAGE_SIZE < all.length, total: all.length }
     },
-    async search(q, sort, page): Promise<SearchResult> {
+    async search(q, sort, page, filters = {}): Promise<SearchResult> {
       const kw = q.toLowerCase()
       let hit = state.repos.filter(
         (r) =>
-          r.title.toLowerCase().includes(kw) ||
-          r.tagline_zh.includes(q) ||
-          r.topics.some((t) => t.includes(kw)),
+          matchFilters(r, filters) &&
+          (r.title.toLowerCase().includes(kw) ||
+            r.tagline_zh.includes(q) ||
+            r.topics.some((t) => t.includes(kw))),
       )
       if (sort === 'newest') {
         hit = [...hit].sort((a, b) => b.published_at.localeCompare(a.published_at))
@@ -92,6 +108,18 @@ export function createMockClient(): ApiClient {
       }
       const start = (page - 1) * PAGE_SIZE
       return { total: hit.length, cards: hit.slice(start, start + PAGE_SIZE), has_more: start + PAGE_SIZE < hit.length }
+    },
+    async facets(): Promise<Facets> {
+      const langMap = new Map<string, number>()
+      const topicMap = new Map<string, number>()
+      for (const r of state.repos) {
+        if (r.language) langMap.set(r.language, (langMap.get(r.language) ?? 0) + 1)
+        for (const t of r.topics) topicMap.set(t, (topicMap.get(t) ?? 0) + 1)
+      }
+      const toList = (m: Map<string, number>) =>
+        [...m.entries()].map(([name, count]) => ({ name, count }))
+          .sort((a, b) => b.count - a.count)
+      return { languages: toList(langMap), topics: toList(topicMap).slice(0, 100) }
     },
     async repo(id): Promise<RepoDetail> {
       const card = state.repos.find((r) => r.id === id)
