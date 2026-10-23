@@ -14,7 +14,7 @@ import time
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ... import config, llm_usage
-from .. import auth, github, screening
+from .. import auth, drafting, github, screening
 from ..cards import to_card, _card_select
 from ..deps import get_conn
 from ..schemas import DraftIn, DraftResult, MyGithubRepoOut, RepoCardOut, SubmitIn
@@ -198,10 +198,8 @@ def ai_draft(
         readme = github.get_readme(gh["full_name"], interactive=True)
         tree = github.get_tree(gh["full_name"], gh.get("default_branch", "main"),
                                interactive=True)
-        result = screening.screen_repo(gh["full_name"], readme, tree,
-                                       route=llm_usage.ROUTE_AI_DRAFT)
+        return drafting.draft_repo(gh["full_name"], readme, tree,
+                                   route=llm_usage.ROUTE_AI_DRAFT)
     except Exception as exc:
         log.warning("[ai-draft] %s 草稿生成失败：%s", gh["full_name"], exc)
         return DraftResult()
-    return DraftResult(tagline_zh=result.tagline_zh, intro_zh=result.why_zh,
-                       suggested_category=result.category)

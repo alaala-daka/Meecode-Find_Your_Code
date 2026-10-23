@@ -201,9 +201,12 @@ def test_ai_draft_returns_text(client, login):
 
 
 def test_ai_draft_failure_returns_empty_not_500(client, login, monkeypatch):
+    from app.feed import drafting
+
     def boom(*a, **kw):
         raise RuntimeError("LLM 挂了")
-    monkeypatch.setattr(screening, "screen_repo", boom)
+
+    monkeypatch.setattr(drafting, "draft_repo", boom)
     resp = client.post("/api/ai-draft", json={"github_id": 90001})
     assert resp.status_code == 200
     assert resp.json()["tagline_zh"] == ""  # 前端提示手写
@@ -297,31 +300,41 @@ def test_submit_by_full_name_returns_card(client, login, conn, monkeypatch):
 
 
 def test_ai_draft_has_suggested_category(client, login, monkeypatch):
+    from app.feed import drafting
+    from app.feed.schemas import DraftResult
+
     monkeypatch.setattr(github, "list_user_repos", lambda login_: [
         {"id": 7, "full_name": "demo/mine", "owner_login": "demo", "language": "Go",
          "topics": [], "stars": 12, "created_at": NOW, "pushed_at": NOW,
          "license": "", "default_branch": "main"}])
     monkeypatch.setattr(github, "get_readme", lambda *a, **k: "x")
     monkeypatch.setattr(github, "get_tree", lambda *a, **k: [])
-    monkeypatch.setattr(screening, "screen_repo",
-                        lambda *a, **k: ScreeningResult(is_real_project=True, category="数据处理",
-                                                        tagline_zh="t", why_zh="w", quality=4))
+    monkeypatch.setattr(drafting, "draft_repo",
+                        lambda *a, **k: DraftResult(tagline_zh="t", intro_zh="i",
+                                                    suggested_category="数据处理"))
     body = client.post("/api/ai-draft", json={"github_id": 7}).json()
     assert body["suggested_category"] == "数据处理"
 
 
-def test_screen_repo记账route归属_submit与ai_draft(client, login, monkeypatch):
-    from app.feed import screening
-    from app.feed.schemas import ScreeningResult
+def test_draft记账route归属_submit与ai_draft(client, login, monkeypatch):
+    """记账口径：submit 精筛走 ROUTE_SUBMIT_SCREEN，ai-draft 草稿走 ROUTE_AI_DRAFT。"""
+    from app.feed import drafting, screening
+    from app.feed.schemas import DraftResult, ScreeningResult
 
-    seen: list[str] = []
+    seen: list[tuple[str, str]] = []
 
-    def spy(*a, **kw):
-        seen.append(kw.get("route"))
+    def spy_screen(*a, **kw):
+        seen.append(("screen", kw.get("route")))
         return ScreeningResult(is_real_project=True, category="其他",
                                tagline_zh="x", why_zh="y", quality=3)
 
-    monkeypatch.setattr(screening, "screen_repo", spy)
+    def spy_draft(*a, **kw):
+        seen.append(("draft", kw.get("route")))
+        return DraftResult(tagline_zh="x", intro_zh="y", suggested_category="其他")
+
+    monkeypatch.setattr(screening, "screen_repo", spy_screen)
+    monkeypatch.setattr(drafting, "draft_repo", spy_draft)
     client.post("/api/submit", json=payload())
     client.post("/api/ai-draft", json={"github_id": 90001})
-    assert seen == [llm_usage.ROUTE_SUBMIT_SCREEN, llm_usage.ROUTE_AI_DRAFT]
+    assert seen == [("screen", llm_usage.ROUTE_SUBMIT_SCREEN),
+                    ("draft", llm_usage.ROUTE_AI_DRAFT)]
