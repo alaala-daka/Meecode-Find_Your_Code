@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import sqlite3
 import time
+from collections import Counter
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
@@ -15,7 +16,8 @@ from ...sqlutil import fts_escape, like_pattern
 from .. import ranking
 from ..cards import to_card, _card_select
 from ..deps import get_conn
-from ..schemas import FeedOut, SearchOut
+from ..filters import filter_sql, parse_filters
+from ..schemas import FacetCount, FacetsOut, FeedOut, SearchOut
 
 router = APIRouter()
 
@@ -36,24 +38,67 @@ def categories() -> list[str]:
     return list(config.CATEGORIES)
 
 
+_FACETS_TTL = 300.0   # 面板数据允许 5 分钟滞后（spec 决策 #7）
+_facets_cache: dict = {"ts": 0.0, "data": None}
+
+
+def _clear_facets_cache() -> None:
+    """测试夹具用：用例间不得共享缓存。"""
+    _facets_cache.update(ts=0.0, data=None)
+
+
+@router.get("/facets", response_model=FacetsOut)
+def facets(conn: sqlite3.Connection = Depends(get_conn)) -> FacetsOut:
+    now = time.time()
+    if _facets_cache["data"] is not None and now - _facets_cache["ts"] < _FACETS_TTL:
+        return _facets_cache["data"]
+    lang_counter: Counter[str] = Counter()
+    topic_counter: Counter[str] = Counter()
+    for row in conn.execute("SELECT language, topics FROM repos WHERE status != 'delisted'"):
+        if row["language"]:
+            lang_counter[row["language"]] += 1
+        for t in (row["topics"] or "").split(","):
+            t = t.strip()
+            if t:
+                topic_counter[t] += 1
+    data = FacetsOut(
+        languages=[FacetCount(name=n, count=c) for n, c in lang_counter.most_common()],
+        topics=[FacetCount(name=n, count=c) for n, c in topic_counter.most_common(100)],
+    )
+    _facets_cache.update(ts=now, data=data)
+    return data
+
+
 @router.get("/feed", response_model=FeedOut)
 def get_feed(
     category: str | None = None,
     page: int = Query(1, ge=1),
+    lang: str | None = None,
+    stars: int | None = Query(None, ge=0),
+    stars_max: int | None = Query(None, ge=0),
+    since: str | None = None,
+    topic: list[str] | None = Query(None),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> FeedOut:
     if category and category not in config.CATEGORIES:
         raise HTTPException(status_code=422, detail=f"未知分类：{category}")
+    f = parse_filters(lang, stars, stars_max, since, topic)
 
     now = int(time.time())
     # pending_claim（未认领的采集仓库）也要展示 —— 只有 delisted 不可见
-    params: list = [category] if category else []
-    params.append(config.FEED_CANDIDATE_LIMIT)
+    where = "FROM repos r WHERE r.status != 'delisted'"
+    params: list = []
+    if category:
+        where += " AND r.category = ?"
+        params.append(category)
+    cond, fparams = filter_sql(f)          # 过滤在 SQL 层做完再进 ranking（spec §3.2）
+    where += cond
+    params += fparams
+
+    total = conn.execute(f"SELECT COUNT(*) AS n {where}", params).fetchone()["n"]
     rows = conn.execute(
-        _card_select("FROM repos r WHERE r.status != 'delisted'")
-        + (" AND r.category = ?" if category else "")
-        + " ORDER BY r.published_at DESC LIMIT ?",
-        params,
+        _card_select(where) + " ORDER BY r.published_at DESC LIMIT ?",
+        params + [config.FEED_CANDIDATE_LIMIT],
     ).fetchall()
     ranked = sorted(rows, key=lambda r: ranking.score(r, now), reverse=True)
 
@@ -72,7 +117,8 @@ def get_feed(
     start = (page - 1) * size
     slice_ = ordered[start:start + size]
     bump_impressions(conn, [r["id"] for r in slice_])
-    return FeedOut(cards=[to_card(r) for r in slice_], has_more=len(ordered) > start + size)
+    return FeedOut(cards=[to_card(r) for r in slice_],
+                   has_more=len(ordered) > start + size, total=total)
 
 
 _SEARCH_ORDER = {
@@ -87,10 +133,17 @@ def search(
     q: str,
     sort: str = Query("default"),
     page: int = Query(1, ge=1),
+    lang: str | None = None,
+    stars: int | None = Query(None, ge=0),
+    stars_max: int | None = Query(None, ge=0),
+    since: str | None = None,
+    topic: list[str] | None = Query(None),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> SearchOut:
     if sort not in _SEARCH_ORDER:
         raise HTTPException(status_code=422, detail=f"未知排序:{sort}")
+    f = parse_filters(lang, stars, stars_max, since, topic)
+    fcond, fparams = filter_sql(f)
     term = q.strip()
     if not term:
         return SearchOut(cards=[], has_more=False, total=0)
@@ -101,26 +154,28 @@ def search(
         # FTS5 trigram 至少 3 字符:短词("AI"、"图")回退 LIKE,不再静默空结果
         pat = like_pattern(term)
         cond = ("r.status != 'delisted' AND (r.full_name LIKE ? ESCAPE '\\'"
-                " OR r.tagline_zh LIKE ? ESCAPE '\\' OR r.topics LIKE ? ESCAPE '\\')")
+                " OR r.tagline_zh LIKE ? ESCAPE '\\' OR r.topics LIKE ? ESCAPE '\\')") + fcond
+        qparams = [pat, pat, pat, *fparams]
         total = conn.execute(
-            f"SELECT COUNT(*) AS n FROM repos r WHERE {cond}", (pat, pat, pat)
+            f"SELECT COUNT(*) AS n FROM repos r WHERE {cond}", qparams
         ).fetchone()["n"]
         order = _SEARCH_ORDER[sort] if sort != "default" else "ORDER BY r.published_at DESC"
         rows = conn.execute(
             f"{_card_select('FROM repos r')} WHERE {cond} {order} LIMIT ? OFFSET ?",
-            (pat, pat, pat, size + 1, offset),
+            [*qparams, size + 1, offset],
         ).fetchall()
     else:
         needle = fts_escape(term)
         join = "FROM repos_fts f JOIN repos r ON r.id = f.rowid"
-        cond = "repos_fts MATCH ? AND r.status != 'delisted'"
+        cond = "repos_fts MATCH ? AND r.status != 'delisted'" + fcond
+        qparams = [needle, *fparams]
         try:
             total = conn.execute(
-                f"SELECT COUNT(*) AS n {join} WHERE {cond}", (needle,)
+                f"SELECT COUNT(*) AS n {join} WHERE {cond}", qparams
             ).fetchone()["n"]
             rows = conn.execute(
                 f"{_card_select(join)} WHERE {cond} {_SEARCH_ORDER[sort]} LIMIT ? OFFSET ?",
-                (needle, size + 1, offset),
+                [*qparams, size + 1, offset],
             ).fetchall()
         except sqlite3.OperationalError:
             return SearchOut(cards=[], has_more=False, total=0)  # 语法异常一律空结果

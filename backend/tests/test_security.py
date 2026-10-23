@@ -111,6 +111,7 @@ def test_bucket_for_routes():
     assert security.bucket_for("DELETE", "/api/comments/7") == "ugc"
     assert security.bucket_for("GET", "/api/comments") == "browse"
     assert security.bucket_for("POST", "/api/repos/7/delist") == "delist"   # 回归：不受影响
+    assert security.bucket_for("GET", "/api/facets") == "browse"
 
 
 # ---------- 限流器 ----------
