@@ -108,16 +108,22 @@ describe('SearchPage', () => {
     expect(spy).toHaveBeenCalledWith('fastdb', 'default', 3, expect.objectContaining({ lang: 'Python' }))
     // 触发器在场（面板交互在 FilterPanel.test 覆盖）；/^ 锚定防命中 FilterChips 的「移除××筛选」按钮
     expect(screen.getByRole('button', { name: /^筛选/ })).toBeInTheDocument()
+    // 过滤变化（单条移除）→ lang 移除、page 归 1（writeFilters 删 page）
+    await userEvent.click(screen.getByRole('button', { name: '移除语言筛选 Python' }))
+    await waitFor(() => expect(screen.getByTestId('params')).toHaveTextContent(/^q=fastdb$/))
+    expect(screen.getByTestId('params')).not.toHaveTextContent('lang')
+    expect(screen.getByTestId('params')).not.toHaveTextContent('page')
     spy.mockRestore()
   })
 
   it('过滤后零结果显示清除入口', async () => {
     const { api } = await import('../api/client')
-    vi.spyOn(api, 'search').mockResolvedValue({ cards: [], has_more: false, total: 0 })
+    const spy = vi.spyOn(api, 'search').mockResolvedValue({ cards: [], has_more: false, total: 0 })
     renderAt('/search?q=fastdb&lang=Zig')
     expect(await screen.findByText('没有符合条件的仓库')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '清除筛选' })).toBeInTheDocument()
     // 两分支互斥：有过滤时不出推广入口（Task 9 HomePage 同款先例）
     expect(screen.queryByRole('button', { name: '推广我的仓库' })).not.toBeInTheDocument()
+    spy.mockRestore()
   })
 })
