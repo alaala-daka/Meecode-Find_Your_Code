@@ -62,3 +62,11 @@
 }
 .cat-more-item:hover { color: var(--ink); background: var(--tint); }
 .cat-more-item.is-active { color: var(--brand); font-weight: 600; background: var(--brand-thin); }
+
+.category-inner > .filter-wrap {
+  position: sticky;
+  right: 0;
+  margin-left: auto;
+  padding-left: 8px;
+  background: var(--paper);
+}

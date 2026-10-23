@@ -67,4 +67,11 @@ describe('CategoryBar', () => {
     expect(moreBtn).toHaveAttribute('aria-expanded', 'false')
     spy.mockRestore()
   })
+
+  it('行尾渲染筛选触发器，有生效条件时带徽标', async () => {
+    renderBar('/?lang=Python&stars=100')
+    // /^筛选/ 锚定触发器名开头：条件 chip 的可及名以「移除」开头，/筛选/ 会命中多个
+    const trigger = await screen.findByRole('button', { name: /^筛选/ })
+    expect(trigger).toHaveTextContent('2')
+  })
 })
