@@ -48,15 +48,15 @@ export function UserShow() {
   const [muteSubmit, setMuteSubmit] = React.useState(false);
   const [duration, setDuration] = React.useState("1");
   const [banNote, setBanNote] = React.useState("");
-  const [adminNote, setAdminNote] = React.useState("");
+  // null=未编辑：值直接派生自服务端数据，不另设回填 effect。
+  // 异步回填会在数据迟到时覆盖正在输入的内容（实测曾把输入框写回旧值再拼上新输入）。
+  const [adminNote, setAdminNote] = React.useState<string | null>(null);
   const [banOpen, setBanOpen] = React.useState(false);
   const [unbanOpen, setUnbanOpen] = React.useState(false);
   const [noteOpen, setNoteOpen] = React.useState(false);
   const [actionError, setActionError] = React.useState<string | null>(null);
 
-  React.useEffect(() => {
-    if (user) setAdminNote(user.admin_note ?? "");
-  }, [user?.id, user?.admin_note]);
+  const noteValue = adminNote ?? user?.admin_note ?? "";
 
   const durationLabel = DURATIONS.find((d) => d.value === duration)?.label ?? "1天";
 
@@ -93,7 +93,7 @@ export function UserShow() {
 
   const handleSaveNote = async () => {
     try {
-      await updateAdminNote(id!, adminNote);
+      await updateAdminNote(id!, noteValue);
     } catch (e) {
       setActionError(`备注保存失败：${(e as Error).message}`);
       throw e;
@@ -196,7 +196,7 @@ export function UserShow() {
             </Label>
             <Input
               id="admin-note"
-              value={adminNote}
+              value={noteValue}
               maxLength={2000}
               onChange={(e) => setAdminNote(e.target.value)}
               className="mt-1.5 border-line"
@@ -303,7 +303,7 @@ export function UserShow() {
         open={noteOpen}
         onOpenChange={setNoteOpen}
         title="保存管理备注"
-        description={`将 ${user.login} 的管理备注保存为：${adminNote || "（空）"}`}
+        description={`将 ${user.login} 的管理备注保存为：${noteValue || "（空）"}`}
         error={actionError}
         onConfirm={handleSaveNote}
       />
