@@ -319,7 +319,10 @@ def test_facets_cache_hits_until_cleared(client_and_conn):
     _seed(conn, github_id=1, language="Python", topics="llm")
     assert client.get("/api/facets").json()["languages"][0]["count"] == 1
     _seed(conn, github_id=2, language="Go", topics="cli")   # 缓存未过期：不反映
-    assert client.get("/api/facets").json()["languages"][0]["count"] == 1
+    stale = client.get("/api/facets").json()
+    # 判别性断言（2026-10-23 用户裁决修订）：零缓存实现会算出 Go，命中缓存才必然不含 Go
+    assert {x["name"] for x in stale["languages"]} == {"Python"}
+    assert [x["count"] for x in stale["languages"]] == [1]
     from app.feed.routes import feed as feed_routes
     feed_routes._clear_facets_cache()
     langs = client.get("/api/facets").json()["languages"]
