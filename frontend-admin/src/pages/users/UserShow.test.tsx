@@ -180,6 +180,8 @@ describe("UserShow · 管理备注", () => {
     await screen.findByText("alice");
 
     const input = screen.getByLabelText("管理备注");
+    // 初始值随数据落地后再编辑：与异步写回竞态时会拼出「观察重点观察」（CI 曾偶发）
+    await waitFor(() => expect(input).toHaveValue("观察"));
     await userEvent.clear(input);
     await userEvent.type(input, "重点观察");
     await userEvent.click(screen.getByRole("button", { name: "保存备注" }));
@@ -191,5 +193,36 @@ describe("UserShow · 管理备注", () => {
     const patch = calls.find((c) => c.method === "PATCH")!;
     expect(patch.url).toBe("/api/admin/users/1");
     expect(patch.body).toEqual({ admin_note: "重点观察" });
+  });
+
+  it("保存触发的后台刷新不覆盖编辑框：本地编辑优先于迟到的 admin_note", async () => {
+    let servedNote = "观察";
+    const getCalls: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (method === "PATCH") {
+        servedNote = "他人备注"; // 模拟刷新带回了别的备注
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }
+      getCalls.push(String(input));
+      return new Response(JSON.stringify({ ok: true, ...detail, admin_note: servedNote }), {
+        status: 200,
+      });
+    });
+    renderShow();
+    await screen.findByText("alice");
+
+    const input = screen.getByLabelText("管理备注");
+    await waitFor(() => expect(input).toHaveValue("观察"));
+    await userEvent.clear(input);
+    await userEvent.type(input, "重点观察");
+    await userEvent.click(screen.getByRole("button", { name: "保存备注" }));
+    await userEvent.click(await screen.findByRole("button", { name: "确认" }));
+
+    // 等保存后的 refetch 真正落地（GET 两次以上），再断言输入框未被迟到的 admin_note 覆盖
+    await waitFor(() => {
+      expect(getCalls.length).toBeGreaterThan(1);
+    });
+    expect(input).toHaveValue("重点观察");
   });
 });
