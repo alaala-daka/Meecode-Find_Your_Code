@@ -15,6 +15,13 @@ class ScreeningResult(BaseModel):
     quality: int = Field(default=3)
 
 
+class DraftGen(BaseModel):
+    """「AI 帮我写」LLM 输出：卖点 + 介绍 + 分类。正面文案约束见 drafting.DRAFT_SYSTEM。"""
+    tagline_zh: str = ""
+    intro_zh: str = ""
+    category: str = "其他"
+
+
 class DraftResult(BaseModel):
     """「AI 帮我写」草稿：卖点 + 介绍 + AI 推荐分类。"""
     tagline_zh: str = ""

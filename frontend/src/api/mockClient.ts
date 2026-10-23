@@ -148,7 +148,7 @@ export function createMockClient(): ApiClient {
       const card = state.repos.find((r) => r.id === repoId)
       return {
         tagline_zh: card ? card.tagline_zh : '一句话卖点（AI 草稿）',
-        intro_zh: '这里是 AI 读 README 后生成的介绍草稿，作者可以任意修改。',
+        intro_zh: '这是 AI 读 README 后生成的正面介绍草稿：它概览项目做什么、核心能力与技术亮点，并点明适用对象。作者可任意修改后再发布。',
         suggested_category: card ? suggestCategory(card) : CATEGORIES[0],
       }
     },

@@ -89,6 +89,17 @@ def mock_screening(full_name: str) -> dict:
     }
 
 
+def mock_draft(full_name: str) -> dict:
+    """「AI 帮我写」的确定性正面草稿（LLM_MOCK）：正面、2–4 句、无负面。"""
+    name = full_name.split("/")[-1]
+    return {
+        "tagline_zh": f"{name}：一个可离线演示的模拟项目卖点",
+        "intro_zh": (f"{name} 是一个用于离线开发的模拟项目，具备完整的示例能力、"
+                     "清晰的技术亮点与稳定的结构，适合前端联调与本地演示。"),
+        "category": "开发工具",
+    }
+
+
 def mock_comment_verdict(content: str) -> dict:
     """LLM 合规判定的确定性输出：命中关键词判不合规，便于测试与离线演示。"""
     hit = next((w for w in ("垃圾", "广告", "刷屏") if w in content), "")
