@@ -7,7 +7,6 @@ import ErrorBanner from '../components/ErrorBanner'
 import RepoCard from '../components/RepoCard'
 import { SkeletonGrid } from '../components/Skeleton'
 import TopBar from '../components/TopBar'
-import { activeFilterCount, filterKey as makeFilterKey, parseFilters, writeFilters } from '../lib/repoFilters'
 import { useFeedStore } from '../store/feedStore'
 import './HomePage.css'
 
@@ -15,17 +14,14 @@ export default function HomePage() {
   const { cards, loading, error, hasMore, load, loadMore } = useFeedStore()
   const sentinelRef = useRef<HTMLDivElement>(null)
   const navigate = useNavigate()
-  const [params, setParams] = useSearchParams()
+  const [params] = useSearchParams()
   const cat = params.get('cat')
-  const filters = parseFilters(params)
-  const fkey = makeFilterKey(filters)
-  const filterCount = activeFilterCount(filters)
 
   useEffect(() => {
     const s = useFeedStore.getState()
-    // 首次加载，或 URL 分类/过滤与 store 不一致时重载（fkey 已把过滤变化纳入依赖，闭包里的 filters 与本次渲染同源）
-    if (s.page === 0 || s.category !== cat || s.filterKey !== fkey) void load(cat, filters)
-  }, [cat, fkey, load])
+    // 首次加载，或 URL 分类与 store 不一致时重载（预置空态/错误态的测试 page>0 且 category 一致，不会误触发）
+    if (s.page === 0 || s.category !== cat) void load(cat)
+  }, [cat, load])
 
   useEffect(() => {
     const el = sentinelRef.current
@@ -50,24 +46,10 @@ export default function HomePage() {
       <h1 className="visually-hidden">觅码 · 发现潜力开源仓库</h1>
       <main id="main" className="page-shell">
         {error && (
-          <ErrorBanner
-            message="加载失败，请重试"
-            onRetry={() => void load(useFeedStore.getState().category, useFeedStore.getState().filters)}
-          />
+          <ErrorBanner message="加载失败，请重试" onRetry={() => void load(useFeedStore.getState().category)} />
         )}
         {cards.length === 0 && loading && <SkeletonGrid count={10} />}
-        {showEmpty && filterCount > 0 && (
-          <EmptyState
-            title="没有符合条件的仓库"
-            actionLabel="清除筛选"
-            onAction={() => {
-              const p = new URLSearchParams(params)
-              writeFilters(p, {})
-              setParams(p)
-            }}
-          />
-        )}
-        {showEmpty && filterCount === 0 && (
+        {showEmpty && (
           <EmptyState title="这个分类还没有仓库" actionLabel="推广我的仓库" onAction={() => navigate('/submit')} />
         )}
         {cards.length > 0 && (

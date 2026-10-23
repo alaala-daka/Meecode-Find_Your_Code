@@ -62,29 +62,3 @@
 }
 .cat-more-item:hover { color: var(--ink); background: var(--tint); }
 .cat-more-item.is-active { color: var(--brand); font-weight: 600; background: var(--brand-thin); }
-
-.category-inner > .filter-wrap {
-  position: sticky;
-  right: 0;
-  margin-left: auto;
-  padding-left: 8px;
-  background: var(--paper);
-}
-
-/* 手机（≤720px）：已选条件行不随胶囊条吸顶、走正常流（spec §3.3「手机端不吸附、正常流」）。
-   .category-bar 改 display:contents 取消自身盒子——两行直接落到页面容器（sticky 约束矩形随之变成整页）：
-   胶囊行自行 sticky（UI 规范 §6.3 吸顶不变），条件行留在正常流随内容滚走。
-   不能只给 .category-bar 设 static：那样胶囊行也会一并失去吸顶；也不能只给条件行设 static：
-   position:static 无法让它逃出吸顶父容器，必须溶解父盒子。 */
-@media (max-width: 720px) {
-  .category-bar {
-    display: contents;
-  }
-  .category-inner {
-    position: sticky;
-    top: var(--topbar-h);
-    z-index: 19;
-    background: var(--paper);
-    border-bottom: 1px solid var(--line);
-  }
-}

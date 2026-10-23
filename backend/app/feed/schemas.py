@@ -51,22 +51,10 @@ class RepoCardOut(BaseModel):
 class FeedOut(BaseModel):
     cards: list[RepoCardOut]
     has_more: bool
-    total: int = 0   # 同 WHERE 的 COUNT(*)；已选条件行「共 N 个仓库」用
 
 
 class SearchOut(FeedOut):
-    """搜索响应与 feed 同形（total 已由 FeedOut 提供）。"""
-
-
-class FacetCount(BaseModel):
-    name: str
-    count: int
-
-
-class FacetsOut(BaseModel):
-    """筛选面板数据源：languages 全量、topics top 100（spec §3.2）。"""
-    languages: list[FacetCount]
-    topics: list[FacetCount]
+    total: int
 
 
 class RepoDetailOut(RepoCardOut):

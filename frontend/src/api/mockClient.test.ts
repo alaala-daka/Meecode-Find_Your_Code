@@ -191,33 +191,3 @@ describe('mockClient', () => {
     expect(big.code).toBe('too_large')
   })
 })
-
-describe('mockClient 精确筛选', () => {
-  it('feed 按 filters 过滤并返回 total', async () => {
-    const api = createMockClient()
-    const all = await api.feed(null, 1)
-    expect(all.total).toBeGreaterThanOrEqual(all.cards.length)   // total 是全量、不随分页截断
-    const lang = await api.feed(null, 1, { lang: 'Python' })
-    expect(lang.cards.every((c) => c.language === 'Python')).toBe(true)
-    expect(lang.total).toBe(lang.cards.length)                   // 夹具总量小于一页
-  })
-
-  it('topic 取交集（AND）', async () => {
-    const api = createMockClient()
-    const one = await api.feed(null, 1, { topics: ['llm'] })
-    const two = await api.feed(null, 1, { topics: ['llm', 'self-hosted'] })
-    expect(two.total).toBeLessThanOrEqual(one.total)
-  })
-
-  it('search 叠加 filters', async () => {
-    const api = createMockClient()
-    const res = await api.search('', 'default', 1, { stars: 100 })
-    expect(res.cards.every((c) => c.stars >= 100)).toBe(true)
-  })
-
-  it('facets 返回计数', async () => {
-    const facets = await createMockClient().facets()
-    expect(facets.languages.length).toBeGreaterThan(0)
-    expect(facets.topics.length).toBeGreaterThan(0)
-  })
-})

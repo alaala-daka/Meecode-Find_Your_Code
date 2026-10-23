@@ -1,8 +1,7 @@
 // src/api/realClient.ts —— 真实后端客户端:fetch('/api/...') + cookie 凭证
-import { filterQuery } from '../lib/repoFilters'
 import { ApiError } from './errors'
 import type {
-  AiDraftResult, ApiClient, Comment, CommentPage, CurrentUser, Facets, FeedPage, FeedbackDetail, FeedbackPayload,
+  AiDraftResult, ApiClient, Comment, CommentPage, CurrentUser, FeedPage, FeedbackDetail, FeedbackPayload,
   InteractKind, InteractResult, MyFeedbackPage, MyGithubRepo, ReplyNotificationPage,
   RepoCardData, RepoDetail, RepoFile, RepoTreeItem, SearchResult, SubmitPayload, UserProfile,
 } from './types'
@@ -38,21 +37,15 @@ export function createRealClient(): ApiClient {
     async categories() {
       return http<string[]>('/api/categories')
     },
-    async feed(category, page, filters = {}): Promise<FeedPage> {
-      const qs = filterQuery(filters)
+    async feed(category, page): Promise<FeedPage> {
+      const qs = new URLSearchParams()
       if (category) qs.set('category', category)
       qs.set('page', String(page))
       return http<FeedPage>(`/api/feed?${qs}`)
     },
-    async search(q, sort, page, filters = {}): Promise<SearchResult> {
-      const qs = filterQuery(filters)
-      qs.set('q', q)
-      qs.set('sort', sort)
-      qs.set('page', String(page))
+    async search(q, sort, page): Promise<SearchResult> {
+      const qs = new URLSearchParams({ q, sort, page: String(page) })
       return http<SearchResult>(`/api/search?${qs}`)
-    },
-    async facets(): Promise<Facets> {
-      return http<Facets>('/api/facets')
     },
     async repo(id): Promise<RepoDetail> {
       return http<RepoDetail>(`/api/repos/${id}`)

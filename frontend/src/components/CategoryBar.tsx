@@ -2,9 +2,6 @@
 import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { api } from '../api/client'
-import FilterChips from './FilterChips'
-import FilterPanel from './FilterPanel'
-import { parseFilters } from '../lib/repoFilters'
 import { useFeedStore } from '../store/feedStore'
 import './CategoryBar.css'
 
@@ -41,7 +38,7 @@ export default function CategoryBar() {
     if (cat) params.set('cat', cat)
     else params.delete('cat')
     setParams(params, { replace: true })
-    void useFeedStore.getState().load(cat, parseFilters(params))
+    void useFeedStore.getState().load(cat)
     setMoreOpen(false)
   }
 
@@ -72,9 +69,7 @@ export default function CategoryBar() {
             )}
           </div>
         )}
-        <FilterPanel />
       </div>
-      <FilterChips total={useFeedStore((s) => s.total)} />
     </div>
   )
 }

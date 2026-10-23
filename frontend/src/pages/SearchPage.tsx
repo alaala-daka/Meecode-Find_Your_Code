@@ -6,12 +6,9 @@ import type { RepoCardData, SortKey } from '../api/types'
 import Capsule from '../components/Capsule'
 import EmptyState from '../components/EmptyState'
 import ErrorBanner from '../components/ErrorBanner'
-import FilterChips from '../components/FilterChips'
-import FilterPanel from '../components/FilterPanel'
 import Pagination from '../components/Pagination'
 import Tabs from '../components/Tabs'
 import TopBar from '../components/TopBar'
-import { activeFilterCount, filterKey as makeFilterKey, parseFilters, writeFilters } from '../lib/repoFilters'
 import { languageColor } from '../theme/languageColors'
 import { formatCount, formatTime } from '../utils/format'
 import './SearchPage.css'
@@ -41,9 +38,6 @@ export default function SearchPage() {
   const q = params.get('q') ?? ''
   const sort = (params.get('sort') as SortKey) || 'default'
   const page = Math.max(1, Number(params.get('page')) || 1)
-  const filters = parseFilters(params)
-  const fkey = makeFilterKey(filters) // 规范化键替代 filters 对象做依赖，防引用抖动
-  const filterCount = activeFilterCount(filters)
   const [cards, setCards] = useState<RepoCardData[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -61,7 +55,7 @@ export default function SearchPage() {
     setLoading(true)
     setError(null)
     try {
-      const res = await api.search(q, sort, page, filters)
+      const res = await api.search(q, sort, page)
       if (req !== reqRef.current) return
       setCards(res.cards)
       setTotal(res.total)
@@ -73,7 +67,7 @@ export default function SearchPage() {
     } finally {
       if (req === reqRef.current) setLoading(false)
     }
-  }, [q, sort, page, fkey])
+  }, [q, sort, page])
 
   useEffect(() => { void run() }, [run])
 
@@ -111,28 +105,13 @@ export default function SearchPage() {
         {q && (
           <>
             <p className="search-summary" aria-live="polite">搜索「{q}」· 共 {total} 个结果</p>
-            <div className="search-toolbar">
-              <Tabs items={SORTS.map((s) => ({ key: s.key, label: s.label }))} active={sort}
-                onChange={changeSort} />
-              <FilterPanel />
-            </div>
-            <FilterChips />
+            <Tabs items={SORTS.map((s) => ({ key: s.key, label: s.label }))} active={sort}
+              onChange={changeSort} />
           </>
         )}
         {error && <ErrorBanner message={error} onRetry={() => void run()} />}
         {loading && !error && q !== '' && <p className="search-loading">搜索中…</p>}
-        {!loading && !error && q !== '' && total === 0 && filterCount > 0 && (
-          <EmptyState
-            title="没有符合条件的仓库"
-            actionLabel="清除筛选"
-            onAction={() => {
-              const p = new URLSearchParams(params)
-              writeFilters(p, {})
-              setParams(p)
-            }}
-          />
-        )}
-        {!loading && !error && q !== '' && total === 0 && filterCount === 0 && (
+        {!loading && !error && q !== '' && total === 0 && (
           <EmptyState title="没有找到相关仓库，换个关键词试试" actionLabel="推广我的仓库" onAction={() => navigate('/submit')} />
         )}
         {!loading && !error && cards.length > 0 && (

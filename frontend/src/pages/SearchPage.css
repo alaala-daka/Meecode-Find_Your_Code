@@ -9,14 +9,7 @@
 }
 .search-summary mark { background: var(--brand-thin); color: var(--brand-active); }
 
-.search-page .search-toolbar { margin-bottom: 16px; }
-
-.search-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
+.search-page .tabs { margin-bottom: 16px; }
 
 .search-loading { padding: 48px 0; text-align: center; color: var(--ink-3); }
 

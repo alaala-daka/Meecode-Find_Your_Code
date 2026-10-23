@@ -1,27 +1,15 @@
 // src/pages/HomePage.test.tsx
-import { act, render, screen, waitFor } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
+import { act, render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import { FIXTURE_REPOS } from '../api/fixtures'
 import { useFeedStore } from '../store/feedStore'
 import { mockIntersectionObserver } from '../test/mockIntersectionObserver'
 import HomePage from './HomePage'
 
-function renderPage(initialUrl = '/') {
-  return render(<HomePage />, {
-    wrapper: ({ children }) => (
-      <MemoryRouter initialEntries={[initialUrl]}>{children}</MemoryRouter>
-    ),
-  })
-}
-
 describe('HomePage', () => {
   beforeEach(() => {
-    useFeedStore.setState({
-      cards: [], total: 0, loading: false, error: null, hasMore: true,
-      page: 0, category: null, filters: {}, filterKey: '',
-    })
+    useFeedStore.setState({ cards: [], loading: false, error: null, hasMore: true, page: 0, category: null })
   })
 
   it('渲染卡片流', async () => {
@@ -88,27 +76,5 @@ describe('HomePage', () => {
     })
     render(<HomePage />, { wrapper: MemoryRouter })
     expect(await screen.findByText('加载失败，请重试')).toBeInTheDocument()
-  })
-
-  it('过滤参数进 URL 时带 filters 请求，并渲染已选条件行', async () => {
-    const { api } = await import('../api/client')
-    const spy = vi.spyOn(api, 'feed').mockResolvedValue({ cards: [], has_more: false, total: 0 })
-    renderPage('/?cat=开发工具&lang=Python&stars=100')
-    await waitFor(() => expect(spy).toHaveBeenCalled())
-    expect(spy).toHaveBeenCalledWith('开发工具', 1, expect.objectContaining({ lang: 'Python', stars: 100 }))
-    expect(await screen.findByText('清除全部')).toBeInTheDocument()
-    spy.mockRestore()
-  })
-
-  it('过滤后空态给「清除筛选」而非推广入口', async () => {
-    const { api } = await import('../api/client')
-    vi.spyOn(api, 'feed').mockResolvedValue({ cards: [], has_more: false, total: 0 })
-    renderPage('/?lang=Zig')
-    const clear = await screen.findByRole('button', { name: '清除筛选' })
-    expect(screen.queryByRole('button', { name: '推广我的仓库' })).not.toBeInTheDocument()
-    await userEvent.click(clear)
-    // 清除后 filters 归零、回常规空态（store.filterKey 是 URL 过滤状态的镜像）
-    await waitFor(() => expect(useFeedStore.getState().filterKey).toBe(''))
-    expect(await screen.findByRole('button', { name: '推广我的仓库' })).toBeInTheDocument()
   })
 })
