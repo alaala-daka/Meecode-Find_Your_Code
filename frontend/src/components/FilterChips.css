@@ -21,6 +21,11 @@
   border: 1px solid var(--brand-line);
   border-radius: var(--radius-pill);
 }
+/* 激活样式自持（评审修复 #2）：chips 即「已生效条件」，此前隐式依赖 FilterPanel.css 的 .filter-chip.is-active（跨文件耦合） */
+.filter-chip.is-active {
+  font-weight: 600;
+  background: var(--brand-thin);
+}
 .filter-chip-x { color: var(--ink-4); }
 .filter-chip:hover .filter-chip-x { color: var(--brand); }
 .filter-chips-clear {

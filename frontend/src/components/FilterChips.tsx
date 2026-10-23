@@ -26,7 +26,7 @@ export default function FilterChips({ total }: Props) {
         <button
           key={c.key}
           type="button"
-          className="filter-chip is-active"
+          className="filter-chip is-active"   // 激活样式由 FilterChips.css 自持，不依赖 FilterPanel.css
           aria-label={c.aria}
           onClick={() => apply(removeFilter(filters, c.key))}
         >
