@@ -15,6 +15,7 @@ from ...sqlutil import fts_escape, like_pattern
 from .. import ranking
 from ..cards import to_card, _card_select
 from ..deps import get_conn
+from ..filters import filter_sql, parse_filters
 from ..schemas import FeedOut, SearchOut
 
 router = APIRouter()
@@ -40,20 +41,32 @@ def categories() -> list[str]:
 def get_feed(
     category: str | None = None,
     page: int = Query(1, ge=1),
+    lang: str | None = None,
+    stars: int | None = Query(None, ge=0),
+    stars_max: int | None = Query(None, ge=0),
+    since: str | None = None,
+    topic: list[str] | None = Query(None),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> FeedOut:
     if category and category not in config.CATEGORIES:
         raise HTTPException(status_code=422, detail=f"未知分类：{category}")
+    f = parse_filters(lang, stars, stars_max, since, topic)
 
     now = int(time.time())
     # pending_claim（未认领的采集仓库）也要展示 —— 只有 delisted 不可见
-    params: list = [category] if category else []
-    params.append(config.FEED_CANDIDATE_LIMIT)
+    where = "FROM repos r WHERE r.status != 'delisted'"
+    params: list = []
+    if category:
+        where += " AND r.category = ?"
+        params.append(category)
+    cond, fparams = filter_sql(f)          # 过滤在 SQL 层做完再进 ranking（spec §3.2）
+    where += cond
+    params += fparams
+
+    total = conn.execute(f"SELECT COUNT(*) AS n {where}", params).fetchone()["n"]
     rows = conn.execute(
-        _card_select("FROM repos r WHERE r.status != 'delisted'")
-        + (" AND r.category = ?" if category else "")
-        + " ORDER BY r.published_at DESC LIMIT ?",
-        params,
+        _card_select(where) + " ORDER BY r.published_at DESC LIMIT ?",
+        params + [config.FEED_CANDIDATE_LIMIT],
     ).fetchall()
     ranked = sorted(rows, key=lambda r: ranking.score(r, now), reverse=True)
 
@@ -72,7 +85,8 @@ def get_feed(
     start = (page - 1) * size
     slice_ = ordered[start:start + size]
     bump_impressions(conn, [r["id"] for r in slice_])
-    return FeedOut(cards=[to_card(r) for r in slice_], has_more=len(ordered) > start + size)
+    return FeedOut(cards=[to_card(r) for r in slice_],
+                   has_more=len(ordered) > start + size, total=total)
 
 
 _SEARCH_ORDER = {

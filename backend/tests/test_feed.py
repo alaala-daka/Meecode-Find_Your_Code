@@ -41,12 +41,14 @@ def add_repo(conn, gid: int, *, source="crawled", status="published",
 
 
 def _seed(conn, *, github_id=1, full_name="a/b", category="开发工具", source="submitted",
-          published_at=None, stars=5, status="published", views=7):
+          published_at=None, stars=5, status="published", views=7,
+          language="Python", topics="t1,t2", pushed_at=0):
     conn.execute(
         "INSERT INTO repos (github_id, full_name, owner_login, language, topics, stars,"
-        " source, status, category, tagline_zh, published_at, repo_view_count)"
-        " VALUES (?, ?, 'a', 'Python', 't1,t2', ?, ?, ?, ?, '一句话', ?, ?)",
-        (github_id, full_name, stars, source, status, category, published_at or 0, views),
+        " source, status, category, tagline_zh, published_at, repo_view_count, pushed_at)"
+        " VALUES (?, ?, 'a', ?, ?, ?, ?, ?, ?, '一句话', ?, ?, ?)",
+        (github_id, full_name, language, topics, stars, source, status, category,
+         published_at or 0, views, pushed_at),
     )
     conn.commit()
 
@@ -63,14 +65,72 @@ def test_feed_shape_matches_frontend(client_and_conn):
     client, conn = client_and_conn
     _seed(conn, published_at=1756000000)
     body = client.get("/api/feed").json()
-    assert set(body.keys()) == {"cards", "has_more"}
+    assert set(body.keys()) == {"cards", "has_more", "total"}   # ← 新增 total
+    assert body["total"] == 1
     c = body["cards"][0]
-    assert c["title"] == "b"
-    assert c["views"] == 7
-    assert c["likes"] == 0
-    assert c["published_at"] == "2025-08-24T01:46:40+00:00"  # unix 1756000000 的 UTC ISO
-    assert c["cover_url"] is None
-    assert c["language"] == "Python"
+    assert c["title"] == "b" and c["views"] == 7 and c["likes"] == 0
+    assert c["published_at"] == "2025-08-24T01:46:40+00:00"
+    assert c["cover_url"] is None and c["language"] == "Python"
+
+
+def test_feed_filters_lang_and_stars(client_and_conn):
+    client, conn = client_and_conn
+    _seed(conn, github_id=1, full_name="a/py", language="Python", stars=200)
+    _seed(conn, github_id=2, full_name="a/go", language="Go", stars=200)
+    _seed(conn, github_id=3, full_name="a/py-small", language="Python", stars=10)
+    names = lambda body: {c["full_name"] for c in body["cards"]}
+    assert names(client.get("/api/feed", params={"lang": "python"}).json()) == {"a/py", "a/py-small"}
+    assert names(client.get("/api/feed", params={"lang": "Python", "stars": "100"}).json()) == {"a/py"}
+    body = client.get("/api/feed", params={"stars_max": "50"}).json()
+    assert names(body) == {"a/py-small"} and body["total"] == 1
+
+
+def test_feed_filters_since_uses_pushed_at(client_and_conn):
+    """时间范围按最近更新时间（pushed_at），不是入库时间（spec 决策 #2）。"""
+    client, conn = client_and_conn
+    now = int(time.time())   # test_feed.py 顶部已有 import time
+    _seed(conn, github_id=1, full_name="a/fresh", published_at=0, pushed_at=now - 86400)
+    _seed(conn, github_id=2, full_name="a/stale", published_at=now, pushed_at=now - 40 * 86400)
+    body = client.get("/api/feed", params={"since": "7d"}).json()
+    assert {c["full_name"] for c in body["cards"]} == {"a/fresh"}
+    assert body["total"] == 1
+
+
+def test_feed_filters_topic_and_semantics(client_and_conn):
+    client, conn = client_and_conn
+    _seed(conn, github_id=1, full_name="a/both", topics="llm,self-hosted")
+    _seed(conn, github_id=2, full_name="a/one", topics="llm")
+    body = client.get("/api/feed", params={"topic": ["llm", "self-hosted"]}).json()
+    assert {c["full_name"] for c in body["cards"]} == {"a/both"}
+    # 逗号子串不误命中：topic=hosted 不得命中 self-hosted
+    assert client.get("/api/feed", params={"topic": "hosted"}).json()["total"] == 0
+
+
+def test_feed_filters_combined_and_pagination(client_and_conn):
+    client, conn = client_and_conn
+    for i in range(30):
+        _seed(conn, github_id=i, full_name=f"a/r{i}", language="Python",
+              stars=100 + i, topics="llm", pushed_at=1)
+    body = client.get("/api/feed", params={"lang": "Python", "stars": "100", "topic": "llm"})
+    data = body.json()
+    assert data["total"] == 30 and data["has_more"] is True and len(data["cards"]) == 24
+    page2 = client.get("/api/feed", params={"lang": "Python", "stars": "100", "topic": "llm", "page": 2}).json()
+    assert len(page2["cards"]) == 6 and page2["has_more"] is False
+
+
+def test_feed_filters_reject_bad_values(client_and_conn):
+    client, _conn = client_and_conn
+    assert client.get("/api/feed", params={"lang": "语言"}).status_code == 422
+    assert client.get("/api/feed", params={"since": "2024"}).status_code == 422
+    assert client.get("/api/feed", params={"stars": "500", "stars_max": "100"}).status_code == 422
+    assert client.get("/api/feed", params={"topic": ["a", "b", "c", "d", "e", "f"]}).status_code == 422
+
+
+def test_feed_unknown_params_ignored(client_and_conn):
+    """未知参数静默忽略（白名单硬约束的另一半）；非法值才 422。"""
+    client, conn = client_and_conn
+    _seed(conn)
+    assert client.get("/api/feed", params={"foo": "1", "bar": "x"}).status_code == 200
 
 
 def test_feed_likes_counted(client_and_conn):
