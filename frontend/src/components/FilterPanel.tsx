@@ -1,6 +1,8 @@
 // src/components/FilterPanel.tsx —— 「⚙ 筛选」触发器 + 草稿-应用两段式面板（spec §3.3）
 // 桌面：触发器下方下拉面板；手机（≤720px）：底部半屏抽屉。Esc/外部点击/取消关闭并丢弃草稿。
-import { useEffect, useRef, useState } from 'react'
+// 面板经 Portal 挂到 body：触发器位于 .category-inner（overflow-x:auto，overflow-y 计算为 auto）滚动容器内，
+// 面板若留在原地会被该容器整体裁剪（实测 clientHeight=49 / scrollHeight=382，桌面面板零像素可见）。
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { api } from '../api/client'
 import type { Facets } from '../api/types'
@@ -8,6 +10,7 @@ import {
   activeFilterCount, parseFilters, STAR_PRESETS, SINCE_OPTIONS, writeFilters, type RepoFilters,
 } from '../lib/repoFilters'
 import { useIsMobile } from '../utils/useIsMobile'
+import Portal from './Portal'
 import './FilterPanel.css'
 
 const LANG_VISIBLE = 8
@@ -24,6 +27,8 @@ export default function FilterPanel() {
   const [customStarsMin, setCustomStarsMin] = useState('')
   const [customStarsMax, setCustomStarsMax] = useState('')
   const wrapRef = useRef<HTMLDivElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
+  const [panelPos, setPanelPos] = useState({ top: 0, right: 0 })
   const isMobile = useIsMobile()
 
   const filters = parseFilters(params)
@@ -43,10 +48,14 @@ export default function FilterPanel() {
   }
 
   // 外部点击 / Esc 关闭（草稿丢弃）；沿用 CategoryBar「更多」菜单同款模式
+  // 注：面板 Portal 到 body 后已不在 .filter-wrap 子树内，故「内部」判定 = 触发器 wrap 或面板自身，
+  // 面板内点选 chips 不会被误判为外部点击（草稿-应用语义不变）
   useEffect(() => {
     if (!open) return
     function onDoc(e: MouseEvent) {
-      if (!(e.target as HTMLElement).closest('.filter-wrap')) setOpen(false)
+      const t = e.target as HTMLElement
+      if (t.closest('.filter-wrap') || panelRef.current?.contains(t)) return
+      setOpen(false)
     }
     function onKey(e: KeyboardEvent) {
       if (e.key === 'Escape') setOpen(false)
@@ -58,6 +67,24 @@ export default function FilterPanel() {
       document.removeEventListener('keydown', onKey)
     }
   }, [open])
+
+  // 桌面面板 Portal 后改用 fixed 定位：坐标按触发器实测矩形注入（右缘对齐触发器、下方 8px）
+  // 滚动（捕获态，含胶囊行横向滚动）与视口变化时重定位，保证窄桌面下面板始终贴住触发器
+  useLayoutEffect(() => {
+    if (!open || isMobile) return
+    function update() {
+      const r = wrapRef.current?.getBoundingClientRect()
+      if (!r) return
+      setPanelPos({ top: r.bottom + 8, right: Math.max(0, window.innerWidth - r.right) })
+    }
+    update()
+    window.addEventListener('resize', update)
+    window.addEventListener('scroll', update, true)
+    return () => {
+      window.removeEventListener('resize', update)
+      window.removeEventListener('scroll', update, true)
+    }
+  }, [open, isMobile])
 
   useEffect(() => {
     if (!open) return
@@ -104,13 +131,12 @@ export default function FilterPanel() {
         <span aria-hidden="true">⚙</span> 筛选
         {count > 0 && <span className="filter-badge">{count}</span>}
       </button>
-      {open && isMobile && <div className="filter-mask" onClick={() => setOpen(false)} />}
       {open && (
-        <div
-          className={`filter-panel ${isMobile ? 'filter-panel--sheet' : ''}`}
-          role="dialog"
-          aria-label="精确筛选"
-        >
+        <Portal>
+          {isMobile && <div className="filter-mask" onClick={() => setOpen(false)} />}
+          <div className={`filter-panel ${isMobile ? 'filter-panel--sheet' : ''}`} ref={panelRef}
+            role="dialog" aria-label="精确筛选"
+            style={isMobile ? undefined : { top: panelPos.top, right: panelPos.right }}>
           <div className="filter-head">
             <strong>精确筛选</strong>
             <button type="button" className="filter-clear"
@@ -121,17 +147,17 @@ export default function FilterPanel() {
 
           <div className="filter-group">
             <div className="filter-label" id="filter-lang-label">语言</div>
-            <div className="filter-chips" role="group" aria-labelledby="filter-lang-label">
+            <div className="filter-panel-chips" role="group" aria-labelledby="filter-lang-label">
               {langChips.map((l) => (
                 <button key={l.name} type="button"
-                  className={`filter-chip ${draft.lang === l.name ? 'is-active' : ''}`}
+                  className={`filter-panel-chip ${draft.lang === l.name ? 'is-active' : ''}`}
                   aria-pressed={draft.lang === l.name}
                   onClick={() => setDraft((d) => ({ ...d, lang: d.lang === l.name ? undefined : l.name }))}>
                   {l.name}
                 </button>
               ))}
               {facets.languages.length > LANG_VISIBLE && (
-                <button type="button" className="filter-chip filter-chip--more"
+                <button type="button" className="filter-panel-chip filter-panel-chip--more"
                   onClick={() => setLangMore((v) => !v)}>
                   {langMore ? '收起 ▴' : '更多 ▾'}
                 </button>
@@ -141,22 +167,22 @@ export default function FilterPanel() {
 
           <div className="filter-group">
             <div className="filter-label" id="filter-stars-label">星数</div>
-            <div className="filter-chips" role="group" aria-labelledby="filter-stars-label">
+            <div className="filter-panel-chips" role="group" aria-labelledby="filter-stars-label">
               <button type="button"
-                className={`filter-chip ${draft.stars === undefined && !customStars ? 'is-active' : ''}`}
+                className={`filter-panel-chip ${draft.stars === undefined && !customStars ? 'is-active' : ''}`}
                 onClick={() => { setDraft((d) => ({ ...d, stars: undefined, starsMax: undefined })); setCustomStars(false) }}>
                 不限
               </button>
               {STAR_PRESETS.map((n) => (
                 <button key={n} type="button"
-                  className={`filter-chip ${draft.stars === n && !customStars ? 'is-active' : ''}`}
+                  className={`filter-panel-chip ${draft.stars === n && !customStars ? 'is-active' : ''}`}
                   aria-pressed={draft.stars === n}
                   onClick={() => { setDraft((d) => ({ ...d, stars: n, starsMax: undefined })); setCustomStars(false) }}>
                   {n >= 1000 ? `≥ ${n / 1000}k` : `≥ ${n}`}
                 </button>
               ))}
               <button type="button"
-                className={`filter-chip filter-chip--more ${customStars ? 'is-active' : ''}`}
+                className={`filter-panel-chip filter-panel-chip--more ${customStars ? 'is-active' : ''}`}
                 onClick={() => setCustomStars(true)}>
                 自定义…
               </button>
@@ -177,15 +203,15 @@ export default function FilterPanel() {
 
           <div className="filter-group">
             <div className="filter-label" id="filter-since-label">时间范围（按最近更新时间）</div>
-            <div className="filter-chips" role="group" aria-labelledby="filter-since-label">
+            <div className="filter-panel-chips" role="group" aria-labelledby="filter-since-label">
               <button type="button"
-                className={`filter-chip ${draft.since === undefined ? 'is-active' : ''}`}
+                className={`filter-panel-chip ${draft.since === undefined ? 'is-active' : ''}`}
                 onClick={() => setDraft((d) => ({ ...d, since: undefined }))}>
                 不限
               </button>
               {SINCE_OPTIONS.map((s) => (
                 <button key={s.key} type="button"
-                  className={`filter-chip ${draft.since === s.key ? 'is-active' : ''}`}
+                  className={`filter-panel-chip ${draft.since === s.key ? 'is-active' : ''}`}
                   aria-pressed={draft.since === s.key}
                   onClick={() => setDraft((d) => ({ ...d, since: d.since === s.key ? undefined : s.key }))}>
                   {s.label}
@@ -199,12 +225,12 @@ export default function FilterPanel() {
             <input className="filter-input" type="search" placeholder="搜索 topics…"
               aria-label="搜索 topics" value={topicQuery}
               onChange={(e) => setTopicQuery(e.target.value)} />
-            <div className="filter-chips" role="group" aria-labelledby="filter-topic-label">
+            <div className="filter-panel-chips" role="group" aria-labelledby="filter-topic-label">
               {topicChips.slice(0, TOPIC_VISIBLE).map((t) => {
                 const active = (draft.topics ?? []).includes(t.name)
                 return (
                   <button key={t.name} type="button"
-                    className={`filter-chip ${active ? 'is-active' : ''}`}
+                    className={`filter-panel-chip ${active ? 'is-active' : ''}`}
                     aria-pressed={active}
                     onClick={() => toggleTopic(t.name)}>
                     #{t.name}
@@ -218,7 +244,8 @@ export default function FilterPanel() {
             <button type="button" className="filter-btn" onClick={() => setOpen(false)}>取消</button>
             <button type="button" className="filter-btn filter-btn--brand" onClick={apply}>应用筛选</button>
           </div>
-        </div>
+          </div>
+        </Portal>
       )}
     </div>
   )

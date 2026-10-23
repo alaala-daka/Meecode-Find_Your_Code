@@ -124,4 +124,35 @@ describe('FilterPanel', () => {
     expect(url).toContain('stars=123')
     expect(url).toContain('stars_max=456')
   })
+
+  it('面板 Portal 挂到 body（逃逸 .category-inner 的 overflow 裁剪链）', async () => {
+    renderPanel()
+    await userEvent.click(screen.getByRole('button', { name: /筛选/ }))
+    const panel = screen.getByRole('dialog', { name: '精确筛选' })
+    expect(panel.parentElement).toBe(document.body)
+    expect(panel.closest('.filter-wrap')).toBeNull()   // 不再是触发器 wrap 的子节点
+    // 桌面面板按触发器矩形注入 fixed 坐标（vitest css:false 不加载 CSS，断言行内坐标已写入）
+    expect(panel.style.top).not.toBe('')
+    expect(panel.style.right).not.toBe('')
+  })
+
+  it('面板内点击不算外部点击（草稿不丢），点面板外关闭', async () => {
+    renderPanel()
+    await userEvent.click(screen.getByRole('button', { name: /筛选/ }))
+    // 面板内点选 chips：Portal 后不在 .filter-wrap 子树，仍须视为内部点击
+    await userEvent.click(await screen.findByRole('button', { name: 'Python' }))
+    expect(screen.getByRole('dialog', { name: '精确筛选' })).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: '应用筛选' }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('手机 sheet 与遮罩同样 Portal 到 body（fixed 不受祖先 overflow 影响）', async () => {
+    mockMatchMedia(true)
+    renderPanel()
+    await userEvent.click(screen.getByRole('button', { name: /筛选/ }))
+    const panel = screen.getByRole('dialog', { name: '精确筛选' })
+    expect(panel.parentElement).toBe(document.body)
+    const mask = document.querySelector('.filter-mask') as HTMLElement
+    expect(mask.parentElement).toBe(document.body)
+  })
 })
