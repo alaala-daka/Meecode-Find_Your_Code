@@ -267,3 +267,36 @@ def test_search_special_chars_do_not_crash(conn, client):
 def test_search_excludes_delisted(conn, client):
     add_repo(conn, 1, status="delisted", tagline="给 Agent 的最小运行时")
     assert client.get("/api/search", params={"q": "运行时"}).json()["cards"] == []
+
+
+def test_search_filters_apply_over_fts_and_like(client_and_conn):
+    """过滤条件 AND 进两种命中路径：FTS（>=3 字符）与 LIKE 回退（<3 字符）。"""
+    client, conn = client_and_conn
+    _seed(conn, github_id=1, full_name="a/fastdb", language="Python", stars=500, topics="db")
+    _seed(conn, github_id=2, full_name="a/fastdb2", language="Go", stars=10, topics="db")
+
+    fts = client.get("/api/search", params={"q": "fastdb", "lang": "Python"}).json()
+    assert {c["full_name"] for c in fts["cards"]} == {"a/fastdb"} and fts["total"] == 1
+
+    like = client.get("/api/search", params={"q": "db", "stars": "100"}).json()
+    assert {c["full_name"] for c in like["cards"]} == {"a/fastdb"} and like["total"] == 1
+
+
+def test_search_filters_with_sort_and_topics(client_and_conn):
+    client, conn = client_and_conn
+    _seed(conn, github_id=1, full_name="a/aaa", stars=10, topics="llm,self-hosted")
+    _seed(conn, github_id=2, full_name="a/bbb", stars=99, topics="llm")
+    # brief 允许的改写："aaa bbb" 整串短语在本 trigram 实现不分别命中，
+    # 改为两个单独 q 断言；过滤交集断言（topic AND）不变
+    # q=bbb 命中 a/bbb，但 topic 交集（llm AND self-hosted）把它排除
+    body = client.get("/api/search", params={"q": "bbb", "topic": ["llm", "self-hosted"]}).json()
+    assert body["cards"] == [] and body["total"] == 0
+    # q=aaa 命中 a/aaa，sort=stars 不影响集合
+    body = client.get("/api/search", params={
+        "q": "aaa", "sort": "stars", "topic": ["llm", "self-hosted"]}).json()
+    assert {c["full_name"] for c in body["cards"]} == {"a/aaa"} and body["total"] == 1
+
+
+def test_search_filters_bad_values_422(client_and_conn):
+    client, _conn = client_and_conn
+    assert client.get("/api/search", params={"q": "x", "since": "forever"}).status_code == 422

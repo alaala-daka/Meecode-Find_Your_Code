@@ -101,10 +101,17 @@ def search(
     q: str,
     sort: str = Query("default"),
     page: int = Query(1, ge=1),
+    lang: str | None = None,
+    stars: int | None = Query(None, ge=0),
+    stars_max: int | None = Query(None, ge=0),
+    since: str | None = None,
+    topic: list[str] | None = Query(None),
     conn: sqlite3.Connection = Depends(get_conn),
 ) -> SearchOut:
     if sort not in _SEARCH_ORDER:
         raise HTTPException(status_code=422, detail=f"未知排序:{sort}")
+    f = parse_filters(lang, stars, stars_max, since, topic)
+    fcond, fparams = filter_sql(f)
     term = q.strip()
     if not term:
         return SearchOut(cards=[], has_more=False, total=0)
@@ -115,26 +122,28 @@ def search(
         # FTS5 trigram 至少 3 字符:短词("AI"、"图")回退 LIKE,不再静默空结果
         pat = like_pattern(term)
         cond = ("r.status != 'delisted' AND (r.full_name LIKE ? ESCAPE '\\'"
-                " OR r.tagline_zh LIKE ? ESCAPE '\\' OR r.topics LIKE ? ESCAPE '\\')")
+                " OR r.tagline_zh LIKE ? ESCAPE '\\' OR r.topics LIKE ? ESCAPE '\\')") + fcond
+        qparams = [pat, pat, pat, *fparams]
         total = conn.execute(
-            f"SELECT COUNT(*) AS n FROM repos r WHERE {cond}", (pat, pat, pat)
+            f"SELECT COUNT(*) AS n FROM repos r WHERE {cond}", qparams
         ).fetchone()["n"]
         order = _SEARCH_ORDER[sort] if sort != "default" else "ORDER BY r.published_at DESC"
         rows = conn.execute(
             f"{_card_select('FROM repos r')} WHERE {cond} {order} LIMIT ? OFFSET ?",
-            (pat, pat, pat, size + 1, offset),
+            [*qparams, size + 1, offset],
         ).fetchall()
     else:
         needle = fts_escape(term)
         join = "FROM repos_fts f JOIN repos r ON r.id = f.rowid"
-        cond = "repos_fts MATCH ? AND r.status != 'delisted'"
+        cond = "repos_fts MATCH ? AND r.status != 'delisted'" + fcond
+        qparams = [needle, *fparams]
         try:
             total = conn.execute(
-                f"SELECT COUNT(*) AS n {join} WHERE {cond}", (needle,)
+                f"SELECT COUNT(*) AS n {join} WHERE {cond}", qparams
             ).fetchone()["n"]
             rows = conn.execute(
                 f"{_card_select(join)} WHERE {cond} {_SEARCH_ORDER[sort]} LIMIT ? OFFSET ?",
-                (needle, size + 1, offset),
+                [*qparams, size + 1, offset],
             ).fetchall()
         except sqlite3.OperationalError:
             return SearchOut(cards=[], has_more=False, total=0)  # 语法异常一律空结果
