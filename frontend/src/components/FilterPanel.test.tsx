@@ -103,4 +103,25 @@ describe('FilterPanel', () => {
     expect(panel).toHaveClass('filter-panel--sheet')
     expect(document.querySelector('.filter-mask')).toBeTruthy()
   })
+
+  it('手机端点遮罩关闭面板', async () => {
+    mockMatchMedia(true)
+    renderPanel()
+    await userEvent.click(screen.getByRole('button', { name: /筛选/ }))
+    expect(screen.getByRole('dialog', { name: '精确筛选' })).toBeInTheDocument()
+    await userEvent.click(document.querySelector('.filter-mask')!)
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('自定义星数区间从 URL 回显，round-trip 不丢', async () => {
+    renderPanel('/?stars=123&stars_max=456')
+    await userEvent.click(screen.getByRole('button', { name: /筛选/ }))
+    expect(screen.getByRole('button', { name: '自定义…' })).toHaveClass('is-active')
+    expect(screen.getByLabelText('最少星数')).toHaveValue('123')
+    expect(screen.getByLabelText('最多星数')).toHaveValue('456')
+    await userEvent.click(screen.getByRole('button', { name: '应用筛选' }))
+    const url = screen.getByTestId('url').textContent ?? ''
+    expect(url).toContain('stars=123')
+    expect(url).toContain('stars_max=456')
+  })
 })

@@ -30,10 +30,14 @@ export default function FilterPanel() {
   const count = activeFilterCount(filters)
 
   function openPanel() {
-    setDraft(parseFilters(params))
-    setCustomStars(false)
-    setCustomStarsMin('')
-    setCustomStarsMax('')
+    const cur = parseFilters(params)
+    setDraft(cur)
+    // 自定义区间回显（2026-10-23 用户裁决）：非预设值从 URL 回填，防止重开面板丢筛选
+    const isPreset = cur.stars !== undefined && cur.starsMax === undefined && STAR_PRESETS.includes(cur.stars)
+    const custom = cur.starsMax !== undefined || (cur.stars !== undefined && !isPreset)
+    setCustomStars(custom)
+    setCustomStarsMin(cur.stars !== undefined && !isPreset ? String(cur.stars) : '')
+    setCustomStarsMax(cur.starsMax !== undefined ? String(cur.starsMax) : '')
     setTopicQuery('')
     setOpen(true)
   }
@@ -100,7 +104,7 @@ export default function FilterPanel() {
         <span aria-hidden="true">⚙</span> 筛选
         {count > 0 && <span className="filter-badge">{count}</span>}
       </button>
-      {open && isMobile && <div className="filter-mask" />}
+      {open && isMobile && <div className="filter-mask" onClick={() => setOpen(false)} />}
       {open && (
         <div
           className={`filter-panel ${isMobile ? 'filter-panel--sheet' : ''}`}
