@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import sqlite3
 import time
+from collections import Counter
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
@@ -16,7 +17,7 @@ from .. import ranking
 from ..cards import to_card, _card_select
 from ..deps import get_conn
 from ..filters import filter_sql, parse_filters
-from ..schemas import FeedOut, SearchOut
+from ..schemas import FacetCount, FacetsOut, FeedOut, SearchOut
 
 router = APIRouter()
 
@@ -35,6 +36,37 @@ def bump_impressions(conn: sqlite3.Connection, repo_ids: list[int]) -> None:
 @router.get("/categories", response_model=list[str])
 def categories() -> list[str]:
     return list(config.CATEGORIES)
+
+
+_FACETS_TTL = 300.0   # 面板数据允许 5 分钟滞后（spec 决策 #7）
+_facets_cache: dict = {"ts": 0.0, "data": None}
+
+
+def _clear_facets_cache() -> None:
+    """测试夹具用：用例间不得共享缓存。"""
+    _facets_cache.update(ts=0.0, data=None)
+
+
+@router.get("/facets", response_model=FacetsOut)
+def facets(conn: sqlite3.Connection = Depends(get_conn)) -> FacetsOut:
+    now = time.time()
+    if _facets_cache["data"] is not None and now - _facets_cache["ts"] < _FACETS_TTL:
+        return _facets_cache["data"]
+    lang_counter: Counter[str] = Counter()
+    topic_counter: Counter[str] = Counter()
+    for row in conn.execute("SELECT language, topics FROM repos WHERE status != 'delisted'"):
+        if row["language"]:
+            lang_counter[row["language"]] += 1
+        for t in (row["topics"] or "").split(","):
+            t = t.strip()
+            if t:
+                topic_counter[t] += 1
+    data = FacetsOut(
+        languages=[FacetCount(name=n, count=c) for n, c in lang_counter.most_common()],
+        topics=[FacetCount(name=n, count=c) for n, c in topic_counter.most_common(100)],
+    )
+    _facets_cache.update(ts=now, data=data)
+    return data
 
 
 @router.get("/feed", response_model=FeedOut)

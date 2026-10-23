@@ -300,3 +300,27 @@ def test_search_filters_with_sort_and_topics(client_and_conn):
 def test_search_filters_bad_values_422(client_and_conn):
     client, _conn = client_and_conn
     assert client.get("/api/search", params={"q": "x", "since": "forever"}).status_code == 422
+
+
+def test_facets_counts_and_delisted_excluded(client_and_conn):
+    client, conn = client_and_conn
+    _seed(conn, github_id=1, language="Python", topics="llm,self-hosted")
+    _seed(conn, github_id=2, language="Python", topics="llm")
+    _seed(conn, github_id=3, language="Go", topics="llm", status="delisted")
+    body = client.get("/api/facets").json()
+    langs = {x["name"]: x["count"] for x in body["languages"]}
+    topics = {x["name"]: x["count"] for x in body["topics"]}
+    assert langs == {"Python": 2}   # delisted 的 Go 不计入
+    assert topics == {"llm": 2, "self-hosted": 1}
+
+
+def test_facets_cache_hits_until_cleared(client_and_conn):
+    client, conn = client_and_conn
+    _seed(conn, github_id=1, language="Python", topics="llm")
+    assert client.get("/api/facets").json()["languages"][0]["count"] == 1
+    _seed(conn, github_id=2, language="Go", topics="cli")   # 缓存未过期：不反映
+    assert client.get("/api/facets").json()["languages"][0]["count"] == 1
+    from app.feed.routes import feed as feed_routes
+    feed_routes._clear_facets_cache()
+    langs = client.get("/api/facets").json()["languages"]
+    assert sum(x["count"] for x in langs) == 2

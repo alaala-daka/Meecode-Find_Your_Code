@@ -31,6 +31,15 @@ def _clear_github_caches():
     yield
 
 
+@pytest.fixture(autouse=True)
+def _clear_facets_cache():
+    """facets 带 5 分钟 TTL，用例间必须清，否则缓存命中测不到。"""
+    from app.feed.routes import feed as feed_routes
+
+    feed_routes._clear_facets_cache()
+    yield
+
+
 @pytest.fixture()
 def conn():
     from app.feed import db
