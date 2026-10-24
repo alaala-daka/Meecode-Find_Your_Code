@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { FIXTURE_USER } from '../api/fixtures'
+import { api } from '../api/client'
 import type { CurrentUser } from '../api/types'
 import { useAuthStore } from '../store/authStore'
 import { useNotificationStore } from '../store/notificationStore'
@@ -13,6 +14,7 @@ function renderAt(url: string) {
   return render(
     <MemoryRouter initialEntries={[url]}>
       <Routes>
+        <Route path="/" element={<p>首页</p>} />
         <Route path="/user/:login" element={<ProfilePage />} />
       </Routes>
     </MemoryRouter>
@@ -55,6 +57,34 @@ describe('ProfilePage', () => {
     renderAt('/user/bob')
     await screen.findAllByText('bob')
     expect(screen.queryByLabelText('编辑签名')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '退出登录' })).not.toBeInTheDocument()
+  })
+
+  it('退出入口在 GitHub 连接之后，成功后清除会话并返回首页', async () => {
+    useAuthStore.setState({ user: { ...FIXTURE_USER, id: 1, gh_star_authed: true } as CurrentUser })
+    const logout = vi.spyOn(api, 'logout').mockResolvedValue(undefined)
+    renderAt('/user/alice')
+    const button = await screen.findByRole('button', { name: '退出登录' })
+    expect(button.previousElementSibling).toHaveTextContent('GitHub 点星已连接 · 断开')
+    await userEvent.click(button)
+    expect(logout).toHaveBeenCalledOnce()
+    expect(useAuthStore.getState().user).toBeNull()
+    expect(await screen.findByText('首页')).toBeInTheDocument()
+  })
+
+  it('未授权点星也能退出；请求中禁用，失败保留登录态并允许重试', async () => {
+    useAuthStore.setState({ user: FIXTURE_USER })
+    let rejectLogout!: (reason: Error) => void
+    const logout = vi.spyOn(api, 'logout').mockImplementation(() => new Promise<void>((_, reject) => { rejectLogout = reject }))
+    renderAt('/user/alice')
+    await userEvent.click(await screen.findByRole('button', { name: '退出登录' }))
+    expect(screen.getByRole('button', { name: '退出中…' })).toBeDisabled()
+    rejectLogout(new Error('offline'))
+    expect(await screen.findByRole('alert')).toHaveTextContent('退出登录失败，请重试')
+    expect(useAuthStore.getState().user).toEqual(FIXTURE_USER)
+    logout.mockResolvedValue(undefined)
+    await userEvent.click(screen.getByRole('button', { name: '退出登录' }))
+    expect(await screen.findByText('首页')).toBeInTheDocument()
   })
 
   it('tab 切换到收藏夹显示收藏内容', async () => {

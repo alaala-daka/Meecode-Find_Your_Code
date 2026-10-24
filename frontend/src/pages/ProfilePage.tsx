@@ -30,6 +30,8 @@ export default function ProfilePage() {
   const [editingBio, setEditingBio] = useState(false)
   const [lists, setLists] = useState<Record<'repos' | 'favs' | 'history', RepoCardData[]>>({ repos: [], favs: [], history: [] })
   const [loadError, setLoadError] = useState(false)
+  const [loggingOut, setLoggingOut] = useState(false)
+  const [logoutError, setLogoutError] = useState(false)
   const finePointer = typeof window.matchMedia === 'function'
     ? window.matchMedia('(pointer: fine)').matches
     : true
@@ -69,6 +71,20 @@ export default function ProfilePage() {
     if (!window.confirm(`确定下架「${repo.title}」吗？`)) return
     await api.delist(repo.id)
     void loadAll()
+  }
+
+  async function logout() {
+    if (loggingOut) return
+    setLoggingOut(true)
+    setLogoutError(false)
+    try {
+      await useAuthStore.getState().logout()
+      navigate('/', { replace: true })
+    } catch {
+      setLogoutError(true)
+    } finally {
+      setLoggingOut(false)
+    }
   }
 
   if (!profile && !loadError) {
@@ -136,7 +152,18 @@ export default function ProfilePage() {
                   GitHub 点星已连接 · 断开
                 </button>
               )}
+              {isMe && (
+                <button
+                  type="button"
+                  className="profile-logout"
+                  disabled={loggingOut}
+                  onClick={() => void logout()}
+                >
+                  {loggingOut ? '退出中…' : '退出登录'}
+                </button>
+              )}
             </p>
+            {logoutError && <p className="profile-logout-error" role="alert">退出登录失败，请重试</p>}
           </div>
         </header>
       </div>

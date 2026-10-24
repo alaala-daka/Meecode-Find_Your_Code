@@ -59,6 +59,8 @@
 }
 .profile-stats {
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 20px;
   margin-top: 10px;
   color: var(--ink-3);
@@ -112,4 +114,20 @@
   color: var(--ink-3);
   text-decoration: underline;
   cursor: pointer;
+}
+
+.profile-logout {
+  padding: 0;
+  color: var(--ink-3);
+  font-size: 13px;
+  text-decoration: underline;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.profile-logout:hover { color: var(--brand); }
+.profile-logout:disabled { opacity: 0.6; cursor: wait; }
+.profile-logout-error { margin-top: 8px; color: var(--danger); font-size: 13px; }
+
+@media (pointer: coarse) {
+  .profile-logout { min-height: 44px; min-width: 44px; }
 }
